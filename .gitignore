@@ -17,6 +17,7 @@ dist-ssr/
 
 # Python
 __pycache__/
+data/
 *.py[cod]
 *$py.class
 .pytest_cache/

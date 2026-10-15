@@ -1,8 +1,6 @@
-from fastapi import FastAPI
+import os
+from pathlib import Path
 
-app = FastAPI()
+from polaris.app import create_app
 
-
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+app = create_app(Path(os.environ.get("POLARIS_DATA", Path(__file__).resolve().parent / "data")))
