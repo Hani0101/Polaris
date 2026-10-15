@@ -1,7 +1,166 @@
 :root {
   font-family: system-ui, sans-serif;
+  color: #1c1917;
+  background: #f7f6f3;
+  line-height: 1.5;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
+}
+
+button,
+textarea {
+  font: inherit;
+}
+
+button {
+  min-height: 44px;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid #1d4e4a;
+  border-radius: 8px;
+  background: #1d4e4a;
+  color: #ffffff;
+}
+
+button:disabled {
+  background: #e7e5e4;
+  border-color: #d6d3d1;
+  color: #44403c;
+}
+
+:focus-visible {
+  outline: 3px solid #1d4e4a;
+  outline-offset: 2px;
+}
+
+.app {
+  padding: 1rem;
+}
+
+.top h1 {
+  margin: 0 0 1rem;
+  font-size: 1.75rem;
+}
+
+.error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  background: #fee2e2;
+  color: #7f1d1d;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.sessions-head,
+.conversation-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.sessions ul,
+.conversation ul {
+  list-style: none;
+  margin: 0.75rem 0 0;
+  padding: 0;
+}
+
+.sessions li + li {
+  margin-top: 0.5rem;
+}
+
+.sessions button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  text-align: left;
+  background: #ffffff;
+  color: #1c1917;
+}
+
+.sessions button[aria-current='page'] {
+  border-color: #1d4e4a;
+  background: #e7f0ef;
+}
+
+.preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ended {
+  flex: none;
+  color: #44403c;
+  font-size: 0.9rem;
+}
+
+.conversation section + section,
+.conversation .turns {
+  margin-top: 1.25rem;
+}
+
+.turn {
+  padding: 0.75rem 0;
+  border-top: 1px solid #d6d3d1;
+}
+
+.turn h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.learner,
+.reply {
+  margin: 0.25rem 0 0.75rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+textarea {
+  width: 100%;
+  min-height: 5.5rem;
+  padding: 0.75rem;
+  border: 1px solid #d6d3d1;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1c1917;
+}
+
+@media (min-width: 720px) {
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .sessions {
+    width: 18rem;
+    flex: none;
+  }
 }
