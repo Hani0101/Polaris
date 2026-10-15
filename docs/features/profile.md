@@ -9,6 +9,8 @@ PR-02  When the profile is empty, the conversation fills it before any teaching.
 PR-03  One profile is shared by every session.
 PR-04  The teaching agent does not write the profile.
 
+PR-01 through PR-04 are in force. Decision 0003 does not block them.
+
 ## Proposed, do not implement
 
 Profile writing is [proposed, not accepted](../decisions/0003-profile-pass-is-a-proposal.md). Refuse to implement PR-05 through PR-08 while that decision is proposed.
@@ -25,6 +27,16 @@ Scenario: an empty profile is filled before teaching  [PR-02]
   When they send their first message
   Then the reply asks for what the profile is missing
   And it does not teach the topic yet
+
+Until a profile writer exists, that answer is not stored. The profile stays empty. See [An empty profile keeps being asked](../decisions/0005-empty-profile-keeps-asking.md).
+
+Scenario: an empty profile is asked for on every reply  [PR-02]
+  Given a learner with an empty profile
+  And a reply already asked for what the profile is missing
+  When they send another message
+  Then the reply asks again
+  And it does not teach the topic yet
+  And the profile is still empty
 
 Scenario: a later session sees the same profile  [PR-01, PR-03]
   Given a profile that already says where the learner struggles
