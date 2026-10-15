@@ -1,0 +1,7 @@
+thoughts
+*.excalidraw
+.venv
+requirements.txt
+.env
+.agents
+.claude
