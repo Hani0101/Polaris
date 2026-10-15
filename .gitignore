@@ -1,7 +1,31 @@
 thoughts
 *.excalidraw
 .venv
-requirements.txt
 .env
 .agents
-.claude
+.claude/*
+!.claude/skills/
+recordings/*
+!recordings/.gitkeep
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

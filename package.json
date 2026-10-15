@@ -1,0 +1,7 @@
+{
+  "name": "polaris",
+  "private": true,
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}
