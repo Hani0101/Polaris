@@ -91,7 +91,7 @@ def test_scaling_text_below_the_minimum_is_refused():
     )
     errors = errors_of(data)
     assert any(
-        error.startswith("step 1 ('middle'): text 'target' is 10 units high") for error in errors
+        error.startswith("step 1 ('middle'): text 'target' is 11 units high") for error in errors
     ), errors
 
 

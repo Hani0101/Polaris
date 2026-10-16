@@ -47,7 +47,7 @@ A step has an `id`, a `caption`, a duration, and a list of actions. An action na
 - `count`, which changes a number in a text element from one value to another.
 - `scale`, which resizes an element around its centre.
 
-The check works out where every element is at the end of each step and along every `move` and `follow`. It uses those positions for the canvas and overlap rules in AN-11. The limits on counts, sizes, durations, and caption length are in `AnimationLimits` in the same module. Text is at least 20 units high, so it is about 14px on a 320px screen.
+The check works out where every element is at the end of each step and along every `move` and `follow`. It uses those positions for the canvas and overlap rules in AN-11. The limits on counts, sizes, durations, and caption length are in `AnimationLimits` in the same module. Text is at least 22 units high. On a 320px phone screen the canvas is about 254px wide, so that text is about 14px.
 
 Step playback ends at the last step. Replay starts the current step again from the picture at the end of the step before it. Back shows the picture at the end of the step before.
 

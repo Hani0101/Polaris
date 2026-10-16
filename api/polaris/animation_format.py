@@ -53,7 +53,7 @@ class AnimationLimits:
 
     canvas_width: float = 400
     canvas_height: float = 300
-    min_text_size: float = 20
+    min_text_size: float = 22
     max_text_size: float = 64
     max_elements: int = 40
     max_steps: int = 12
@@ -274,7 +274,7 @@ class TextElement(ElementBase):
     x: Coordinate
     y: Coordinate
     text: LabelText
-    size: TextSize = 20
+    size: TextSize = 22
     align: Literal["start", "middle", "end"] = "start"
 
 
@@ -287,7 +287,7 @@ class MathElement(ElementBase):
     width: Extent
     height: Extent
     latex: LatexSource
-    size: TextSize = 20
+    size: TextSize = 22
 
 
 class CodeElement(ElementBase):
@@ -298,7 +298,7 @@ class CodeElement(ElementBase):
     y: Coordinate
     language: LanguageName
     code: CodeSource
-    size: TextSize = 20
+    size: TextSize = 22
 
 
 def _drop_plotted(items: object) -> object:

@@ -5,12 +5,12 @@
   "description": "A sorted list of seven numbers. Each step checks the middle number and throws away the half that cannot hold 23.",
   "elements": [
     {"id": "list", "kind": "rectangle", "x": 20, "y": 60, "width": 360, "height": 60, "color": "muted", "visible_at_start": true},
-    {"id": "numbers", "kind": "text", "x": 200, "y": 78, "text": "3  8  12  17  23  31  40", "size": 20, "align": "middle", "visible_at_start": true},
-    {"id": "target", "kind": "text", "x": 20, "y": 20, "text": "Looking for 23", "size": 20, "color": "accent", "visible_at_start": true},
+    {"id": "numbers", "kind": "text", "x": 200, "y": 78, "text": "3  8  12  17  23  31  40", "size": 22, "align": "middle", "visible_at_start": true},
+    {"id": "target", "kind": "text", "x": 20, "y": 20, "text": "Looking for 23", "size": 22, "color": "accent", "visible_at_start": true},
     {"id": "pointer", "kind": "arrow", "start": {"x": 200, "y": 180}, "end": {"x": 200, "y": 130}, "color": "highlight"},
     {"id": "left-half", "kind": "rectangle", "x": 20, "y": 60, "width": 180, "height": 60, "color": "negative", "filled": true},
     {"id": "checks", "kind": "text", "x": 20, "y": 240, "text": "0", "size": 24},
-    {"id": "checks-label", "kind": "text", "x": 60, "y": 242, "text": "checks so far", "size": 20, "color": "muted", "visible_at_start": true},
+    {"id": "checks-label", "kind": "text", "x": 60, "y": 242, "text": "checks so far", "size": 22, "color": "muted", "visible_at_start": true},
     {"id": "curve", "kind": "graph", "x": 240, "y": 160, "width": 140, "height": 120, "x_min": 1, "x_max": 64, "y_min": 0, "y_max": 7, "x_label": "n", "y_label": "checks", "series": [{"expression": "log(x) / log(2)", "sample_count": 40}]}
   ],
   "steps": [

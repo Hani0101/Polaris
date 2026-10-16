@@ -2,13 +2,32 @@ import { useRef, useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { sampleWhiteboard } from '../whiteboard/sampleWhiteboard.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { ToolsPanel } from './ToolsPanel.tsx'
 
 vi.mock('../AnimationPlayer.tsx', () => ({
-  AnimationPlayer: ({ jobId }: { jobId: string }) => (
-    <div data-testid="animation-player">{jobId}</div>
+  AnimationPlayer: ({
+    jobId,
+    onAskAboutStep,
+  }: {
+    jobId: string
+    onAskAboutStep?: (ask: AskAboutStep) => void
+  }) => (
+    <>
+      <div data-testid="animation-player">{jobId}</div>
+      {onAskAboutStep ? (
+        <button
+          type="button"
+          onClick={() =>
+            onAskAboutStep({ jobId, stepId: 'discard', stepNumber: 2, caption: 'Drop the left half.' })
+          }
+        >
+          Ask about this step
+        </button>
+      ) : null}
+    </>
   ),
 }))
 
@@ -70,6 +89,7 @@ function renderPanel(
     onOpenWhiteboard: (id: string) => void
     onOpenAnimation: (sessionId: string, jobId: string) => void
     onClose: () => void
+    onAskAboutStep: (ask: AskAboutStep) => void
   }> = {},
 ) {
   return render(
@@ -81,6 +101,7 @@ function renderPanel(
       onOpenWhiteboard={callbacks.onOpenWhiteboard ?? noop}
       onOpenAnimation={callbacks.onOpenAnimation ?? noop}
       onQuizGraded={noop}
+      onAskAboutStep={callbacks.onAskAboutStep}
     />,
   )
 }
@@ -167,6 +188,28 @@ test('the animation tab shows a running job and a failed one', () => {
   expect(screen.getByRole('alert').textContent).toBe(
     'Polaris cannot create the animation right now. Try later.',
   )
+})
+
+test('the animation tab passes on asking about a step (AN-17)', () => {
+  const onAskAboutStep = vi.fn()
+  renderPanel([{ ...animation, status: 'ready' }], { onAskAboutStep })
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  fireEvent.click(screen.getByRole('button', { name: 'Ask about this step' }))
+
+  expect(onAskAboutStep).toHaveBeenCalledWith({
+    jobId: 'job-1',
+    stepId: 'discard',
+    stepNumber: 2,
+    caption: 'Drop the left half.',
+  })
+})
+
+test('a running job in the animation tab shows its stage (AN-19)', () => {
+  renderPanel([{ ...animation, stage: 'checking' }])
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  expect(screen.getByRole('status').textContent).toBe('Checking the animation')
 })
 
 test('the whiteboard tab shows the most recent whiteboard and opens it', () => {

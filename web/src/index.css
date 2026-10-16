@@ -1054,3 +1054,13 @@ a.whiteboard-original {
   position: absolute;
   z-index: var(--z-index-modal);
 }
+
+/* A chip naming the animation step the next turn asks about (AN-17). */
+.step-chip {
+  max-width: 100%;
+}
+
+.step-chip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
