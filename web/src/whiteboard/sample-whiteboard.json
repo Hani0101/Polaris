@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "id": "wb-1",
+  "session_id": "session-1",
+  "steps": [
+    {
+      "id": "step-1",
+      "reply_part": "[[step:step-1]]",
+      "elements": [
+        {
+          "id": "rect-1",
+          "kind": "rectangle",
+          "author": "agent",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 }
+        },
+        {
+          "id": "ellipse-1",
+          "kind": "ellipse",
+          "author": "learner",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 }
+        },
+        {
+          "id": "arrow-1",
+          "kind": "arrow",
+          "author": "agent",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 },
+          "start": { "x": 10, "y": 20 },
+          "end": { "x": 90, "y": 60 }
+        },
+        {
+          "id": "line-1",
+          "kind": "line",
+          "author": "agent",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 },
+          "start": { "x": 12, "y": 22 },
+          "end": { "x": 70, "y": 22 }
+        },
+        {
+          "id": "text-1",
+          "kind": "text",
+          "author": "agent",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 },
+          "text": "half"
+        },
+        {
+          "id": "freehand-1",
+          "kind": "freehand",
+          "author": "agent",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 },
+          "points": [
+            { "x": 14, "y": 24 },
+            { "x": 40, "y": 50 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "step-2",
+      "reply_part": "[[step:step-2]]",
+      "elements": [
+        {
+          "id": "rect-2",
+          "kind": "rectangle",
+          "author": "learner",
+          "position": { "x": 10, "y": 20 },
+          "size": { "width": 80, "height": 40 },
+          "style": { "stroke": "#1f3a5f", "fill": "#f4efe6", "stroke_width": 2 }
+        }
+      ]
+    }
+  ],
+  "comments": []
+}
