@@ -34,7 +34,7 @@ import contextlib
 import json
 import sys
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -57,10 +57,11 @@ from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.models import Pointing, Profile, Turn
 from polaris.quiz import InvalidQuiz
+from polaris.auto_layout import expand_layout
+from polaris.board_picture import BoardPicture
+from polaris.layout_check import LayoutProblem, layout_problems
 from polaris.whiteboard import (
-    DESCRIBED_DRAWING_VERSION,
-    GRAPH_DRAWING_VERSION,
-    MATH_CODE_DRAWING_VERSION,
+    CURRENT_DRAWING_VERSION,
     WHITEBOARD_TOOL_LIMITS,
     MissingWhiteboard,
     Whiteboard,
@@ -69,6 +70,7 @@ from polaris.whiteboard import (
     describe_whiteboard,
     element_count,
     pointed_element_errors,
+    summarize_whiteboard,
 )
 
 _MISSING_PROFILE = (
@@ -89,19 +91,33 @@ DRAW_WHITEBOARD_DESCRIPTION = (
     "Draw a whiteboard when a picture helps the learner see an idea: "
     "how parts connect, a sequence, a comparison, or a layout. "
     "Do not use this when the explanation is clear as text, and do not use it for a quiz. "
-    "The input is one Polaris drawing: version 4, id, description, session_id, steps, and comments. "
-    "A drawing that contains math or code is version 5 and still includes a description. "
-    "A drawing that contains a graph is version 6 and still includes a description. "
+    "The input is one Polaris drawing: id, description, steps, comments, and optionally layout. "
+    "Polaris sets the version and session_id. "
     "description is required on a new whiteboard. It is the text a person who cannot see the drawing reads. "
-    "Polaris sets session_id to the open session. "
     "Each step has id, reply_part, and elements. "
     "reply_part must be [[step:<that step's id>]], for example [[step:step-1]] "
     "when the step id is step-1. "
     "Write that same marker in the reply at the start of the part that step explains. "
+    "For boxes joined by arrows, send layout instead of placing them yourself. "
+    "Polaris places the boxes, puts each label inside its box, and attaches each arrow to its boxes. "
+    "layout has kind: flow, sequence, cycle, tree, comparison, or parts. "
+    "flow has nodes and links; each link has from, to, and an optional short label. "
+    "sequence and cycle have nodes in order; Polaris links them. "
+    "tree has nodes, and every node except the root has parent. "
+    "flow, sequence, and tree take direction down (the default) or right. "
+    "Each node has id and a short label, and optionally shape (rectangle or ellipse) and step. "
+    "comparison has 2 or 3 columns, each with id, title, and items (short texts). "
+    "parts has whole (id and label) and nodes, the labeled parts around it. "
+    "A node, link, or column with step appears in that step; without step it is in the first step. "
+    "Elements you list in a step are kept beside the layout. "
     "Each element has id, kind, author (agent or learner), position (x, y), "
     "size (width, height), and style (stroke, fill, stroke_width). "
+    "Keep every part between (0, 0) and (1000, 1400); the learner may be on a phone. "
     "kind is rectangle, ellipse, arrow, line, text, freehand, mark, math, code, or graph. "
-    "arrow and line also have start and end. text also has text. freehand also has points. "
+    "A rectangle or ellipse may have label, drawn inside it. "
+    "arrow and line also have start and end. An arrow may also have label, and "
+    "start_element_id and end_element_id to attach its ends to parts. "
+    "text also has text. freehand also has points. "
     "math also has latex, the LaTeX source of one formula. "
     "code also has language, a short name such as python, and code, the source text. "
     "Use a math element for a formula and a code element for code. "
@@ -113,6 +129,9 @@ DRAW_WHITEBOARD_DESCRIPTION = (
     "Each series is a function with expression and sample_count, or data with points of x and y. "
     "expression may use x and sin, cos, tan, asin, acos, atan, sqrt, log, log10, exp, abs, floor, ceil, pi, and e. "
     "Do not send plotted points. Polaris computes them. "
+    "Polaris checks the layout too: parts must not overlap, text must fit its box, "
+    "arrow ends must touch a part, and a drawing has at most 24 parts. "
+    "A refused drawing comes back with what to fix. "
     "A mark targets one learner element. It has mark (circle, arrow, or note), "
     "author agent, and target_element_id. An arrow mark also has start and end. "
     "A note also has text. "
@@ -161,6 +180,13 @@ DRAW_WHITEBOARD_SCHEMA = {
             "type": "array",
             "description": "Circle, arrow, or note marks on learner elements.",
             "items": {"type": "object"},
+        },
+        "layout": {
+            "type": "object",
+            "description": (
+                "A flow, sequence, cycle, tree, comparison, or parts structure. "
+                "Polaris places it."
+            ),
         },
     },
     "additionalProperties": True,
@@ -314,16 +340,22 @@ def teaching_prompt() -> str:
         "Do not grade the learner's choices. Code grades them against the stored key.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
-        "A new whiteboard is version 4 and includes a description for a person "
-        "who cannot see the drawing.\n"
-        "When the drawing contains a formula or code, use a math or code element "
-        "and version 5. Do not draw a formula or code as shapes.\n"
-        "When the drawing contains a function or data, use a graph element "
-        "and version 6. Do not draw a function or data as a freehand curve.\n"
+        "A new whiteboard includes a description for a person "
+        "who cannot see the drawing. Polaris sets the version.\n"
+        "For boxes and arrows, send a layout (flow, sequence, cycle, tree, comparison, "
+        "or parts) and let Polaris place it, rather than writing coordinates.\n"
+        "When the drawing contains a formula or code, use a math or code element. "
+        "Do not draw a formula or code as shapes.\n"
+        "When the drawing contains a function or data, use a graph element. "
+        "Do not draw a function or data as a freehand curve.\n"
         "Do not call draw_whiteboard when the explanation is clear as text, "
         "and do not call it for a quiz.\n"
         "Set each step's reply_part to [[step:<that step's id>]] "
         "and write that same marker in the reply where the step should appear.\n"
+        "When the turn includes a picture of a whiteboard the learner drew on, "
+        "read it with the text description of the same whiteboard. "
+        "Hand-drawn sketches are easy to misread: say what you think the learner drew "
+        "and ask them to confirm before you build on it or mark it as a mistake.\n"
         "To mark a mistake on the learner's drawing, call draw_whiteboard with "
         "whiteboard_id, step_id, reply_part [[step:<that step's id>]], and marks. "
         "A mark is a circle, an arrow, or a note on one learner element. "
@@ -371,6 +403,27 @@ def _simpler_instruction(whiteboard: Whiteboard) -> str:
     )
 
 
+def _detailed_whiteboard_ids(
+    whiteboards: Sequence[Whiteboard],
+    pointing: Pointing | None,
+    simplify: Whiteboard | None,
+    picture: BoardPicture | None,
+) -> set[str]:
+    """Boards this turn is about. The rest get one line each to keep the prompt short."""
+
+    ids: set[str] = set()
+    if whiteboards:
+        ids.add(whiteboards[-1].id)
+    if pointing is not None:
+        ids.add(pointing.whiteboard_id)
+    if picture is not None:
+        ids.add(picture.whiteboard_id)
+    if simplify is not None:
+        # Its full description follows the simpler instruction.
+        ids.discard(simplify.id)
+    return ids
+
+
 def turn_prompt(
     profile: Profile,
     learner_message: str,
@@ -378,6 +431,7 @@ def turn_prompt(
     whiteboards: Sequence[Whiteboard] = (),
     pointing: Pointing | None = None,
     simplify: Whiteboard | None = None,
+    picture: BoardPicture | None = None,
 ) -> str:
     lines = [
         "Profile facts, read for this reply:",
@@ -395,10 +449,22 @@ def turn_prompt(
                 lines.append(earlier)
             lines.append(f"Polaris: {turn.reply}")
     if whiteboards:
+        detailed = _detailed_whiteboard_ids(whiteboards, pointing, simplify, picture)
         lines.append("")
         lines.append("Whiteboards in this session:")
         for whiteboard in whiteboards:
-            lines.append(describe_whiteboard(whiteboard))
+            if whiteboard.id in detailed:
+                lines.append(describe_whiteboard(whiteboard))
+            else:
+                lines.append(summarize_whiteboard(whiteboard))
+    if picture is not None:
+        lines.append("")
+        lines.append(
+            f"A picture of whiteboard {picture.whiteboard_id}, as the learner sees it "
+            "after drawing on it, is attached to this message. Its parts are listed "
+            "above with their ids. Say what you think the learner drew and check "
+            "with them before you rely on it."
+        )
     current = _pointing_text(whiteboards, pointing)
     if current is not None:
         lines.append("")
@@ -411,6 +477,32 @@ def turn_prompt(
     lines.append("Learner message:")
     lines.append(learner_message)
     return "\n".join(lines)
+
+
+async def picture_message(prompt: str, picture: BoardPicture) -> AsyncIterator[dict[str, Any]]:
+    """One user message with the turn text and the board picture.
+
+    Streaming input is the mode that takes images (streaming-vs-single-mode.md).
+    """
+
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": picture.media_type,
+                        "data": picture.data,
+                    },
+                },
+            ],
+        },
+        "parent_tool_use_id": None,
+    }
 
 
 async def _unavailable_quiz(_args: dict[str, Any]) -> dict[str, Any]:
@@ -481,25 +573,41 @@ def submit_whiteboard(
 
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if isinstance(data, dict):
-        incoming = {**_decode_json_lists(data), "session_id": session_id}
-        if _contains_graph(incoming):
-            incoming["version"] = GRAPH_DRAWING_VERSION
-        elif _contains_math_or_code(incoming):
-            incoming["version"] = MATH_CODE_DRAWING_VERSION
-        elif "description" in incoming or _names_a_simpler_original(incoming):
-            incoming["version"] = DESCRIBED_DRAWING_VERSION
+        # Every new drawing is the current version (decision 0006).
+        incoming = {
+            **_decode_json_lists(data),
+            "session_id": session_id,
+            "version": CURRENT_DRAWING_VERSION,
+        }
     else:
         incoming = data
-    checked = check_drawing(incoming)
     if failures > limit:
         return WhiteboardSubmission(
             tool_result=_tool_error(_limit_message()),
             failures=failures,
         )
+    expanded = expand_layout(incoming)
+    if expanded.errors:
+        updated = failures + 1
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message("\n".join(expanded.errors), updated)),
+            failures=updated,
+        )
+    checked = check_drawing(expanded.drawing)
     if checked.errors or checked.whiteboard is None:
         updated = failures + 1
         return WhiteboardSubmission(
             tool_result=_tool_error(_fix_message("\n".join(checked.errors), updated)),
+            failures=updated,
+        )
+    problems = layout_problems(checked.whiteboard)
+    # Layout problems are refused while a refusal still leaves a fix. After
+    # that the drawing is shown, since a crowded drawing beats none.
+    if problems and failures < limit:
+        updated = failures + 1
+        detail = _layout_detail(problems)
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message(detail, updated)),
             failures=updated,
         )
     if store is None:
@@ -516,56 +624,29 @@ def submit_whiteboard(
             tool_result=_tool_error(_fix_message(detail, updated)),
             failures=updated,
         )
+    text = f"Whiteboard stored as id {payload['id']}. The learner can see the drawing."
+    if problems:
+        text = (
+            f"{text} It still has layout problems. Do not redraw it this turn.\n"
+            f"{_layout_detail(problems)}"
+        )
     return WhiteboardSubmission(
-        tool_result={
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Whiteboard stored as id {payload['id']}. "
-                        "The learner can see the drawing."
-                    ),
-                }
-            ]
-        },
+        tool_result={"content": [{"type": "text", "text": text}]},
         failures=failures,
     )
 
 
-def _contains_graph(data: dict[str, object]) -> bool:
-    return _contains_kind(data, "graph")
+def _layout_detail(problems: Sequence[LayoutProblem]) -> str:
+    lines = ["The drawing passed the format check but has layout problems:"]
+    lines.extend(f"- {problem.message}" for problem in problems)
+    return "\n".join(lines)
 
 
-def _contains_math_or_code(data: dict[str, object]) -> bool:
-    return _contains_kind(data, "math", "code")
-
-
-def _contains_kind(data: dict[str, object], *kinds: str) -> bool:
-    steps = data.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        elements = step.get("elements")
-        if not isinstance(elements, list):
-            continue
-        for element in elements:
-            if isinstance(element, dict) and element.get("kind") in kinds:
-                return True
-    return False
-
-
-def _names_a_simpler_original(data: dict[str, object]) -> bool:
-    simplifies = data.get("simplifies")
-    return isinstance(simplifies, str) and bool(simplifies.strip())
-
-
-_JSON_LIST_FIELDS = ("steps", "comments", "marks")
+_JSON_LIST_FIELDS = ("steps", "comments", "marks", "layout")
 
 
 def _decode_json_lists(data: dict[str, Any]) -> dict[str, Any]:
-    """Turn JSON text back into lists. The open tool schema leaves those fields untyped."""
+    """Turn JSON text back into lists and objects. The open tool schema leaves those fields untyped."""
 
     decoded = dict(data)
     for key in _JSON_LIST_FIELDS:
@@ -845,7 +926,7 @@ class _OffLoopClient:
         await self._call(self._client.connect())
 
     async def query(
-        self, prompt: str, session_id: str = "default"
+        self, prompt: str | AsyncIterable[dict[str, Any]], session_id: str = "default"
     ) -> None:
         await self._call(self._client.query(prompt, session_id=session_id))
 
@@ -1028,6 +1109,7 @@ class ClaudeTeachingAgent:
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        picture: BoardPicture | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
         client, include_transcript = await self._ensure_client(
@@ -1042,8 +1124,12 @@ class ClaudeTeachingAgent:
             whiteboards,
             pointing,
             simplify,
+            picture,
         )
-        await client.query(prompt)
+        if picture is None:
+            await client.query(prompt)
+        else:
+            await client.query(picture_message(prompt, picture))
         watch = ReplyWatch()
         try:
             async for chunk in watch.text(client.receive_response()):
@@ -1053,6 +1139,11 @@ class ClaudeTeachingAgent:
                 await self.close_session(session_id)
         if watch.reached_result:
             yield ReplyResult(sdk_session_id=watch.sdk_session_id)
+
+    def drawing_fix_count(self, session_id: str) -> int:
+        """Refused drawings in the session's last reply. The drawing evals read this."""
+
+        return self._drawing_failures.get(session_id, 0)
 
     async def close_session(self, session_id: str) -> None:
         self._drawing_failures.pop(session_id, None)

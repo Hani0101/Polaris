@@ -31,6 +31,7 @@ from polaris.animation import (
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.sandbox import run as sandbox_run
 from polaris.login import ApiKeyPresent
+from polaris.board_picture import BoardPicture, picture_errors
 from polaris.models import Pointing, Turn
 from polaris.profile import ProfilePass, apply_changes, load_profile, save_profile
 from polaris.quiz import AlreadyGraded, MissingQuiz, grade, normalize_spec, public_payload
@@ -73,6 +74,12 @@ class InvalidDrawing(Exception):
 
 
 class InvalidPointing(Exception):
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("\n".join(errors))
+        self.errors = errors
+
+
+class InvalidPicture(Exception):
     def __init__(self, errors: list[str]) -> None:
         super().__init__("\n".join(errors))
         self.errors = errors
@@ -287,6 +294,17 @@ class Chat:
             raise InvalidPointing(errors)
         return Pointing(whiteboard_id=whiteboard.id, element_ids=tuple(cleaned))
 
+    def resolve_picture(
+        self, session_id: str, whiteboard_id: str, media_type: str, data: str
+    ) -> BoardPicture:
+        """Accept a picture only of a whiteboard in this session, as a small PNG."""
+
+        whiteboard = self._stored_whiteboard(session_id, whiteboard_id.strip())
+        errors = picture_errors(media_type, data)
+        if errors:
+            raise InvalidPicture(errors)
+        return BoardPicture(whiteboard_id=whiteboard.id, media_type=media_type, data=data)
+
     def resolve_simplify(self, session_id: str, whiteboard_id: str) -> Whiteboard:
         """Load the whiteboard a simpler redraw must stay smaller than."""
 
@@ -298,6 +316,7 @@ class Chat:
         message: str,
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        picture: BoardPicture | None = None,
     ) -> AsyncIterator[str | dict[str, object]]:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
@@ -320,6 +339,8 @@ class Chat:
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)
+            # The picture is for this turn only and is not stored.
+            extra: dict[str, Any] = {"picture": picture} if picture is not None else {}
             async for item in self.agent.reply(
                 session_id=session_id,
                 profile=profile,
@@ -329,6 +350,7 @@ class Chat:
                 whiteboards=whiteboards,
                 pointing=pointing,
                 simplify=simplify,
+                **extra,
             ):
                 if isinstance(item, ReplyResult):
                     captured = item.sdk_session_id

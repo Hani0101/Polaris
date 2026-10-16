@@ -11,7 +11,7 @@ from polaris.teaching import submit_whiteboard, turn_prompt
 from polaris.whiteboard import check_drawing, describe_pointed
 from test_chat import make_client, parse_sse, post_turn
 from test_quiz import FILLED_PROFILE
-from test_whiteboard import _element, valid_whiteboard
+from test_whiteboard import _element, agent_drawing, valid_whiteboard
 
 REPLY = "A fraction is one part of a whole."
 LEARNER = "Explain fractions with a drawing."
@@ -54,7 +54,7 @@ class OneDrawingStub:
         assert self.chat is not None
         submit_whiteboard(
             session_id,
-            self.drawing,
+            agent_drawing(self.drawing),
             failures=0,
             store=self.chat.create_whiteboard,
         )

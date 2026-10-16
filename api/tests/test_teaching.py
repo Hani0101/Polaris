@@ -145,16 +145,17 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "Polaris shuffles the choices." in prompt
     assert "how parts connect" in DRAW_WHITEBOARD_DESCRIPTION
     assert "do not use it for a quiz" in DRAW_WHITEBOARD_DESCRIPTION
-    assert "version 4" in DRAW_WHITEBOARD_DESCRIPTION
-    assert "version 5" in DRAW_WHITEBOARD_DESCRIPTION
+    assert "Polaris sets the version" in DRAW_WHITEBOARD_DESCRIPTION
     assert "math" in DRAW_WHITEBOARD_DESCRIPTION
     assert "latex" in DRAW_WHITEBOARD_DESCRIPTION
     assert "code" in DRAW_WHITEBOARD_DESCRIPTION
     assert "Do not draw a formula or code as shapes." in DRAW_WHITEBOARD_DESCRIPTION
-    assert "version 6" in DRAW_WHITEBOARD_DESCRIPTION
     assert "graph" in DRAW_WHITEBOARD_DESCRIPTION
     assert "freehand curve" in DRAW_WHITEBOARD_DESCRIPTION
-    assert "version 6" in prompt
+    assert "Polaris sets the version." in prompt
+    assert "layout has kind: flow, sequence, cycle, tree, comparison, or parts" in DRAW_WHITEBOARD_DESCRIPTION
+    assert DRAW_WHITEBOARD_SCHEMA["properties"]["layout"]["type"] == "object"
+    assert "ask them to confirm" in prompt
     assert "graph element" in prompt
     assert "cannot see the drawing" in DRAW_WHITEBOARD_DESCRIPTION
     assert DRAW_WHITEBOARD_SCHEMA["properties"]["description"]["type"] == "string"

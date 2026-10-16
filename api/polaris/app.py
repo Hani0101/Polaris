@@ -16,6 +16,7 @@ from polaris.chat import (
     BlankMessage,
     Chat,
     InvalidDrawing,
+    InvalidPicture,
     InvalidPointing,
     MissingSession,
     ReplyInProgress,
@@ -34,10 +35,17 @@ class PointingBody(BaseModel):
     element_ids: list[str]
 
 
+class PictureBody(BaseModel):
+    whiteboard_id: str
+    media_type: str
+    data: str
+
+
 class TurnBody(BaseModel):
     message: str
     pointing: PointingBody | None = None
     simplifies: str | None = None
+    picture: PictureBody | None = None
 
 
 class GradeBody(BaseModel):
@@ -159,6 +167,10 @@ def create_app(
     async def invalid_pointing(_request, exc: InvalidPointing) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(InvalidPicture)
+    async def invalid_picture(_request, exc: InvalidPicture) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.exception_handler(AlreadyGraded)
     async def already_graded(_request, exc: AlreadyGraded) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
@@ -232,11 +244,22 @@ def create_app(
                 session_id,
                 body.simplifies,
             )
+        picture = None
+        if body.picture is not None:
+            picture = await asyncio.to_thread(
+                chat.resolve_picture,
+                session_id,
+                body.picture.whiteboard_id,
+                body.picture.media_type,
+                body.picture.data,
+            )
         chat.raise_if_busy(session_id)
 
         async def events() -> AsyncIterator[str]:
             try:
-                async for chunk in chat.stream_reply(session_id, text, pointing, simplify):
+                async for chunk in chat.stream_reply(
+                    session_id, text, pointing, simplify, picture
+                ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})
                     else:
