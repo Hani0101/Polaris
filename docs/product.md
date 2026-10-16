@@ -10,7 +10,7 @@ A person wants to learn a specific topic, including material from a course, in a
 
 v1 has one learner: the person running Polaris on their own machine. Polaris reaches Claude through that person's Claude login. See [Personal login, local only](decisions/0001-personal-login-local-only.md).
 
-A sign-in page for that learner is required before Sunday 18 Oct 2026, even without hosting. See [Local sign-in before Sunday](decisions/0004-local-sign-in-before-sunday.md).
+A sign-in page for that learner is required before Sunday 18 Oct 2026, even without hosting. See [Local sign-in before Sunday](decisions/0004-local-sign-in-before-sunday.md). Every other item in the MVP scope below is due before that date, so each outranks sign-in when choosing what to build next.
 
 Once Polaris is hosted, it is meant for students, people learning for their work, visual learners, auditory learners, reading and writing learners, kinesthetic learners, people who want a guide, and learners with limited income.
 
