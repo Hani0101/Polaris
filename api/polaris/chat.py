@@ -1,4 +1,7 @@
-"""Sessions made of turns. The profile is read before each reply and never written."""
+"""Sessions made of turns. The profile is read before each reply.
+
+The teaching agent does not write the profile. The session-end pass does.
+"""
 
 import asyncio
 import json
@@ -11,8 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from polaris.agent import ReplyAgent, ReplyResult
+from polaris.login import ApiKeyPresent
 from polaris.models import Pointing, Turn
-from polaris.profile import load_profile
+from polaris.profile import ProfilePass, apply_changes, load_profile, save_profile
 from polaris.quiz import AlreadyGraded, MissingQuiz, grade, normalize_spec, public_payload
 from polaris.whiteboard import (
     MissingWhiteboard,
@@ -113,9 +117,15 @@ def _turn_payload(turn: Turn) -> dict[str, object]:
 
 
 class Chat:
-    def __init__(self, data_dir: Path, agent: ReplyAgent) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        agent: ReplyAgent,
+        profile_pass: ProfilePass | None = None,
+    ) -> None:
         self.data_dir = data_dir
         self.agent = agent
+        self._profile_pass = profile_pass
         self.db_path = data_dir / "polaris.db"
         self.profile_path = data_dir / "profile.json"
         self._lock = threading.Lock()
@@ -185,6 +195,26 @@ class Chat:
 
         self._with_db(write)
         return self._payload(session_id), ended
+
+    async def run_profile_pass(self, session_id: str) -> None:
+        """Read the ended session and store fact changes. Does not teach."""
+
+        if self._profile_pass is None:
+            return
+        turns = await asyncio.to_thread(self._turns, session_id)
+        if not turns:
+            return
+        profile = await asyncio.to_thread(load_profile, self.profile_path)
+        try:
+            changes = await self._profile_pass.run(turns=turns, profile=profile)
+        except ApiKeyPresent:
+            raise
+        except Exception:
+            return
+        updated = apply_changes(profile, changes)
+        if updated.facts == profile.facts:
+            return
+        await asyncio.to_thread(save_profile, self.profile_path, updated)
 
     def leave(self, session_id: str) -> bool:
         """Mark the session ended. Return whether it was open and needs the agent closed."""

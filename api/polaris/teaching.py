@@ -25,6 +25,7 @@ thread.
 
 import asyncio
 import contextlib
+import json
 import sys
 import threading
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -119,6 +120,8 @@ DRAW_WHITEBOARD_DESCRIPTION = (
 )
 # properties is required so the SDK treats this as JSON Schema. An open
 # object lets invalid drawings reach check_drawing instead of failing earlier.
+# steps, comments, and marks stay untyped. The model then sends those lists
+# as JSON text, and _decode_json_lists reads that text before the check.
 DRAW_WHITEBOARD_SCHEMA = {
     "type": "object",
     "properties": {
@@ -423,7 +426,7 @@ def submit_whiteboard(
 
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if isinstance(data, dict):
-        incoming = {**data, "session_id": session_id}
+        incoming = {**_decode_json_lists(data), "session_id": session_id}
         if _contains_graph(incoming):
             incoming["version"] = GRAPH_DRAWING_VERSION
         elif _contains_math_or_code(incoming):
@@ -503,6 +506,25 @@ def _names_a_simpler_original(data: dict[str, object]) -> bool:
     return isinstance(simplifies, str) and bool(simplifies.strip())
 
 
+_JSON_LIST_FIELDS = ("steps", "comments", "marks")
+
+
+def _decode_json_lists(data: dict[str, Any]) -> dict[str, Any]:
+    """Turn JSON text back into lists. The open tool schema leaves those fields untyped."""
+
+    decoded = dict(data)
+    for key in _JSON_LIST_FIELDS:
+        value = decoded.get(key)
+        if not isinstance(value, str):
+            continue
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            continue
+        decoded[key] = parsed
+    return decoded
+
+
 def _is_compact_mark(data: object) -> bool:
     return isinstance(data, dict) and "marks" in data and "steps" not in data
 
@@ -550,6 +572,8 @@ def submit_marks(
             tool_result=_tool_error("Whiteboard storage is not available."),
             failures=failures,
         )
+    if isinstance(data, dict):
+        data = _decode_json_lists(data)
     try:
         payload = store(session_id, data if isinstance(data, dict) else {})
     except MissingWhiteboard:

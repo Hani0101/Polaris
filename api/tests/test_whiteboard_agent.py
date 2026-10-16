@@ -6,6 +6,7 @@ chat API is what the browser receives.
 
 import asyncio
 import copy
+import json
 from pathlib import Path
 
 from polaris.chat import InvalidDrawing
@@ -231,6 +232,33 @@ def test_the_agent_tool_stores_a_valid_drawing(tmp_path: Path):
     assert stored[0][1]["session_id"] == "session-9"
     assert stored[0][1]["id"] == "wb-1"
     assert "wb-1" in payload["content"][0]["text"]
+
+
+def test_a_drawing_sent_as_json_strings_is_stored(tmp_path: Path):
+    """The model sends steps and comments as JSON text when the tool schema leaves them untyped."""
+
+    stored: list[dict] = []
+
+    def store(_session_id: str, drawing: dict) -> dict:
+        stored.append(drawing)
+        return {"id": drawing["id"]}
+
+    drawing = _formula_drawing()
+    encoded = {
+        **drawing,
+        "version": str(drawing["version"]),
+        "steps": json.dumps(drawing["steps"]),
+        "comments": "[]",
+    }
+    agent = ClaudeTeachingAgent(tmp_path)
+    agent.bind_store(lambda _session_id, _spec: {"id": "quiz"}, store)
+
+    payload = asyncio.run(agent.handle_draw_whiteboard("session-9", encoded))
+
+    assert payload.get("is_error") is not True
+    assert stored[0]["version"] == 5
+    assert stored[0]["steps"][0]["elements"][0]["kind"] == "math"
+    assert stored[0]["comments"] == []
 
 
 def test_a_new_described_whiteboard_is_stored_as_version_4(tmp_path: Path):

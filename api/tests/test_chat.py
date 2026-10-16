@@ -1,6 +1,7 @@
-"""Chat scenarios: CH-01, CH-03, CH-04, CH-05, PR-01, PR-02, PR-03, and decision 0001.
+"""Chat scenarios: CH-01, CH-03, CH-04, CH-05, PR-01, PR-02, PR-03, PR-05, and decision 0001.
 
-An empty profile is asked for on every reply and is not written.
+An empty profile is asked for on every reply until the session ends.
+The teaching agent does not write the profile. The session-end pass does.
 """
 
 import asyncio
@@ -14,11 +15,26 @@ from fastapi.testclient import TestClient
 from polaris.agent import ReplyResult
 from polaris.app import create_app
 from polaris.login import ApiKeyPresent
+from polaris.models import FactChange
 
 EMPTY_PROFILE_REPLY = (
     "What should I know before I teach? "
     "How do you want to be taught, what can you already do, and where do you struggle?"
 )
+
+
+class StubPass:
+    """Returns fixed fact changes so a test can see the session-end pass run."""
+
+    def __init__(self, changes: tuple[FactChange, ...] = ()) -> None:
+        self.changes = changes
+        self.calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
+
+    async def run(self, *, turns, profile):
+        self.calls.append(
+            (tuple(turn.learner_message for turn in turns), profile.facts)
+        )
+        return self.changes
 
 
 class TeachingStub:
@@ -112,11 +128,11 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     opened: list[TestClient] = []
 
-    def make(agent=None, profile: str | None = None):
+    def make(agent=None, profile: str | None = None, profile_pass=None):
         if profile is not None:
             (tmp_path / "profile.json").write_text(profile, encoding="utf-8")
         stub = TeachingStub() if agent is None else agent
-        client = TestClient(create_app(tmp_path, stub))
+        client = TestClient(create_app(tmp_path, stub, profile_pass=profile_pass))
         if hasattr(stub, "chat"):
             stub.chat = client.app.state.chat
         client.__enter__()
@@ -280,6 +296,123 @@ def test_every_reply_is_written_with_the_shared_profile(make_client, tmp_path):
     assert first_reply == "Noted struggles with fractions. What is a half?"
     assert second_reply == "Noted struggles with fractions. How do I add fractions?"
     assert (tmp_path / "profile.json").read_text(encoding="utf-8") == raw
+
+
+def test_leaving_a_session_stores_profile_facts(make_client):
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like step-by-step walkthroughs")
+
+    left = client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert left.status_code == 200
+    assert client.get("/api/profile").json() == {
+        "facts": ["likes step-by-step walkthroughs"]
+    }
+
+
+def test_a_later_session_teaches_from_stored_facts(make_client):
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I like step-by-step walkthroughs")
+    client.post(f"/api/sessions/{first['id']}/leave")
+
+    second = client.post("/api/sessions").json()
+    reply = reply_text(post_turn(client, second["id"], "What is recursion?"))
+
+    assert reply == "Noted likes step-by-step walkthroughs. What is recursion?"
+
+
+def test_switching_sessions_stores_facts_from_the_one_left(make_client):
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "struggles with fractions"),))
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I struggle with fractions")
+
+    client.post("/api/sessions")
+
+    assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
+
+
+def test_a_later_ending_runs_the_profile_pass_again(make_client):
+    facts = ("likes diagrams", "comfortable with Python")
+
+    class NextFactPass:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, *, turns, profile):
+            del turns, profile
+            fact = facts[min(self.calls, len(facts) - 1)]
+            self.calls += 1
+            return (FactChange("ADD", fact),)
+
+    writer = NextFactPass()
+    client, _agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.post(f"/api/sessions/{session['id']}/open")
+    post_turn(client, session["id"], "I know Python")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert writer.calls == 2
+    assert client.get("/api/profile").json() == {
+        "facts": ["likes diagrams", "comfortable with Python"]
+    }
+
+
+def test_a_repeated_fact_is_not_stored_twice(make_client):
+    client, _agent = make_client(
+        profile='{\n  "facts": ["I suck at math"]\n}\n',
+        profile_pass=StubPass((FactChange("ADD", "I suck at math"),)),
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I still suck at math")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert client.get("/api/profile").json() == {"facts": ["I suck at math"]}
+
+
+def test_profile_pass_api_key_stops_the_app(make_client):
+    class KeyPass:
+        async def run(self, *, turns, profile):
+            del turns, profile
+            raise ApiKeyPresent(
+                "Polaris stopped because an API key is present. "
+                "v1 uses the Claude login on this machine."
+            )
+
+    client, _agent = make_client(profile_pass=KeyPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    left = client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert left.status_code == 503
+    assert client.get("/health").status_code == 503
+
+
+def test_a_failed_profile_pass_does_not_block_leaving(make_client):
+    class ExplodingPass:
+        async def run(self, *, turns, profile):
+            del turns, profile
+            raise RuntimeError("pass failed")
+
+    client, _agent = make_client(profile_pass=ExplodingPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    left = client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert left.status_code == 200
+    assert left.json()["ended"] is True
+    assert client.get("/api/profile").json() == {"facts": []}
 
 
 def test_empty_profile_asks_and_does_not_teach(make_client, tmp_path):

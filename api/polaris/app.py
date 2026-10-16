@@ -20,7 +20,8 @@ from polaris.chat import (
     SessionEnded,
 )
 from polaris.login import ApiKeyPresent, assert_claude_login
-from polaris.profile import ProfileUnreadable, load_profile
+from polaris.profile import ProfilePass, ProfileUnreadable, load_profile
+from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import AlreadyGraded, InvalidSubmission, MissingQuiz
 from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
 from polaris.teaching import ClaudeTeachingAgent, TeachingFailed, reply_error_message
@@ -45,14 +46,20 @@ def _sse(payload: dict[str, object]) -> str:
     return "data: " + json.dumps(payload) + "\n\n"
 
 
-def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
+def create_app(
+    data_dir: Path,
+    agent: ReplyAgent | None = None,
+    profile_pass: ProfilePass | None = None,
+) -> FastAPI:
     """Build the API. Refuses to start when an API key would replace the Claude login."""
 
     assert_claude_login()
     data_dir.mkdir(parents=True, exist_ok=True)
     if agent is None:
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
-    chat = Chat(data_dir, agent)
+        if profile_pass is None:
+            profile_pass = ClaudeProfilePass(data_dir / "claude-work")
+    chat = Chat(data_dir, agent, profile_pass=profile_pass)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -130,6 +137,11 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
     async def invalid_submission(_request, exc: InvalidSubmission) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(ApiKeyPresent)
+    async def api_key_present(_request, exc: ApiKeyPresent) -> JSONResponse:
+        app.state.api_key_stop = True
+        return JSONResponse(status_code=503, content={"detail": str(exc)})
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -143,11 +155,15 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
     def list_sessions() -> dict[str, list[dict[str, object]]]:
         return {"sessions": chat.list_sessions()}
 
+    async def close_ended(session_ids: tuple[str, ...]) -> None:
+        for session_id in session_ids:
+            await chat.agent.close_session(session_id)
+            await chat.run_profile_pass(session_id)
+
     @app.post("/api/sessions")
     async def start_session() -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.start)
-        for session_id in ended_ids:
-            await chat.agent.close_session(session_id)
+        await close_ended(ended_ids)
         return session
 
     @app.get("/api/sessions/{session_id}")
@@ -157,8 +173,7 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
     @app.post("/api/sessions/{session_id}/open")
     async def open_session(session_id: str) -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.open, session_id)
-        for left_id in ended_ids:
-            await chat.agent.close_session(left_id)
+        await close_ended(ended_ids)
         return session
 
     @app.post("/api/sessions/{session_id}/leave")
@@ -166,6 +181,7 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
         should_close = await asyncio.to_thread(chat.leave, session_id)
         if should_close:
             await chat.agent.close_session(session_id)
+            await chat.run_profile_pass(session_id)
         return await asyncio.to_thread(chat.get, session_id)
 
     @app.post("/api/sessions/{session_id}/turns")

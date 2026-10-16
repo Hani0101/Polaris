@@ -3,9 +3,18 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Profile:
-    """Facts Polaris already knows about the learner. Read only."""
+    """Facts Polaris already knows about the learner."""
 
     facts: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FactChange:
+    """One ADD, UPDATE, DELETE, or IGNORE from the profile pass."""
+
+    action: str
+    fact: str
+    replaces: str | None = None
 
 
 @dataclass(frozen=True)
