@@ -1,0 +1,74 @@
+/* Structured tutor replies (DESIGN.md: Chat message, 3.3, 3.4, 6.5). */
+
+.reply {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between blocks inside one tutor reply, used space.sm */
+  gap: var(--space-sm);
+}
+
+.reply h3 {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+}
+
+.reply h3:not(:first-child) {
+  /* DS-GAP: extra room above a heading inside a reply, used space.xs */
+  margin-top: var(--space-xs);
+}
+
+.reply ol,
+.reply ul {
+  margin: 0;
+  /* DS-GAP: list indent inside a reply, used space.lg */
+  padding-left: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between list items inside a reply, used space.2xs */
+  gap: var(--space-2xs);
+}
+
+.reply li::marker {
+  font-weight: var(--font-weight-bold);
+}
+
+.reply strong {
+  font-weight: var(--font-weight-bold);
+}
+
+.reply code {
+  font-family: var(--font-family-mono);
+}
+
+.reply pre {
+  margin: 0;
+  /* DS-GAP: code block look in replies, used the side panel's subtle fill and card border */
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-bg-subtle);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  /* 6.5: wide code wraps, only the whiteboard scrolls sideways. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reply a {
+  color: var(--color-text-link);
+  text-decoration-line: underline;
+  text-decoration-thickness: var(--border-width-default);
+  text-underline-offset: var(--space-2xs);
+  transition: text-decoration-thickness var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.reply a:hover {
+  text-decoration-thickness: var(--border-width-emphasis);
+}
+
+.reply-external {
+  display: inline-block;
+  margin-left: var(--space-2xs);
+  vertical-align: -0.125em;
+}

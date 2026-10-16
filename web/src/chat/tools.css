@@ -1,0 +1,283 @@
+/* Tools: right side panel, underline tabs, phone bottom sheet.
+   DESIGN.md 6.5 (layout), 7 (Side panel, Tabs, Bottom sheet, Card, Empty state), 8 (motion). */
+
+/* Side panel, right variant. Opens and closes instantly: no motion on laptops (8.3). */
+.tools-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: var(--layout-panel-right);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-md);
+  background: var(--color-bg-subtle);
+  border-left: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+@media (min-width: 1440px) {
+  .tools-panel {
+    width: var(--layout-panel-right-wide);
+  }
+}
+
+.tools {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  min-height: 0;
+}
+
+.tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inline-default);
+}
+
+.tools-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+/* Tabs, underline variant. Never animated (8.3). */
+.tabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  min-height: 0;
+}
+
+.tabs-list {
+  display: flex;
+  border-bottom: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+.tabs-tab {
+  min-height: var(--component-tap-target-min);
+  padding: 0 var(--space-md);
+  margin-bottom: calc(-1 * var(--border-width-default));
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: none;
+  border-bottom: var(--border-width-emphasis) solid transparent;
+  border-radius: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  transition: none;
+}
+
+.tabs-tab:hover:not(:disabled),
+.tabs-tab:active:not(:disabled) {
+  background: transparent;
+  color: var(--color-text-primary);
+}
+
+.tabs-tab[aria-selected='true'] {
+  color: var(--color-text-primary);
+  border-bottom-color: var(--color-accent);
+}
+
+.tabs-tab:disabled {
+  background: transparent;
+  border: none;
+  color: var(--color-text-disabled);
+}
+
+.tabs-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.tabs-panel[hidden] {
+  display: none;
+}
+
+.tools-empty {
+  margin-block: auto;
+}
+
+.tools-whiteboard {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.tools-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.tools-whiteboard-board {
+  position: relative;
+  flex: none;
+}
+
+/* The board does not stretch to the panel's height: the drawing zooms to fit,
+   so a tall board only adds empty space above and below it. Only the drawing
+   surface gets a fixed shape; the description flows under it.
+   DS-GAP: whiteboard shape in the tools panel has no token, used a 4:3 box. */
+.tools-whiteboard-board .whiteboard {
+  position: static;
+}
+
+.tools-whiteboard-board .whiteboard-surface {
+  flex: none;
+  aspect-ratio: 4 / 3;
+}
+
+/* Card, clickable and static variants. */
+.tools-artifacts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tools-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  /* DS-GAP: gap between a card title and its description, used space.xs */
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: var(--component-tap-target-min);
+  padding: var(--space-card-padding);
+  background: var(--color-surface-default);
+  color: var(--color-text-primary);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-normal);
+  text-align: left;
+}
+
+.tools-card--clickable:hover:not(:disabled) {
+  background: var(--color-surface-default);
+  border-color: var(--color-border-strong);
+}
+
+.tools-card--clickable:active:not(:disabled) {
+  background: var(--color-action-secondary-default);
+}
+
+.tools-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inline-default);
+}
+
+.tools-card-title {
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+}
+
+.tools-card-body {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* Bottom sheet: phone tools, below 640px. */
+.bottom-sheet {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-index-drawer);
+  display: flex;
+  flex-direction: column;
+  height: var(--component-bottom-sheet-start-height);
+  max-height: 100%;
+  padding: 0 var(--space-md) var(--space-md);
+  overflow: hidden;
+  background: var(--color-surface-raised);
+  border-top: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  visibility: hidden;
+  transform: translateY(100%);
+  transition:
+    transform var(--motion-duration-normal) var(--motion-easing-exit),
+    height var(--motion-duration-normal) var(--motion-easing-exit),
+    visibility 0s linear var(--motion-duration-normal);
+}
+
+.bottom-sheet.is-open {
+  visibility: visible;
+  transform: none;
+  transition:
+    transform var(--motion-duration-slow) var(--motion-easing-standard),
+    height var(--motion-duration-slow) var(--motion-easing-standard);
+}
+
+.bottom-sheet.is-full {
+  height: 100%;
+}
+
+.bottom-sheet.is-dragging {
+  transition: none;
+}
+
+.bottom-sheet-handle {
+  flex: none;
+  align-self: center;
+  width: var(--component-tap-target-min);
+  height: var(--component-tap-target-min);
+  min-height: var(--component-tap-target-min);
+  padding: 0;
+  background: transparent;
+  touch-action: none;
+  cursor: grab;
+}
+
+.bottom-sheet-handle:hover:not(:disabled) {
+  background: var(--color-action-secondary-default);
+}
+
+.bottom-sheet-handle:active:not(:disabled) {
+  background: var(--color-action-secondary-hover);
+}
+
+.bottom-sheet-grip {
+  width: var(--component-bottom-sheet-handle-width);
+  height: var(--component-bottom-sheet-handle-height);
+  background: var(--color-border-strong);
+  border-radius: var(--radius-full);
+}
+
+.bottom-sheet-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bottom-sheet {
+    opacity: 0;
+    transform: none;
+    transition:
+      opacity var(--motion-duration-fast) var(--motion-easing-standard),
+      visibility 0s linear var(--motion-duration-fast);
+  }
+
+  .bottom-sheet.is-open {
+    opacity: 1;
+    transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
+  }
+}

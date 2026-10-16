@@ -8,7 +8,10 @@ import {
   sendTurn,
   startSession,
 } from './api.ts'
-import type { Artifact, Session, SessionSummary, Turn, WhiteboardArtifact } from './api.ts'
+import type { Artifact, Quiz, Session, SessionSummary, Turn, WhiteboardArtifact } from './api.ts'
+import { animationPagePath, pathAnimation } from './animationPath.ts'
+import { AnimationPage } from './AnimationPage.tsx'
+import { watchRunningAnimations } from './chat/animationNotices.ts'
 import { ChatShell } from './chat/ChatShell.tsx'
 import type { ViewTurn } from './chat/Conversation.tsx'
 import { pointingFromTurn, type PointedPart, type Pointing } from './whiteboard/pointing.ts'
@@ -78,9 +81,23 @@ function goTo(path: string) {
   window.dispatchEvent(new PopStateEvent('popstate'))
 }
 
+function withAnimationStatus(artifacts: Artifact[], jobId: string, status: string): Artifact[] {
+  return artifacts.map((artifact) =>
+    artifact.kind === 'animation' && artifact.id === jobId
+      ? { ...artifact, status }
+      : artifact,
+  )
+}
+
 function boardsIn(turns: Turn[]): WhiteboardArtifact[] {
   return turns.flatMap((turn) =>
     turn.artifacts.filter((artifact): artifact is WhiteboardArtifact => artifact.kind === 'whiteboard'),
+  )
+}
+
+function withQuiz(artifacts: Artifact[], quiz: Quiz): Artifact[] {
+  return artifacts.map((artifact) =>
+    artifact.kind === 'quiz' && artifact.id === quiz.id ? quiz : artifact,
   )
 }
 
@@ -159,6 +176,7 @@ function App() {
   const [sessionListOpen, setSessionListOpen] = useState(
     () => window.matchMedia(DESKTOP_QUERY).matches,
   )
+  const [toolsOpen, setToolsOpen] = useState(() => window.matchMedia(DESKTOP_QUERY).matches)
   const [loading, setLoading] = useState(
     () => !(import.meta.env.DEV && window.location.pathname === '/dev/whiteboard'),
   )
@@ -170,6 +188,43 @@ function App() {
     () => mergeTurns(open?.turns ?? [], kept, pending),
     [open, kept, pending],
   )
+
+  const artifacts = useMemo(
+    () => turns.filter((turn) => !turn.streaming).flatMap((turn) => turn.artifacts),
+    [turns],
+  )
+
+  const animationStatusRef = useRef<(jobId: string, status: string) => void>(() => {})
+  animationStatusRef.current = (jobId, status) => {
+    setOpen((current) =>
+      current
+        ? {
+            ...current,
+            turns: current.turns.map((turn) => ({
+              ...turn,
+              artifacts: withAnimationStatus(turn.artifacts, jobId, status),
+            })),
+          }
+        : current,
+    )
+    setPending((current) =>
+      current
+        ? { ...current, artifacts: withAnimationStatus(current.artifacts, jobId, status) }
+        : current,
+    )
+    setKept((current) =>
+      current.map((item) => ({
+        ...item,
+        artifacts: withAnimationStatus(item.artifacts, jobId, status),
+      })),
+    )
+  }
+
+  useEffect(() => {
+    watchRunningAnimations(artifacts, (jobId, status) => {
+      animationStatusRef.current(jobId, status)
+    })
+  }, [artifacts])
 
   useEffect(() => {
     function onPop() {
@@ -183,6 +238,7 @@ function App() {
     const media = window.matchMedia(DESKTOP_QUERY)
     function sync() {
       setSessionListOpen(media.matches)
+      setToolsOpen(media.matches)
     }
     media.addEventListener('change', sync)
     return () => media.removeEventListener('change', sync)
@@ -321,6 +377,26 @@ function App() {
     }
   }
 
+  function onQuizGraded(quiz: Quiz) {
+    setOpen((current) =>
+      current
+        ? {
+            ...current,
+            turns: current.turns.map((turn) => ({
+              ...turn,
+              artifacts: withQuiz(turn.artifacts, quiz),
+            })),
+          }
+        : current,
+    )
+    setKept((current) =>
+      current.map((item) => ({ ...item, artifacts: withQuiz(item.artifacts, quiz) })),
+    )
+    setPending((current) =>
+      current ? { ...current, artifacts: withQuiz(current.artifacts, quiz) } : current,
+    )
+  }
+
   function onStop() {
     sendAbort.current?.abort()
     sending.current = false
@@ -453,9 +529,10 @@ function App() {
 
   const quizId = pathQuizId(path)
   const whiteboardRoute = pathWhiteboard(path)
-  const covering = Boolean(quizId || whiteboardRoute)
+  const animationRoute = pathAnimation(path)
+  const covering = Boolean(quizId || whiteboardRoute || animationRoute)
 
-  async function onBackFromQuiz() {
+  async function onBackFromCover() {
     goTo('/')
     if (!open) return
     try {
@@ -475,13 +552,13 @@ function App() {
 
   return (
     <>
-      {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromQuiz()} /> : null}
+      {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromCover()} /> : null}
       {whiteboardRoute ? (
         <WhiteboardPage
           key={`${whiteboardRoute.sessionId}/${whiteboardRoute.whiteboardId}`}
           sessionId={whiteboardRoute.sessionId}
           whiteboardId={whiteboardRoute.whiteboardId}
-          onBack={() => void onBackFromQuiz()}
+          onBack={() => void onBackFromCover()}
           onAsk={(parts) => {
             askAbout(whiteboardRoute.whiteboardId, parts)
             goTo('/')
@@ -489,6 +566,14 @@ function App() {
           onSimpler={(id) => void askSimpler(id)}
           onOpenOriginal={(id) => goTo(whiteboardPath(whiteboardRoute.sessionId, id))}
           simplerBusy={pending?.status === 'streaming' || pending?.status === 'done'}
+        />
+      ) : null}
+      {animationRoute ? (
+        <AnimationPage
+          key={`${animationRoute.sessionId}/${animationRoute.jobId}`}
+          sessionId={animationRoute.sessionId}
+          jobId={animationRoute.jobId}
+          onBack={() => void onBackFromCover()}
         />
       ) : null}
       <div
@@ -526,12 +611,20 @@ function App() {
             if (!open) return
             goTo(whiteboardPath(open.id, id))
           }}
+          onOpenAnimation={(sessionId, jobId) => {
+            goTo(animationPagePath(sessionId, jobId))
+          }}
           onSimpler={(id) => void askSimpler(id)}
           pointing={pointing}
           onRemovePoint={removePoint}
           onAsk={askAbout}
           toast={toast}
           onCloseToast={() => setToast(null)}
+          artifacts={artifacts}
+          toolsOpen={toolsOpen}
+          onToggleTools={() => setToolsOpen((current) => !current)}
+          onCloseTools={() => setToolsOpen(false)}
+          onQuizGraded={onQuizGraded}
         />
       </div>
     </>

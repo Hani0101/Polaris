@@ -175,7 +175,14 @@ export type WhiteboardArtifact = Whiteboard & {
   kind: 'whiteboard'
 }
 
-export type Artifact = Quiz | WhiteboardArtifact
+export type AnimationArtifact = {
+  id: string
+  kind: 'animation'
+  session_id: string
+  status: string
+}
+
+export type Artifact = Quiz | WhiteboardArtifact | AnimationArtifact
 
 export type TurnPointing = {
   whiteboard_id: string
@@ -272,6 +279,14 @@ export function leaveSession(sessionId: string): Promise<Session> {
 
 export function getSession(sessionId: string, signal?: AbortSignal): Promise<Session> {
   return request<Session>(`/api/sessions/${sessionId}`, { signal })
+}
+
+export function getAnimationJob(
+  sessionId: string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<AnimationArtifact> {
+  return request<AnimationArtifact>(`/api/sessions/${sessionId}/jobs/${jobId}`, { signal })
 }
 
 export function getQuiz(quizId: string, signal?: AbortSignal): Promise<Quiz> {

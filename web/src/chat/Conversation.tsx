@@ -1,11 +1,14 @@
 import { useEffect, useRef } from 'react'
-import type { FormEvent, KeyboardEvent } from 'react'
-import type { Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import type { FormEvent, KeyboardEvent, Ref } from 'react'
+import { Plus } from 'lucide-react'
+import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
 import { revealWhiteboard, visibleReply } from '../whiteboard/reveal.ts'
 import type { RevealPhase } from '../whiteboard/reveal.ts'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
 import { whiteboardPagePath } from '../whiteboard/simpler.ts'
 import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
+import { AnimationCard } from './AnimationCard.tsx'
+import { ReplyText } from './ReplyText.tsx'
 import {
   AlertBanner,
   AlertIcon,
@@ -43,12 +46,16 @@ type ConversationProps = {
   onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
+  onOpenAnimation?: (sessionId: string, jobId: string) => void
   onSimpler?: (whiteboardId: string) => void
   sessionId?: string | null
   onStart: () => void
   pointing?: Pointing | null
   onRemovePoint?: (elementId: string) => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  /** Phone only: opens the tools bottom sheet from the + button in the chat input. */
+  onOpenTools?: () => void
+  toolsButtonRef?: Ref<HTMLButtonElement>
 }
 
 const PHONE_QUERY = '(max-width: 639px)'
@@ -66,12 +73,15 @@ export function Conversation({
   onTryAgain,
   onOpenQuiz,
   onOpenWhiteboard,
+  onOpenAnimation,
   onSimpler,
   sessionId = null,
   onStart,
   pointing = null,
   onRemovePoint,
   onAsk,
+  onOpenTools,
+  toolsButtonRef,
 }: ConversationProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
@@ -128,6 +138,7 @@ export function Conversation({
               onTryAgain={onTryAgain}
               onOpenQuiz={onOpenQuiz}
               onOpenWhiteboard={onOpenWhiteboard}
+              onOpenAnimation={onOpenAnimation}
               onSimpler={onSimpler}
               sending={sending}
               sessionId={sessionId}
@@ -142,6 +153,18 @@ export function Conversation({
             <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
           ) : null}
           <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
+            {onOpenTools ? (
+              <button
+                ref={toolsButtonRef}
+                type="button"
+                className="icon-btn icon-btn--ghost icon-btn--md"
+                aria-label="Open tools"
+                aria-haspopup="dialog"
+                onClick={onOpenTools}
+              >
+                <Plus size={20} strokeWidth={2} aria-hidden="true" />
+              </button>
+            ) : null}
             <label className="visually-hidden" htmlFor="learner-message">
               Message to Polaris
             </label>
@@ -221,6 +244,7 @@ function TurnBlock({
   onTryAgain,
   onOpenQuiz,
   onOpenWhiteboard,
+  onOpenAnimation,
   onSimpler,
   sending,
   sessionId,
@@ -231,12 +255,16 @@ function TurnBlock({
   onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
+  onOpenAnimation?: (sessionId: string, jobId: string) => void
   onSimpler?: (whiteboardId: string) => void
   sending: boolean
   sessionId: string | null
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
 }) {
   const quizzes = turn.artifacts.filter((artifact): artifact is Quiz => artifact.kind === 'quiz')
+  const animations = turn.artifacts.filter(
+    (artifact): artifact is AnimationArtifact => artifact.kind === 'animation',
+  )
   const phase = revealPhase(turn)
   const storedBoards = turn.artifacts.filter(
     (artifact): artifact is WhiteboardArtifact => artifact.kind === 'whiteboard',
@@ -251,7 +279,8 @@ function TurnBlock({
   })
   const thinking = turn.streaming && reply === '' && whiteboards.length === 0 && !turn.failed
   const finished = !turn.streaming && !turn.failed && turn.reply !== ''
-  const visible = reply !== '' || quizzes.length > 0 || whiteboards.length > 0
+  const visible =
+    reply !== '' || quizzes.length > 0 || whiteboards.length > 0 || animations.length > 0
 
   return (
     <article className="turn">
@@ -281,11 +310,10 @@ function TurnBlock({
             <PolarisStar />
             <p>Polaris</p>
           </div>
-          {reply !== '' ? (
-            <p className="tutor-body" aria-live={turn.streaming ? 'polite' : undefined}>
-              {reply}
-            </p>
-          ) : null}
+          {reply !== '' ? <ReplyText text={reply} live={turn.streaming} /> : null}
+          {animations.map((job) => (
+            <AnimationCard key={job.id} job={job} onOpen={onOpenAnimation} />
+          ))}
           {quizzes.map((quiz) => (
             <div className="quiz-chip" key={quiz.id}>
               <p className="quiz-chip-title">{quiz.title}</p>
