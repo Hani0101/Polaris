@@ -18,6 +18,10 @@ dist-ssr/
 # Python
 __pycache__/
 data/
+data-*/
+*.db
+*.db-shm
+*.db-wal
 *.py[cod]
 *$py.class
 .pytest_cache/
