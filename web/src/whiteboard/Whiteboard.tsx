@@ -3,6 +3,7 @@ import { DefaultColorStyle, Tldraw, useValue, type Editor, type TLShape } from '
 import 'katex/dist/katex.min.css'
 import 'tldraw/tldraw.css'
 import type { Comment, Whiteboard as WhiteboardData } from '../api.ts'
+import { moveCamera } from './camera.ts'
 import { CommentPins } from './CommentPins.tsx'
 import { readableDescription } from './description.ts'
 import {
@@ -167,6 +168,8 @@ export function Whiteboard({
   const onAskRef = useRef(onAsk)
   const convertedRef = useRef(converted)
   const seeding = useRef(false)
+  // The steps last drawn in view mode, so a newly revealed step can be followed.
+  const shownSteps = useRef<{ boardId: string; stepIds: string[] } | null>(null)
   const geoKind = useRef<'rectangle' | 'ellipse'>('rectangle')
   const commentFieldId = useId()
   const captionId = useId()
@@ -220,7 +223,17 @@ export function Whiteboard({
       if (existing.length > 0) editor.deleteShapes(existing)
       drawShapes(editor, converted)
       editor.setSelectedShapes([])
-      editor.zoomToFit({ animation: { duration: 0 } })
+      const board = whiteboardRef.current
+      const stepIds = board.steps.map((step) => step.id)
+      const previous = shownSteps.current
+      shownSteps.current = { boardId: board.id, stepIds }
+      if (!previous || previous.boardId !== board.id || previous.stepIds.length === 0) {
+        editor.zoomToFit({ animation: { duration: 0 } })
+      } else {
+        // A redraw with no new step leaves the camera where the learner put it.
+        const added = stepIds.filter((stepId) => !previous.stepIds.includes(stepId))
+        if (added.length > 0) moveCamera(editor, added)
+      }
       node.dataset.ready = 'true'
     } catch {
       node.dataset.ready = 'false'
