@@ -31,8 +31,16 @@ from polaris.animation import (
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.sandbox import run as sandbox_run
 from polaris.login import ApiKeyPresent
-from polaris.models import Pointing, Turn
-from polaris.profile import ProfilePass, apply_changes, load_profile, save_profile
+from polaris.models import Fact, Pointing, Profile, Turn
+from polaris.profile import (
+    ProfilePass,
+    active_facts,
+    apply_changes,
+    create_profile_tables,
+    finish_pass,
+    import_profile_json,
+    start_pass,
+)
 from polaris.quiz import AlreadyGraded, MissingQuiz, grade, normalize_spec, public_payload
 from polaris.whiteboard import (
     MissingWhiteboard,
@@ -221,24 +229,69 @@ class Chat:
         return self._payload(session_id), ended
 
     async def run_profile_pass(self, session_id: str) -> None:
-        """Read the ended session and store fact changes. Does not teach."""
+        """Read the ended session and store fact changes. Does not teach.
+
+        Every run is recorded. A failed run keeps its error, so it is not lost
+        silently; the error is a type name, never learner text.
+        """
 
         if self._profile_pass is None:
             return
         turns = await asyncio.to_thread(self._turns, session_id)
         if not turns:
             return
-        profile = await asyncio.to_thread(load_profile, self.profile_path)
+        facts = await asyncio.to_thread(self._with_db, self._read_facts)
+        run_id = await asyncio.to_thread(
+            self._with_db, lambda conn: start_pass(conn, session_id, "end", _now())
+        )
+        last_turn_id = turns[-1].id
+
+        def failed(error: str) -> None:
+            self._with_db(
+                lambda conn: finish_pass(
+                    conn,
+                    run_id,
+                    status="failed",
+                    now=_now(),
+                    error=error,
+                    last_turn_id=last_turn_id,
+                )
+            )
+
         try:
-            changes = await self._profile_pass.run(turns=turns, profile=profile)
+            changes = await self._profile_pass.run(turns=turns, facts=facts)
         except ApiKeyPresent:
+            await asyncio.to_thread(failed, "ApiKeyPresent")
             raise
-        except Exception:
+        except Exception as exc:
+            await asyncio.to_thread(failed, type(exc).__name__)
             return
-        updated = apply_changes(profile, changes)
-        if updated.facts == profile.facts:
-            return
-        await asyncio.to_thread(save_profile, self.profile_path, updated)
+        turn_ids = {turn.id for turn in turns if turn.id is not None}
+
+        def store(conn: sqlite3.Connection) -> None:
+            now = _now()
+            applied = apply_changes(
+                conn, changes, session_id=session_id, turn_ids=turn_ids, now=now
+            )
+            finish_pass(
+                conn,
+                run_id,
+                status="stored" if applied.stored else "no_change",
+                now=now,
+                last_turn_id=last_turn_id,
+                applied=applied,
+            )
+
+        await asyncio.to_thread(self._with_db, store)
+
+    def read_profile(self) -> Profile:
+        """The profile as the teaching agent reads it (PR-01)."""
+
+        return Profile(tuple(fact.text for fact in self._with_db(self._read_facts)))
+
+    def _read_facts(self, conn: sqlite3.Connection) -> tuple[Fact, ...]:
+        import_profile_json(conn, self.profile_path, _now())
+        return active_facts(conn)
 
     def leave(self, session_id: str) -> bool:
         """Mark the session ended. Return whether it was open and needs the agent closed."""
@@ -316,7 +369,7 @@ class Chat:
             for notice in self.take_animation_notices(session_id):
                 parts.append(notice)
                 yield notice
-            profile = await asyncio.to_thread(load_profile, self.profile_path)
+            profile = await asyncio.to_thread(self.read_profile)
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)
@@ -927,6 +980,7 @@ class Chat:
                     reply=row["reply"],
                     artifacts=tuple(by_turn.get(row["id"], [])),
                     pointing=_load_pointing(row["pointing_json"]),
+                    id=row["id"],
                 )
                 for row in rows
             )
@@ -1180,6 +1234,7 @@ class Chat:
                 ON artifacts(session_id, turn_id)
                 """
             )
+            create_profile_tables(conn)
 
         self._with_db(write)
 

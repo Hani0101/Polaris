@@ -9,12 +9,32 @@ class Profile:
 
 
 @dataclass(frozen=True)
+class Fact:
+    """One stored fact on the profile, with its kind and basis."""
+
+    id: str
+    kind: str
+    text: str
+    basis: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class FactChange:
-    """One ADD, UPDATE, DELETE, or IGNORE from the profile pass."""
+    """One ADD, UPDATE, DELETE, or IGNORE from the profile pass.
+
+    UPDATE, DELETE, and IGNORE name a stored fact by `id`. `evidence` holds
+    the ids of the turns the change rests on.
+    """
 
     action: str
-    fact: str
-    replaces: str | None = None
+    text: str = ""
+    id: str | None = None
+    kind: str | None = None
+    basis: str | None = None
+    evidence: tuple[str, ...] = ()
+    reason: str = ""
 
 
 @dataclass(frozen=True)
@@ -36,3 +56,4 @@ class Turn:
     reply: str
     artifacts: tuple[dict[str, object], ...] = ()
     pointing: Pointing | None = None
+    id: str | None = None

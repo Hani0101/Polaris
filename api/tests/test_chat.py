@@ -30,9 +30,12 @@ class StubPass:
         self.changes = changes
         self.calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
 
-    async def run(self, *, turns, profile):
+    async def run(self, *, turns, facts):
         self.calls.append(
-            (tuple(turn.learner_message for turn in turns), profile.facts)
+            (
+                tuple(turn.learner_message for turn in turns),
+                tuple(fact.text for fact in facts),
+            )
         )
         return self.changes
 
@@ -295,7 +298,8 @@ def test_every_reply_is_written_with_the_shared_profile(make_client, tmp_path):
 
     assert first_reply == "Noted struggles with fractions. What is a half?"
     assert second_reply == "Noted struggles with fractions. How do I add fractions?"
-    assert (tmp_path / "profile.json").read_text(encoding="utf-8") == raw
+    assert not (tmp_path / "profile.json").exists()
+    assert (tmp_path / "profile.json.imported").read_text(encoding="utf-8") == raw
 
 
 def test_leaving_a_session_stores_profile_facts(make_client):
@@ -340,15 +344,15 @@ def test_switching_sessions_stores_facts_from_the_one_left(make_client):
 
 
 def test_a_later_ending_runs_the_profile_pass_again(make_client):
-    facts = ("likes diagrams", "comfortable with Python")
+    texts = ("likes diagrams", "comfortable with Python")
 
     class NextFactPass:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def run(self, *, turns, profile):
-            del turns, profile
-            fact = facts[min(self.calls, len(facts) - 1)]
+        async def run(self, *, turns, facts):
+            del turns, facts
+            fact = texts[min(self.calls, len(texts) - 1)]
             self.calls += 1
             return (FactChange("ADD", fact),)
 
@@ -381,8 +385,8 @@ def test_a_repeated_fact_is_not_stored_twice(make_client):
 
 def test_profile_pass_api_key_stops_the_app(make_client):
     class KeyPass:
-        async def run(self, *, turns, profile):
-            del turns, profile
+        async def run(self, *, turns, facts):
+            del turns, facts
             raise ApiKeyPresent(
                 "Polaris stopped because an API key is present. "
                 "v1 uses the Claude login on this machine."
@@ -400,8 +404,8 @@ def test_profile_pass_api_key_stops_the_app(make_client):
 
 def test_a_failed_profile_pass_does_not_block_leaving(make_client):
     class ExplodingPass:
-        async def run(self, *, turns, profile):
-            del turns, profile
+        async def run(self, *, turns, facts):
+            del turns, facts
             raise RuntimeError("pass failed")
 
     client, _agent = make_client(profile_pass=ExplodingPass())
@@ -413,6 +417,75 @@ def test_a_failed_profile_pass_does_not_block_leaving(make_client):
     assert left.status_code == 200
     assert left.json()["ended"] is True
     assert client.get("/api/profile").json() == {"facts": []}
+
+
+def _passes(client) -> list[dict[str, object]]:
+    def read(conn):
+        rows = conn.execute(
+            """
+            SELECT session_id, trigger, status, error, last_turn_id, changes_json
+            FROM profile_passes ORDER BY started_at ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    return client.app.state.chat._with_db(read)
+
+
+def test_a_failed_profile_pass_is_recorded(make_client):
+    class ExplodingPass:
+        async def run(self, *, turns, facts):
+            del turns, facts
+            raise RuntimeError("pass failed")
+
+    client, _agent = make_client(profile_pass=ExplodingPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    (run,) = _passes(client)
+    assert run["session_id"] == session["id"]
+    assert (run["trigger"], run["status"], run["error"]) == ("end", "failed", "RuntimeError")
+    assert run["last_turn_id"] is not None
+
+
+def test_a_stored_pass_records_its_changes_and_evidence(make_client):
+    class EvidencePass:
+        async def run(self, *, turns, facts):
+            del facts
+            return (
+                FactChange(
+                    "ADD",
+                    "Likes diagrams",
+                    kind="taught",
+                    basis="stated",
+                    evidence=(turns[0].id,),
+                ),
+                FactChange("UPDATE", "Struggles with fractions", id="F9"),
+            )
+
+    client, _agent = make_client(profile_pass=EvidencePass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert client.get("/api/profile").json() == {"facts": ["Likes diagrams"]}
+    (run,) = _passes(client)
+    assert run["status"] == "stored"
+    changes = json.loads(run["changes_json"])
+    assert [item["action"] for item in changes["accepted"]] == ["ADD"]
+    assert changes["refused"][0]["why"] == "names no stored fact"
+
+    def evidence(conn):
+        return conn.execute(
+            "SELECT session_id, turn_id FROM fact_evidence"
+        ).fetchall()
+
+    (row,) = client.app.state.chat._with_db(evidence)
+    assert row["session_id"] == session["id"]
+    assert row["turn_id"] == run["last_turn_id"]
 
 
 def test_empty_profile_asks_and_does_not_teach(make_client, tmp_path):
