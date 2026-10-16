@@ -61,7 +61,7 @@ from polaris.models import Pointing, Profile, Turn
 from polaris.quiz import InvalidQuiz
 from polaris.auto_layout import expand_layout
 from polaris.board_picture import BoardPicture
-from polaris.layout_check import LayoutProblem, layout_problems
+from polaris.layout_check import LayoutProblem, layout_problems, mark_problems
 from polaris.whiteboard import (
     CURRENT_DRAWING_VERSION,
     WHITEBOARD_TOOL_LIMITS,
@@ -715,6 +715,7 @@ class WhiteboardSubmission:
 
 
 WhiteboardStore = Callable[[str, dict[str, Any]], dict[str, Any]]
+MarkPreview = Callable[[str, dict[str, Any]], Whiteboard]
 
 
 def submit_whiteboard(
@@ -795,8 +796,9 @@ def submit_whiteboard(
     )
 
 
-def _layout_detail(problems: Sequence[LayoutProblem]) -> str:
-    lines = ["The drawing passed the format check but has layout problems:"]
+def _layout_detail(problems: Sequence[LayoutProblem], noun: str = "drawing") -> str:
+    verb = "have" if noun == "marks" else "has"
+    lines = [f"The {noun} passed the format check but {verb} layout problems:"]
     lines.extend(f"- {problem.message}" for problem in problems)
     return "\n".join(lines)
 
@@ -854,8 +856,13 @@ def submit_marks(
     store: WhiteboardStore | None,
     create: WhiteboardStore | None = None,
     tool: str = "mark_whiteboard",
+    preview: MarkPreview | None = None,
 ) -> WhiteboardSubmission:
-    """Check marks against the stored whiteboard, then store them when they pass."""
+    """Check marks against the stored whiteboard, then store them when they pass.
+
+    preview applies the marks without storing them, so misplaced marks are
+    refused like layout problems while a fix remains.
+    """
 
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if failures > limit:
@@ -870,8 +877,19 @@ def submit_marks(
         )
     if isinstance(data, dict):
         data = _decode_json_lists(data)
+    action = data if isinstance(data, dict) else {}
+    problems: list[LayoutProblem] = []
     try:
-        payload = store(session_id, data if isinstance(data, dict) else {})
+        if preview is not None:
+            problems = mark_problems(preview(session_id, action), _sent_mark_ids(action))
+            if problems and failures < limit:
+                updated = failures + 1
+                detail = _layout_detail(problems, noun="marks")
+                return WhiteboardSubmission(
+                    tool_result=_tool_error(_fix_message(detail, updated, tool)),
+                    failures=updated,
+                )
+        payload = store(session_id, action)
     except MissingWhiteboard:
         if create is not None and _contains_mark(data) and not _is_compact_mark(data):
             return submit_whiteboard(
@@ -894,20 +912,38 @@ def submit_marks(
             tool_result=_tool_error(_fix_message(detail, updated, tool)),
             failures=updated,
         )
+    text = (
+        f"Marks stored on whiteboard {payload['id']}. "
+        "The learner's drawing was not changed."
+    )
+    if problems:
+        text = (
+            f"{text} The marks still have layout problems. Do not mark it again this turn.\n"
+            f"{_layout_detail(problems, noun='marks')}"
+        )
     return WhiteboardSubmission(
-        tool_result={
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Marks stored on whiteboard {payload['id']}. "
-                        "The learner's drawing was not changed."
-                    ),
-                }
-            ]
-        },
+        tool_result={"content": [{"type": "text", "text": text}]},
         failures=failures,
     )
+
+
+def _sent_mark_ids(action: dict[str, Any]) -> list[str]:
+    """Ids of the marks in a mark action, or in a full drawing's steps."""
+
+    items: list[object] = []
+    marks = action.get("marks")
+    if isinstance(marks, list):
+        items.extend(marks)
+    steps = action.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and isinstance(step.get("elements"), list):
+                items.extend(step["elements"])
+    return [
+        str(item["id"])
+        for item in items
+        if isinstance(item, dict) and item.get("kind") == "mark" and "id" in item
+    ]
 
 
 def polaris_mcp_server(
@@ -1176,6 +1212,7 @@ class ClaudeTeachingAgent:
         self._store_quiz = store_quiz
         self._store_whiteboard: WhiteboardStore | None = None
         self._mark_whiteboard: WhiteboardStore | None = None
+        self._preview_marks: MarkPreview | None = None
         self._start_animation_job: AnimationJobStore | None = None
         self._drawing_failures: dict[str, int] = {}
 
@@ -1186,12 +1223,14 @@ class ClaudeTeachingAgent:
         *,
         mark_whiteboard: WhiteboardStore | None = None,
         start_animation_job: AnimationJobStore | None = None,
+        preview_marks: MarkPreview | None = None,
     ) -> None:
         """Chat calls this so tools can store an artifact. Does not write the profile."""
 
         self._store_quiz = store_quiz
         self._store_whiteboard = store_whiteboard
         self._mark_whiteboard = mark_whiteboard
+        self._preview_marks = preview_marks
         self._start_animation_job = start_animation_job
 
     def _handler_for(self, session_id: str) -> QuizHandler:
@@ -1284,6 +1323,7 @@ class ClaudeTeachingAgent:
             action,
             store=self._mark_whiteboard,
             tool="mark_whiteboard",
+            preview=self._preview_marks,
         )
 
     async def handle_simplify_whiteboard(
@@ -1315,6 +1355,7 @@ class ClaudeTeachingAgent:
         }
         if marking:
             kwargs["create"] = self._store_whiteboard
+            kwargs["preview"] = self._preview_marks
         submission = await asyncio.to_thread(
             partial(submit, session_id, args, **kwargs)
         )

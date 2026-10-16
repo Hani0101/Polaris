@@ -154,6 +154,7 @@ LAYOUT_PROBLEM_KINDS = (
     "outside",
     "loose_arrow",
     "too_many_parts",
+    "misplaced_mark",
 )
 
 # Parts with an area. Arrows, lines, freehand lines, and marks are not.
@@ -343,6 +344,116 @@ def layout_problems(
         if isinstance(element, ArrowElement):
             problems.extend(_loose_arrow_problems(element, targets))
     return [problem for problem in problems if involved(problem)]
+
+
+def _note_box(mark: MarkElement) -> Box:
+    left = mark.position.x
+    top = mark.position.y
+    return Box(left, top, left + mark.size.width, top + mark.size.height)
+
+
+def _mark_problem(
+    mark: MarkElement, target: Element | None, learner: list[Element], notes: list[MarkElement]
+) -> list[LayoutProblem]:
+    if target is None:
+        return []
+    target_box = _box(target)
+    if mark.mark == "circle":
+        circle = _note_box(mark)
+        if circle.overlap(target_box) <= 0:
+            return [
+                LayoutProblem(
+                    "misplaced_mark",
+                    (mark.id,),
+                    f"Circle mark '{mark.id}' does not surround '{target.id}'. "
+                    f"Put it around that element's box.",
+                )
+            ]
+        return []
+    if mark.mark == "arrow":
+        assert mark.end is not None
+        if target_box.distance(mark.end) <= LAYOUT_LIMITS.touch_distance:
+            return []
+        return [
+            LayoutProblem(
+                "misplaced_mark",
+                (mark.id,),
+                f"The end of arrow mark '{mark.id}' does not reach '{target.id}'. "
+                "Move its end onto that element.",
+            )
+        ]
+    problems: list[LayoutProblem] = []
+    note = _note_box(mark)
+    covered = [
+        element.id
+        for element in learner
+        if note.overlap(_box(element)) > LAYOUT_LIMITS.overlap_area
+    ]
+    if covered:
+        names = ", ".join(f"'{item}'" for item in covered)
+        problems.append(
+            LayoutProblem(
+                "misplaced_mark",
+                (mark.id,),
+                f"Note '{mark.id}' covers the learner's drawing ({names}). "
+                "Move it into empty space next to the element it is about.",
+            )
+        )
+    for other in notes:
+        if other.id != mark.id and note.overlap(_note_box(other)) > LAYOUT_LIMITS.overlap_area:
+            problems.append(
+                LayoutProblem(
+                    "overlap",
+                    (mark.id, other.id),
+                    f"Notes '{mark.id}' and '{other.id}' overlap. Move one of them.",
+                )
+            )
+    if mark.text:
+        size = font_size(mark.style.stroke_width)
+        room_width = mark.size.width - LAYOUT_LIMITS.label_padding * 2
+        room_height = mark.size.height - LAYOUT_LIMITS.label_padding * 2
+        width, height = text_block(mark.text, max(room_width, 1), size)
+        if room_width <= 0 or width > room_width or height > room_height:
+            problems.append(
+                LayoutProblem(
+                    "text_spill",
+                    (mark.id,),
+                    f"The text of note '{mark.id}' does not fit. Make the note about "
+                    f"{math.ceil(width + LAYOUT_LIMITS.label_padding * 2)} wide and "
+                    f"{math.ceil(height + LAYOUT_LIMITS.label_padding * 2)} tall, "
+                    "or shorten the text.",
+                )
+            )
+    return problems
+
+
+def mark_problems(whiteboard: Whiteboard, mark_ids: Iterable[str]) -> list[LayoutProblem]:
+    """Problems with these marks: a circle that misses its target, an arrow that
+    does not reach it, a note that covers the learner's drawing or another note,
+    or note text that does not fit."""
+
+    wanted = set(mark_ids)
+    elements = [element for step in whiteboard.steps for element in step.elements]
+    by_id = {element.id: element for element in elements}
+    learner = [
+        element
+        for element in elements
+        if element.author == "learner" and isinstance(element, (*_SOLID, FreehandElement))
+    ]
+    marks = [element for element in elements if isinstance(element, MarkElement)]
+    notes = [mark for mark in marks if mark.mark == "note"]
+    problems: list[LayoutProblem] = []
+    reported: set[frozenset[str]] = set()
+    for mark in marks:
+        if mark.id not in wanted:
+            continue
+        for problem in _mark_problem(mark, by_id.get(mark.target_element_id), learner, notes):
+            key = frozenset(problem.element_ids)
+            if problem.kind == "overlap" and key in reported:
+                continue
+            reported.add(key)
+            problems.append(problem)
+    return problems
 
 
 def layout_score(whiteboard: Whiteboard) -> dict[str, int]:

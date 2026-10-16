@@ -171,6 +171,7 @@ class Chat:
                 self.create_quiz,
                 self.create_whiteboard,
                 mark_whiteboard=self.mark_whiteboard,
+                preview_marks=self.preview_marks,
                 start_animation_job=self.start_animation_job,
             )
 
@@ -737,10 +738,8 @@ class Chat:
         payload["kind"] = "whiteboard"
         return payload
 
-    def mark_whiteboard(
-        self, session_id: str, action: dict[str, Any]
-    ) -> dict[str, object]:
-        """Append agent marks onto a stored whiteboard and show the update."""
+    def _marked(self, session_id: str, action: dict[str, Any]) -> tuple[Whiteboard, str]:
+        """The stored whiteboard with the marks applied, and its stored JSON."""
 
         self._require(session_id)
         whiteboard_id = _mark_target_id(action)
@@ -755,8 +754,20 @@ class Chat:
         checked = apply_marks(checked_stored.whiteboard, action)
         if checked.whiteboard is None:
             raise InvalidDrawing(checked.errors)
+        return checked.whiteboard, raw
 
-        canonical = checked.whiteboard.model_dump(mode="json")
+    def preview_marks(self, session_id: str, action: dict[str, Any]) -> Whiteboard:
+        """What mark_whiteboard would store. Nothing is written."""
+
+        return self._marked(session_id, action)[0]
+
+    def mark_whiteboard(
+        self, session_id: str, action: dict[str, Any]
+    ) -> dict[str, object]:
+        """Append agent marks onto a stored whiteboard and show the update."""
+
+        marked, raw = self._marked(session_id, action)
+        canonical = marked.model_dump(mode="json")
         whiteboard_id = str(canonical["id"])
 
         def write(conn: sqlite3.Connection) -> None:

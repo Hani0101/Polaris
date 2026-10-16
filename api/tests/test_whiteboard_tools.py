@@ -19,7 +19,10 @@ from polaris.teaching import (
 )
 from polaris.whiteboard import MARKED_DRAWING_VERSION, apply_marks, check_drawing
 from test_layout import LAYOUTS, _laid_out
+from test_quiz import FILLED_PROFILE
+from test_chat import make_client
 from test_whiteboard import _answer_drawing, _circle_mark, _mark_action, agent_drawing, valid_whiteboard
+from test_whiteboard_artifact import OneDrawingStub
 
 
 def _valid(schema: dict, args: dict) -> bool:
@@ -148,3 +151,19 @@ def test_the_three_tools_share_one_fix_count(tmp_path: Path):
     )
 
     assert agent.drawing_fix_count("session-9") == 2
+
+
+def test_preview_marks_applies_marks_without_storing_them(make_client):
+    drawing = _answer_drawing()
+    drawing["id"] = "wb-1"
+    client, _agent = make_client(OneDrawingStub(drawing), profile=FILLED_PROFILE)
+    session = client.post("/api/sessions").json()
+    client.post(f"/api/sessions/{session['id']}/turns", json={"message": "Draw."})
+    chat = client.app.state.chat
+    before = client.get(f"/api/sessions/{session['id']}/whiteboards/wb-1").json()
+
+    preview = chat.preview_marks(session["id"], _mark_action())
+
+    assert preview.steps[-1].elements[0].kind == "mark"
+    after = client.get(f"/api/sessions/{session['id']}/whiteboards/wb-1").json()
+    assert after == before

@@ -3,22 +3,28 @@
 These tests never call the model.
 """
 
+import asyncio
 import copy
 from pathlib import Path
 
-import asyncio
-
 from polaris.auto_layout import LAYOUT_KINDS, expand_layout
-from polaris.layout_check import LAYOUT_LIMITS, LAYOUT_PROBLEM_KINDS, layout_problems, layout_score
-from polaris.teaching import ClaudeTeachingAgent, submit_whiteboard
+from polaris.layout_check import (
+    LAYOUT_LIMITS,
+    LAYOUT_PROBLEM_KINDS,
+    layout_problems,
+    layout_score,
+    mark_problems,
+)
+from polaris.teaching import ClaudeTeachingAgent, submit_marks, submit_whiteboard
 from polaris.whiteboard import (
     CURRENT_DRAWING_VERSION,
     WHITEBOARD_TOOL_LIMITS,
+    apply_marks,
     check_drawing,
     describe_whiteboard,
     readable_description,
 )
-from test_whiteboard import _element
+from test_whiteboard import _answer_drawing, _circle_mark, _element, _mark_action
 
 
 def _board(*elements: dict[str, object], version: int = CURRENT_DRAWING_VERSION) -> dict[str, object]:
@@ -471,3 +477,111 @@ def test_a_new_drawing_without_a_description_is_refused():
 
     assert stored == []
     assert "description is required" in result.tool_result["content"][0]["text"]
+
+
+# Marks.
+
+
+def _marked(*marks: dict[str, object]):
+    stored = check_drawing(_answer_drawing()).whiteboard
+    assert stored is not None
+    result = apply_marks(stored, _mark_action(list(marks)))
+    assert result.errors == []
+    assert result.whiteboard is not None
+    return result.whiteboard
+
+
+def _mark(mark_id: str, kind: str, **fields: object) -> dict[str, object]:
+    base = _circle_mark(id=mark_id, mark=kind)
+    base.update(fields)
+    return base
+
+
+def test_well_placed_marks_have_no_problems():
+    whiteboard = _marked(
+        _mark("circle", "circle"),
+        _mark(
+            "pointer",
+            "arrow",
+            start={"x": 200, "y": 120},
+            end={"x": 110, "y": 70},
+            position={"x": 110, "y": 70},
+            size={"width": 90, "height": 50},
+        ),
+        _mark(
+            "note",
+            "note",
+            text="Check the sign",
+            position={"x": 140, "y": 40},
+            size={"width": 200, "height": 60},
+        ),
+    )
+
+    assert mark_problems(whiteboard, ["circle", "pointer", "note"]) == []
+
+
+def test_misplaced_marks_are_found():
+    whiteboard = _marked(
+        _mark("far-circle", "circle", position={"x": 400, "y": 400}),
+        _mark(
+            "short-arrow",
+            "arrow",
+            start={"x": 400, "y": 300},
+            end={"x": 300, "y": 300},
+            position={"x": 300, "y": 300},
+            size={"width": 100, "height": 1},
+        ),
+        _mark(
+            "cover",
+            "note",
+            text="Here",
+            position={"x": 40, "y": 50},
+            size={"width": 120, "height": 60},
+        ),
+        _mark(
+            "tiny",
+            "note",
+            text="A long explanation of the mistake",
+            position={"x": 400, "y": 40},
+            size={"width": 60, "height": 30},
+        ),
+    )
+
+    problems = mark_problems(whiteboard, ["far-circle", "short-arrow", "cover", "tiny"])
+
+    assert [(problem.kind, problem.element_ids) for problem in problems] == [
+        ("misplaced_mark", ("far-circle",)),
+        ("misplaced_mark", ("short-arrow",)),
+        ("misplaced_mark", ("cover",)),
+        ("text_spill", ("tiny",)),
+    ]
+    assert "covers the learner's drawing ('answer-1')" in problems[2].message
+
+
+def test_misplaced_marks_are_refused_while_fixes_remain():
+    stored: list[dict] = []
+    far = _mark("far-circle", "circle", position={"x": 400, "y": 400})
+
+    def preview(_session_id: str, _action: dict):
+        return _marked(far)
+
+    def store(_session_id: str, action: dict) -> dict:
+        stored.append(action)
+        return {"id": "wb-1"}
+
+    first = submit_marks(
+        "session-1", _mark_action([far]), failures=0, store=store, preview=preview
+    )
+    last = submit_marks(
+        "session-1",
+        _mark_action([far]),
+        failures=WHITEBOARD_TOOL_LIMITS.max_fix_attempts,
+        store=store,
+        preview=preview,
+    )
+
+    assert first.tool_result["is_error"] is True
+    assert "does not surround 'answer-1'" in first.tool_result["content"][0]["text"]
+    assert "call mark_whiteboard again" in first.tool_result["content"][0]["text"]
+    assert len(stored) == 1
+    assert "still have layout problems" in last.tool_result["content"][0]["text"]
