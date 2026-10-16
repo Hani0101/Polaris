@@ -41,8 +41,6 @@ AUTO_LAYOUT_LIMITS = AutoLayoutLimits()
 _STROKE = "#1d1d1d"
 _STROKE_WIDTH = 2.0
 _ELLIPSE_SHARE = 0.7
-# Room kept for an arrow that passes a layer on its way to a later one.
-_PLACEHOLDER = 24.0
 
 
 @dataclass(frozen=True)
@@ -270,7 +268,7 @@ def _place_layers(layers: list[list[_Node]], direction: str, main_gap: float) ->
         offset += depth + main_gap
 
 
-def _layers(nodes: list[_Node], links: list[_Link]) -> list[list[_Node]]:
+def _layers(nodes: list[_Node], links: list[_Link], direction: str) -> list[list[_Node]]:
     """Longest-path layers from the sources. A link that closes a loop is ignored."""
 
     order = {node.id: index for index, node in enumerate(nodes)}
@@ -301,8 +299,12 @@ def _layers(nodes: list[_Node], links: list[_Link]) -> list[list[_Node]]:
     grouped: list[list[_Node]] = [[] for _ in range(count)]
     for node in nodes:
         grouped[layer[node.id]].append(node)
-    # A link that skips layers gets a thin placeholder in each layer it
-    # crosses, so the boxes in those layers move aside for the arrow.
+    # A link that skips layers gets a placeholder as wide as a box in each
+    # layer it crosses. Rows are centered, so the boxes in those layers move
+    # aside and the straight arrow passes between them.
+    down = direction == "down"
+    across = max((node.width if down else node.height) for node in nodes)
+    along = min((node.height if down else node.width) for node in nodes)
     incoming: dict[str, list[str]] = {node.id: [] for node in nodes}
     for source, targets in forward.items():
         for target in targets:
@@ -311,8 +313,8 @@ def _layers(nodes: list[_Node], links: list[_Link]) -> list[list[_Node]]:
                 gap = _Node(
                     id=f"\0{source}>{target}#{between}",
                     label="",
-                    width=_PLACEHOLDER,
-                    height=_PLACEHOLDER,
+                    width=across if down else along,
+                    height=along if down else across,
                 )
                 grouped[between].append(gap)
                 incoming[gap.id] = [previous]
@@ -357,7 +359,8 @@ def _topological(nodes: list[_Node], forward: dict[str, list[str]]) -> list[str]
 def _flow(layout: dict[str, Any]) -> _Placed:
     nodes = _nodes(layout)
     links = _links(layout, {node.id for node in nodes})
-    _place_layers(_layers(nodes, links), _direction(layout), _main_gap(links))
+    direction = _direction(layout)
+    _place_layers(_layers(nodes, links, direction), direction, _main_gap(links))
     return _Placed(nodes, links)
 
 
@@ -550,7 +553,7 @@ def _parts(layout: dict[str, Any]) -> _Placed:
     left = parts[0::2]
     right = parts[1::2]
     side_width = max(part.width for part in parts)
-    gap = limits.labeled_main_gap
+    gap = limits.main_gap
 
     def stack(column: list[_Node]) -> float:
         return sum(part.height for part in column) + limits.cross_gap * (len(column) - 1)
