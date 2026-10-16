@@ -29,7 +29,13 @@ from polaris.teaching import (
     CREATE_QUIZ_TOOL,
     DRAW_WHITEBOARD_DESCRIPTION,
     DRAW_WHITEBOARD_SCHEMA,
+    MARK_WHITEBOARD_DESCRIPTION,
+    MARK_WHITEBOARD_SCHEMA,
+    SIMPLIFY_WHITEBOARD_DESCRIPTION,
+    SIMPLIFY_WHITEBOARD_SCHEMA,
     DRAW_WHITEBOARD_TOOL,
+    MARK_WHITEBOARD_TOOL,
+    SIMPLIFY_WHITEBOARD_TOOL,
     START_ANIMATION_JOB_DESCRIPTION,
     START_ANIMATION_JOB_SCHEMA,
     START_ANIMATION_JOB_TOOL,
@@ -105,6 +111,8 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert options.allowed_tools == [
         CREATE_QUIZ_TOOL,
         DRAW_WHITEBOARD_TOOL,
+        MARK_WHITEBOARD_TOOL,
+        SIMPLIFY_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
     ]
     assert options.include_partial_messages is True
@@ -154,7 +162,12 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "freehand curve" in DRAW_WHITEBOARD_DESCRIPTION
     assert "Polaris sets the version." in prompt
     assert "layout has kind: flow, sequence, cycle, tree, comparison, or parts" in DRAW_WHITEBOARD_DESCRIPTION
-    assert DRAW_WHITEBOARD_SCHEMA["properties"]["layout"]["type"] == "object"
+    assert "object" in DRAW_WHITEBOARD_SCHEMA["properties"]["layout"]["type"]
+    assert "array" in DRAW_WHITEBOARD_SCHEMA["properties"]["steps"]["type"]
+    assert MARK_WHITEBOARD_SCHEMA["required"] == ["whiteboard_id", "step_id", "reply_part", "marks"]
+    assert "mark_whiteboard" in DRAW_WHITEBOARD_DESCRIPTION
+    assert "target_element_id" in MARK_WHITEBOARD_DESCRIPTION
+    assert "Say exactly what to draw." in prompt
     assert "ask them to confirm" in prompt
     assert "graph element" in prompt
     assert "cannot see the drawing" in DRAW_WHITEBOARD_DESCRIPTION
@@ -462,15 +475,16 @@ def test_a_simpler_request_attaches_the_whiteboard_text(tmp_path: Path):
     )
 
     prompt = created[0].prompts[0]
-    assert "Call draw_whiteboard" in prompt
+    assert "Call simplify_whiteboard" in prompt
     assert "fewer elements" in prompt
     assert "simplifies set to wb-1" in prompt
     assert "Do not send an image." in prompt
     assert "Do not change or delete the original whiteboard." in prompt
     assert describe_whiteboard(checked.whiteboard) in prompt
     assert "image:" not in prompt
-    assert "simplifies" in DRAW_WHITEBOARD_DESCRIPTION
-    assert DRAW_WHITEBOARD_SCHEMA["properties"]["simplifies"]["type"] == "string"
+    assert "simplifies" in SIMPLIFY_WHITEBOARD_DESCRIPTION
+    assert SIMPLIFY_WHITEBOARD_SCHEMA["required"] == ["simplifies"]
+    assert SIMPLIFY_WHITEBOARD_SCHEMA["properties"]["simplifies"]["type"] == "string"
     assert "fewer elements" in created[0].options.system_prompt
 
 
@@ -575,6 +589,7 @@ def _capture_quiz_handlers(monkeypatch) -> list:
         create_quiz=None,
         draw_whiteboard=None,
         start_animation_job=None,
+        **others,
     ):
         handlers.append(create_quiz)
         return original(
@@ -582,6 +597,7 @@ def _capture_quiz_handlers(monkeypatch) -> list:
             create_quiz=create_quiz,
             draw_whiteboard=draw_whiteboard,
             start_animation_job=start_animation_job,
+            **others,
         )
 
     monkeypatch.setattr(teaching_mod, "teaching_options", wrapped)
@@ -600,6 +616,7 @@ def _capture_animation_handlers(monkeypatch) -> list:
         create_quiz=None,
         draw_whiteboard=None,
         start_animation_job=None,
+        **others,
     ):
         handlers.append(start_animation_job)
         return original(
@@ -607,6 +624,7 @@ def _capture_animation_handlers(monkeypatch) -> list:
             create_quiz=create_quiz,
             draw_whiteboard=draw_whiteboard,
             start_animation_job=start_animation_job,
+            **others,
         )
 
     monkeypatch.setattr(teaching_mod, "teaching_options", wrapped)
@@ -654,6 +672,8 @@ def test_create_quiz_tool_stores_for_the_open_session(
     assert created[0].options.allowed_tools == [
         CREATE_QUIZ_TOOL,
         DRAW_WHITEBOARD_TOOL,
+        MARK_WHITEBOARD_TOOL,
+        SIMPLIFY_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
     ]
     assert created[0].options.max_turns == TEACHING_MAX_TURNS
@@ -806,6 +826,8 @@ def test_start_animation_job_tool_stores_for_the_open_session(
     assert created[0].options.allowed_tools == [
         CREATE_QUIZ_TOOL,
         DRAW_WHITEBOARD_TOOL,
+        MARK_WHITEBOARD_TOOL,
+        SIMPLIFY_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
     ]
 

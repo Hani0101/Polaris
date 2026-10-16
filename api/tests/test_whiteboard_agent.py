@@ -523,7 +523,7 @@ def test_the_mark_tool_refuses_a_changed_learner_element(make_client):
     message = stub.tool_results[0]["content"][0]["text"]
     assert "answer-1" in message
     assert "changed" in message
-    assert "Fix the drawing and call draw_whiteboard again." in message
+    assert "Fix the drawing and call mark_whiteboard again." in message
     assert _learner_parts(loaded)[0] == before_elements
     assert loaded["version"] == CURRENT_DRAWING_VERSION
 
