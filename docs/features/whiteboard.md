@@ -35,11 +35,17 @@ A drawing that contains a graph is version 6 and includes a description, under t
 
 A new drawing from the agent is version 7 and includes a description ([decision 0006](../decisions/0006-one-drawing-format-version.md)). Every element kind is allowed on version 7 and is checked on its own terms. A new kind or field joins version 7 without a new version. `check_drawing` still accepts versions 2 to 6 under the rules above. Marks on a version 7 drawing keep it version 7.
 
-On version 7, a rectangle or ellipse may have a `label`, drawn inside it and centered. An arrow may have a `label`, and `start_element_id` and `end_element_id` that attach its ends to another element that is not an arrow, line, or mark. An attached arrow still stores `start` and `end`, at the edges of the parts it joins. The browser keeps an attached end on its part. Labels and attachments on an older version are refused.
+On version 7, a rectangle or ellipse may have a `label`, drawn inside it and centered. An arrow may have a `label`, and `start_element_id` and `end_element_id` that attach its ends to another element that is not an arrow, line, or mark. An attached arrow still stores `start` and `end`, at the edges of the parts it joins. The browser keeps an attached end on its part. An arrow may also have a `bend`: how far its middle curves away from a straight line, positive to the right of its direction. Labels, attachments, and bends on an older version are refused.
+
+### The whiteboard tools
+
+The agent has three whiteboard tools. `draw_whiteboard` draws a new whiteboard. `mark_whiteboard` adds marks to a stored whiteboard (WB-09); it takes the whiteboard id, a new step id, its `reply_part`, and the marks, and Polaris sets each mark's kind and author. `simplify_whiteboard` draws a simpler redraw (WB-11) and needs `simplifies`. Each schema types its fields, but list fields still accept JSON text and little is required, so a drawing with mistakes reaches `check_drawing` and its fix limit. The three tools share one fix count per turn.
 
 ### Layout checks
 
-After a new drawing passes `check_drawing`, `layout_problems` in `api/polaris/layout_check.py` checks where the agent's parts sit. It finds shapes that overlap, text or a label that does not fit its box, parts outside the drawing area from (0, 0) to (1000, 1400), arrow ends that are not attached and touch no part, and more than 24 agent parts. A box that contains another part is not an overlap, except two texts. Learner elements and marks are never at fault. Text size is an estimate from tldraw's font sizes. The browser is not asked.
+After a new drawing passes `check_drawing`, `layout_problems` in `api/polaris/layout_check.py` checks where the agent's parts sit. It finds shapes that overlap, text or a label that does not fit its box, parts outside the drawing area from (0, 0) to (1000, 1400), arrow ends that are not attached and touch no part, and more than 24 agent parts. A box that contains another part is not an overlap, except two texts. Learner elements are never at fault. Text size is an estimate from tldraw's font sizes. The browser is not asked.
+
+Marks are checked by `mark_problems` before they are stored: a circle must overlap its target, an arrow mark's end must reach its target, a note must not cover the learner's drawing or another note, and a note's text must fit.
 
 The agent gets layout problems back like a format error and they count toward the same fix limit. When a refusal would leave no fix, a drawing whose only problems are layout problems is stored and shown, and the agent is told what is still wrong.
 
@@ -55,7 +61,17 @@ Instead of coordinates, the agent may send `layout` with a new drawing (WB-17). 
 - comparison: 2 or 3 columns, each with a title and items, rows lined up.
 - parts: a whole and the labeled parts around it, each linked to the whole.
 
+A flow link that skips layers keeps a box-wide gap in each layer it passes, so its arrow runs between boxes. A flow link that goes back to an earlier layer gets a bend, so it curves beside the boxes between its ends.
+
 A node, link, or column may name a step. Without one it is in the first step. An arrow appears with the later of the two parts it joins. Elements the agent lists in a step are kept beside the placed ones. A layout that cannot be placed, or that would not fit the drawing area, is refused with what to change.
+
+### Following the steps
+
+While a reply reveals steps (WB-06), the whole board is fitted when it stays at 75% zoom or more. When it would be smaller, the camera moves to each new step instead, so its text stays readable on a phone (WB-16). A redraw with no new step does not move the camera. The move takes 300ms and does not animate under reduced motion. Opening a stored whiteboard fits it whole.
+
+### The learner draws first
+
+When sketching first would help, the agent asks the learner to draw how they think something works before it explains, and says exactly what to draw. It may draw a board with only a short prompt for the learner to draw on. It then reads the sketch (WB-03) and gives feedback with marks (WB-09).
 
 ### A picture of the learner's drawing
 
@@ -134,6 +150,18 @@ Scenario: a crowded drawing is sent back  [WB-05, WB-16]
   Then the drawing is not shown
   And the agent is told which parts overlap
 
+Scenario: the camera follows a step on a phone  [WB-06, WB-16]
+  Given a reply draws a whiteboard too big to read whole on a phone
+  When the next step appears
+  Then the view moves to that step
+  And its text is shown at a readable size
+
+Scenario: a misplaced mark is sent back  [WB-09]
+  Given the agent marks the learner's drawing
+  When a note covers what the learner drew and fixes remain
+  Then the marks are not stored
+  And the agent is told which note to move
+
 Scenario: the agent sees the learner's sketch  [WB-03, WB-09]
   Given the learner drew on a whiteboard
   When they send their next message
@@ -149,8 +177,7 @@ Scenario: the whiteboard works on a phone  [WB-16]
 ## Open questions
 
 - Text size in the layout checks is an estimate. A label in a font wider than the estimate could still spill in the browser.
-- A flow arrow that loops back to an earlier layer is drawn straight and can cross the boxes between.
-- Marks are not layout checked.
+- A bent arrow's stored `start` and `end` sit on the straight line between its parts, not where the curve meets their edges.
 
 - The math check uses pylatexenc, not KaTeX's parser. A string KaTeX rejects might still pass, or the reverse.
 - A graph expression may use arithmetic (`+`, `-`, `*`, `/`, `//`, `%`, `**`) plus the named functions. One non-finite sample refuses the whole graph. An axis label may be empty. Plotted values are finite numbers and are not clamped to the coordinate range. The axis ranges are.
