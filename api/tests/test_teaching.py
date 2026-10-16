@@ -140,6 +140,9 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "Do not put code in the brief." in prompt
     assert "Do not say it is ready" in prompt
     assert "Do not grade the learner's choices." in prompt
+    assert "a common misconception about the idea" in prompt
+    assert "Do not write all of the above or none of the above" in prompt
+    assert "Polaris shuffles the choices." in prompt
     assert "how parts connect" in DRAW_WHITEBOARD_DESCRIPTION
     assert "do not use it for a quiz" in DRAW_WHITEBOARD_DESCRIPTION
     assert "version 4" in DRAW_WHITEBOARD_DESCRIPTION

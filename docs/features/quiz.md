@@ -12,6 +12,8 @@ QZ-05  Each question has exactly one correct choice.
 QZ-06  After grading, the learner is told which questions were wrong, and those mistakes are explained.
 QZ-07  Creating a quiz stores it as an artifact of that session.
 QZ-08  The score is kept with the quiz.
+QZ-09  The choices of each question are shuffled when the quiz is stored, so where the correct choice sits does not follow the model's habit.
+QZ-10  A quiz is refused when a choice gives the answer away or depends on the choice order: a choice such as "all of the above" or "none of the above", a choice labelled with a letter, two choices with the same text, an explanation that names a choice by its letter, or a correct choice far longer than every other choice.
 
 ## Scenarios
 
@@ -35,3 +37,14 @@ Scenario: one correct choice  [QZ-05]
   Given the agent created a quiz
   When the quiz is stored
   Then every question has exactly one correct choice in the key
+
+Scenario: choices are shuffled  [QZ-09]
+  Given the agent created a quiz whose correct choice is always first
+  When the quiz is stored many times
+  Then the correct choice is not always first
+
+Scenario: a choice that gives the answer away is refused  [QZ-10]
+  Given the agent created a quiz with the choice "All of the above"
+  When the quiz is stored
+  Then the quiz is refused
+  And the agent is told which question to fix

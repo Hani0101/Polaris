@@ -82,8 +82,9 @@ CREATE_QUIZ_TOOL = "mcp__polaris__create_quiz"
 DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
 START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
-# each fix attempt, one animation job, one quiz, and one spare tool turn.
-TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3
+# each fix attempt, one animation job, one quiz, one quiz fix attempt after a
+# QZ-10 refusal, and one spare tool turn.
+TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 4
 DRAW_WHITEBOARD_DESCRIPTION = (
     "Draw a whiteboard when a picture helps the learner see an idea: "
     "how parts connect, a sequence, a comparison, or a layout. "
@@ -303,6 +304,12 @@ def teaching_prompt() -> str:
         "When the turn lists facts, teach the topic in the learner message using those facts.\n"
         "If a quiz would help check understanding, call create_quiz.\n"
         "Each question must have exactly one correct choice.\n"
+        "Write each wrong choice as a mistake this learner could plausibly make, "
+        "such as a common misconception about the idea, not an obviously silly answer.\n"
+        "Keep every choice about the same length and form as the correct one.\n"
+        "Do not write all of the above or none of the above, and do not repeat a choice.\n"
+        "Polaris shuffles the choices. Do not label them with letters, and in an explanation "
+        "name a choice by its text, not by its letter or position.\n"
         "Never put the correct choices in the reply text.\n"
         "Do not grade the learner's choices. Code grades them against the stored key.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
@@ -673,6 +680,8 @@ def polaris_mcp_server(
         (
             "Store a quiz as an artifact of this session. "
             "Each question must have exactly one correct choice. "
+            "Wrong choices are plausible mistakes of about the same length as the "
+            "correct one. Polaris shuffles the choices, so do not label them. "
             "The learner never sees the answer key."
         ),
         CREATE_QUIZ_SCHEMA,
