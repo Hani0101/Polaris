@@ -176,7 +176,7 @@ Scenario: the animation fits a phone  [AN-20]
 
 ## Evals
 
-A fixed set of about ten briefs is the animation eval, for example a pendulum, binary search, attention in a transformer, and the derivative as a slope. Each eval run starts a job for every brief with the real writer and records whether it became ready, how many runs it used, and how long it took. The evals call Claude, so they run by hand and not with the unit tests.
+A fixed set of about ten briefs is the animation eval, for example a pendulum, binary search, attention in a transformer, and the derivative as a slope. Each eval run starts a job for every brief with the real writer and records whether it became ready, how many runs it used, and how long it took. The briefs are in `api/evals/animation_briefs.json` and `api/evals/run_animation_evals.py` runs them. The evals call Claude, so they run by hand and not with the unit tests. A report goes to `api/evals/results/`, which is not committed.
 
 ## Kept for later
 

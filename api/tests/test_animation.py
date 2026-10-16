@@ -577,3 +577,14 @@ def test_the_learner_asks_about_a_step(make_client):
         json={"message": "?", "animation_step": {"job_id": job["id"], "step_id": "nope"}},
     )
     assert bad.status_code == 422
+
+
+def test_the_eval_briefs_are_fixed_and_unique():
+    """The animation eval is a fixed set of about ten briefs."""
+
+    path = Path(__file__).resolve().parents[1] / "evals" / "animation_briefs.json"
+    briefs = json.loads(path.read_text(encoding="utf-8"))
+    ids = [item["id"] for item in briefs]
+    assert len(ids) >= 10
+    assert len(set(ids)) == len(ids)
+    assert all(item["brief"].strip() for item in briefs)
