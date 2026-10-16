@@ -50,7 +50,7 @@ from polaris.agent import ReplyResult
 from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.models import Pointing, Profile, Turn
-from polaris.quiz import InvalidQuiz
+from polaris.quiz import InvalidQuiz, describe_result
 from polaris.whiteboard import (
     DESCRIBED_DRAWING_VERSION,
     GRAPH_DRAWING_VERSION,
@@ -268,6 +268,8 @@ def teaching_prompt() -> str:
         "Each question must have exactly one correct choice.\n"
         "Never put the correct choices in the reply text.\n"
         "Do not grade the learner's choices. Code grades them against the stored key.\n"
+        "When the turn lists a graded quiz, use its score and the questions "
+        "the learner missed to choose what to teach next.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
         "A new whiteboard is version 4 and includes a description for a person "
@@ -327,6 +329,7 @@ def turn_prompt(
     whiteboards: Sequence[Whiteboard] = (),
     pointing: Pointing | None = None,
     simplify: Whiteboard | None = None,
+    quizzes: Sequence[dict[str, object]] = (),
 ) -> str:
     lines = [
         "Profile facts, read for this reply:",
@@ -348,6 +351,11 @@ def turn_prompt(
         lines.append("Whiteboards in this session:")
         for whiteboard in whiteboards:
             lines.append(describe_whiteboard(whiteboard))
+    if quizzes:
+        lines.append("")
+        lines.append("Quizzes in this session. Code grades them against the stored key:")
+        for quiz in quizzes:
+            lines.append(describe_result(quiz))
     current = _pointing_text(whiteboards, pointing)
     if current is not None:
         lines.append("")
@@ -910,6 +918,7 @@ class ClaudeTeachingAgent:
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        quizzes: Sequence[dict[str, object]] = (),
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
         client, include_transcript = await self._ensure_client(
@@ -924,6 +933,7 @@ class ClaudeTeachingAgent:
             whiteboards,
             pointing,
             simplify,
+            quizzes,
         )
         await client.query(prompt)
         watch = ReplyWatch()

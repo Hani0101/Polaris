@@ -1,4 +1,4 @@
-"""Quiz scenarios: QZ-01 through QZ-08, CH-02, and decision 0002.
+"""Quiz scenarios: QZ-01 through QZ-09, CH-02, and decision 0002.
 
 A filled profile is seeded so a quiz can be created without teaching on an
 empty profile. Nothing here writes the profile.
@@ -9,8 +9,9 @@ import json
 
 import pytest
 
-from polaris.quiz import InvalidQuiz, normalize_spec
-from polaris.teaching import TeachingFailed
+from polaris.models import Profile
+from polaris.quiz import InvalidQuiz, describe_result, normalize_spec, public_payload
+from polaris.teaching import TeachingFailed, turn_prompt
 from test_chat import (
     EMPTY_PROFILE_REPLY,
     make_client,
@@ -56,6 +57,7 @@ class QuizCreatingStub:
         self.spec = spec
         self.chat = None
         self.reply_count = 0
+        self.seen_quizzes: list[list[dict]] = []
         self.closed: list[str] = []
 
     async def reply(
@@ -69,9 +71,11 @@ class QuizCreatingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         self.reply_count += 1
+        self.seen_quizzes.append(list(quizzes))
         if not profile.facts:
             yield EMPTY_PROFILE_REPLY
             return
@@ -249,6 +253,52 @@ def test_score_is_kept_with_the_quiz(make_client):
     assert _quiz_from_session(session)["score"] == {"earned": 1, "total": 2}
 
 
+def test_the_next_reply_sees_the_quiz_score(make_client):
+    """QZ-09: the next teaching reply reads the score and the missed questions."""
+
+    client, agent, session, _events, saved = _make_quiz(make_client)
+    quiz = _quiz_from_session(saved)
+    client.post(
+        f"/api/quizzes/{quiz['id']}/grade",
+        json={"choices": {"q1": "a", "q2": "b"}},
+    )
+
+    post_turn(client, session["id"], "How did I do?")
+
+    seen = agent.seen_quizzes[-1]
+    assert [item["id"] for item in seen] == [quiz["id"]]
+    assert seen[0]["score"] == {"earned": 1, "total": 2}
+    assert [mistake["question_id"] for mistake in seen[0]["mistakes"]] == ["q1"]
+
+
+def test_quiz_result_names_the_learner_choice_not_the_key():
+    """QZ-09 with QZ-03: a missed question names what the learner chose, not the key."""
+
+    stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
+    graded = public_payload(
+        "quiz-1",
+        "session-1",
+        stored,
+        score={"earned": 1, "total": 2},
+        submitted={"q1": "a", "q2": "b"},
+    )
+    ungraded = public_payload("quiz-2", "session-1", stored, score=None, submitted=None)
+
+    text = describe_result(graded)
+    lines = text.splitlines()
+    assert lines[0] == 'Quiz quiz-1 "Fractions": the learner scored 1 of 2.'
+    assert lines[1] == '- q1 wrong: What is 1/2 of 4? The learner chose "1".'
+    assert lines[2] == '- q2 right: Which fraction equals one whole? The learner chose "2/2".'
+    assert describe_result(ungraded) == 'Quiz quiz-2 "Fractions": not graded yet.'
+
+    prompt = turn_prompt(
+        Profile(("wants short explanations",)), "How did I do?", quizzes=(graded,)
+    )
+    section = prompt.split("Quizzes in this session", 1)[1]
+    assert text in section
+    assert "correct_choice_id" not in prompt
+
+
 def test_the_learner_expands_the_quiz(make_client):
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     in_chat = _quiz_from_session(saved)
@@ -373,8 +423,9 @@ class FailingAfterQuizStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
-        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if not profile.facts:
             yield EMPTY_PROFILE_REPLY
             return

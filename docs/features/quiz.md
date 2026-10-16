@@ -12,6 +12,7 @@ QZ-05  Each question has exactly one correct choice.
 QZ-06  After grading, the learner is told which questions were wrong, and those mistakes are explained.
 QZ-07  Creating a quiz stores it as an artifact of that session.
 QZ-08  The score is kept with the quiz.
+QZ-09  Every later reply in that session reads the score of each graded quiz, which questions were wrong, and the choice the learner made. It never reads the answer key for a wrong question.
 
 ## Scenarios
 
@@ -35,3 +36,9 @@ Scenario: one correct choice  [QZ-05]
   Given the agent created a quiz
   When the quiz is stored
   Then every question has exactly one correct choice in the key
+
+Scenario: the next reply sees the score  [QZ-09]
+  Given a quiz in the session that the learner submitted
+  When the learner sends the next message
+  Then the reply reads the score and which questions were wrong
+  And a wrong question names the learner's choice, not the correct one

@@ -27,8 +27,12 @@ class ReplyAgent(Protocol):
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        quizzes: Sequence[dict[str, object]] = (),
     ) -> AsyncIterator[str | ReplyResult]:
-        """Stream reply text, then one ReplyResult when the stream reaches a result."""
+        """Stream reply text, then one ReplyResult when the stream reaches a result.
+
+        quizzes are the learner-visible payloads of this session's quizzes.
+        """
 
     async def close_session(self, session_id: str) -> None:
         """Drop the agent connection for a session the learner left."""

@@ -90,6 +90,28 @@ def grade(
     return {"earned": earned, "total": len(questions)}, choices
 
 
+def describe_result(payload: dict[str, Any]) -> str:
+    """Text for the teaching agent about one quiz, built from the learner-visible
+    payload. A missed question names the learner's choice, never the key."""
+
+    title = f'Quiz {payload["id"]} "{payload["title"]}"'
+    score = payload.get("score")
+    if score is None:
+        return f"{title}: not graded yet."
+    submitted = payload.get("submitted") or {}
+    missed = {mistake["question_id"] for mistake in payload.get("mistakes", [])}
+    lines = [f"{title}: the learner scored {score['earned']} of {score['total']}."]
+    for question in payload["questions"]:
+        texts = {choice["id"]: choice["text"] for choice in question["choices"]}
+        chosen = texts.get(submitted.get(question["id"], ""), "")
+        result = "wrong" if question["id"] in missed else "right"
+        lines.append(
+            f'- {question["id"]} {result}: {question["prompt"]} '
+            f'The learner chose "{chosen}".'
+        )
+    return "\n".join(lines)
+
+
 def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
     if not isinstance(question, dict):
         raise InvalidQuiz(f"question {index} is not an object")

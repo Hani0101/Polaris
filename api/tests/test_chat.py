@@ -54,8 +54,9 @@ class TeachingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
-        del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if profile.facts:
             text = f"Noted {profile.facts[0]}. {learner_message}"
         else:
@@ -84,8 +85,9 @@ class GatedAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
-        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         yield "partial"
         await asyncio.to_thread(self.release.wait)
         yield " tail"
@@ -474,6 +476,7 @@ class SdkIdStub(TeachingStub):
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
         async for chunk in super().reply(
             session_id=session_id,
@@ -484,6 +487,7 @@ class SdkIdStub(TeachingStub):
             whiteboards=whiteboards,
             pointing=pointing,
             simplify=simplify,
+            quizzes=quizzes,
         ):
             yield chunk
         yield ReplyResult(sdk_session_id="sdk-from-result")
@@ -577,8 +581,9 @@ class BoomAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
     ):
-        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         raise RuntimeError("Failed to start Claude Code")
         yield  # pragma: no cover
 
