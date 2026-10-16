@@ -52,13 +52,20 @@
 
 .tabs-list {
   display: flex;
-  border-bottom: var(--border-width-default) solid var(--color-border-subtle);
+  /* Four tabs need 293px; a 320px phone sheet has 288px, so the row
+     scrolls there instead of clipping the last tab. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* The row line is an inset shadow so the selected underline can sit on
+     it without overflowing the scrolling row. */
+  box-shadow: inset 0 calc(-1 * var(--border-width-default)) 0 var(--color-border-subtle);
 }
 
 .tabs-tab {
+  flex: 1 0 auto;
   min-height: var(--component-tap-target-min);
-  padding: 0 var(--space-md);
-  margin-bottom: calc(-1 * var(--border-width-default));
+  /* DS-GAP: tab padding when four tabs share a 360px panel, used space.xs */
+  padding: 0 var(--space-xs);
   background: transparent;
   color: var(--color-text-secondary);
   border: none;
@@ -103,7 +110,8 @@
   margin-block: auto;
 }
 
-.tools-whiteboard {
+.tools-whiteboard,
+.tools-animation {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -172,6 +180,10 @@
 
 .tools-card--clickable:active:not(:disabled) {
   background: var(--color-action-secondary-default);
+}
+
+.tools-card > .alert {
+  align-self: stretch;
 }
 
 .tools-card-row {

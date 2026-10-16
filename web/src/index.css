@@ -218,6 +218,45 @@ body {
   margin: 0;
 }
 
+/* Scrollbars: thin thumb, no track fill, no arrow buttons.
+   DS-GAP: scrollbar width, used space.xs. DS-GAP: scrollbar colors, used color.border.default / color.border.strong. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-default) transparent;
+}
+
+/* Blink and WebKit use the pseudo-elements below instead. */
+@supports selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+}
+
+::-webkit-scrollbar {
+  width: var(--space-xs);
+  height: var(--space-xs);
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-button {
+  display: none;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-default);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-strong);
+}
+
 h1,
 h2,
 h3,

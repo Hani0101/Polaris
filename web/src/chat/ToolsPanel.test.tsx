@@ -6,6 +6,12 @@ import { sampleWhiteboard } from '../whiteboard/sampleWhiteboard.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { ToolsPanel } from './ToolsPanel.tsx'
 
+vi.mock('../AnimationPlayer.tsx', () => ({
+  AnimationPlayer: ({ jobId }: { jobId: string }) => (
+    <div data-testid="animation-player">{jobId}</div>
+  ),
+}))
+
 vi.mock('../whiteboard/Whiteboard.tsx', () => ({
   Whiteboard: ({ whiteboard }: { whiteboard: { id: string } }) => (
     <div data-testid="whiteboard">{whiteboard.id}</div>
@@ -96,8 +102,11 @@ test('tabs switch with a click and with arrow keys', () => {
 
   const quizTab = screen.getByRole('tab', { name: 'Quiz' })
   fireEvent.keyDown(quizTab, { key: 'ArrowRight' })
+  expect(selectedTab()).toBe('Animation')
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Animation' }))
+
+  fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Artifacts')
-  expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Artifacts' }))
 
   fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Whiteboard')
@@ -109,7 +118,7 @@ test('tabs switch with a click and with arrow keys', () => {
   expect(selectedTab()).toBe('Whiteboard')
 
   const tabs = screen.getAllByRole('tab')
-  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1])
+  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1])
 })
 
 test('each tab shows an empty state when the session has nothing yet', () => {
@@ -119,8 +128,45 @@ test('each tab shows an empty state when the session has nothing yet', () => {
   fireEvent.click(screen.getByRole('tab', { name: 'Quiz' }))
   expect(screen.getByText('No quiz yet')).toBeTruthy()
 
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+  expect(screen.getByText('No animation yet')).toBeTruthy()
+
   fireEvent.click(screen.getByRole('tab', { name: 'Artifacts' }))
   expect(screen.getByText('No artifacts yet')).toBeTruthy()
+})
+
+test('the animation tab plays the most recent ready animation and opens it', () => {
+  const onOpenAnimation = vi.fn()
+  const older: AnimationArtifact = { ...animation, id: 'job-old', status: 'ready' }
+  const newest: AnimationArtifact = { ...animation, id: 'job-new', status: 'ready' }
+  renderPanel([older, quiz, newest], { onOpenAnimation })
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  expect(screen.getByTestId('animation-player').textContent).toBe('job-new')
+  fireEvent.click(screen.getByRole('button', { name: 'Open animation' }))
+  expect(onOpenAnimation).toHaveBeenCalledWith('session-1', 'job-new')
+})
+
+test('the animation tab shows a running job and a failed one', () => {
+  const { rerender } = renderPanel([animation])
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+  expect(screen.getByText('In progress')).toBeTruthy()
+  expect(screen.queryByTestId('animation-player')).toBeNull()
+
+  rerender(
+    <ToolsPanel
+      artifacts={[{ ...animation, status: 'failed' }]}
+      headingId="tools-heading"
+      onClose={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onOpenAnimation={noop}
+      onQuizGraded={noop}
+    />,
+  )
+  expect(screen.getByRole('alert').textContent).toBe(
+    'Polaris cannot create the animation right now. Try later.',
+  )
 })
 
 test('the whiteboard tab shows the most recent whiteboard and opens it', () => {

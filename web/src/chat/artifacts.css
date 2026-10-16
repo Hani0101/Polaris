@@ -21,11 +21,14 @@
     border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-.animation-card--clickable:hover {
+/* :not(:disabled) matches the global button:hover rule, which would
+   otherwise paint the primary fill under primary text. */
+.animation-card--clickable:hover:not(:disabled) {
+  background: var(--color-surface-default);
   border-color: var(--color-border-strong);
 }
 
-.animation-card--clickable:active {
+.animation-card--clickable:active:not(:disabled) {
   background: var(--color-action-secondary-default);
 }
 
@@ -40,6 +43,10 @@
   font-size: var(--font-size-xl);
   font-weight: var(--font-weight-bold);
   line-height: var(--font-line-height-tight);
+}
+
+.animation-card > .alert {
+  flex-basis: 100%;
 }
 
 .animation-card-action {
