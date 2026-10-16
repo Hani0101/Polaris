@@ -6,10 +6,12 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from polaris.agent import ReplyAgent
+from polaris.animation import MissingJob, MissingPlayback
+from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
 from polaris.chat import (
     BlankMessage,
     Chat,
@@ -42,6 +44,19 @@ class GradeBody(BaseModel):
     choices: dict[str, str]
 
 
+# Agent-written HTML runs in its own opaque origin, even when opened
+# directly, so it cannot call this API. It cannot load anything from the
+# network either (AN-04).
+PLAYBACK_HEADERS = {
+    "Content-Security-Policy": (
+        "sandbox allow-scripts; default-src 'none'; "
+        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        "img-src data: blob:; media-src 'self' data: blob:; font-src data:"
+    ),
+    "X-Content-Type-Options": "nosniff",
+}
+
+
 def _sse(payload: dict[str, object]) -> str:
     return "data: " + json.dumps(payload) + "\n\n"
 
@@ -55,11 +70,18 @@ def create_app(
 
     assert_claude_login()
     data_dir.mkdir(parents=True, exist_ok=True)
+    animation_writer: AnimationWriter | None = None
     if agent is None:
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
-    chat = Chat(data_dir, agent, profile_pass=profile_pass)
+        animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+    chat = Chat(
+        data_dir,
+        agent,
+        profile_pass=profile_pass,
+        animation_writer=animation_writer,
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -109,6 +131,14 @@ def create_app(
 
     @app.exception_handler(MissingQuiz)
     async def missing_quiz(_request, exc: MissingQuiz) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(MissingJob)
+    async def missing_job(_request, exc: MissingJob) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(MissingPlayback)
+    async def missing_playback(_request, exc: MissingPlayback) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
     @app.exception_handler(MissingWhiteboard)
@@ -244,6 +274,19 @@ def create_app(
         drawing: dict[str, Any] = Body(),
     ) -> dict[str, object]:
         return chat.update_whiteboard(session_id, whiteboard_id, drawing)
+
+    @app.get("/api/sessions/{session_id}/jobs/{job_id}")
+    def read_job(session_id: str, job_id: str) -> dict[str, object]:
+        return chat.get_animation_job(session_id, job_id)
+
+    @app.get("/api/sessions/{session_id}/jobs/{job_id}/media")
+    def read_job_media(session_id: str, job_id: str) -> FileResponse:
+        playback = chat.get_animation_media(session_id, job_id)
+        return FileResponse(
+            playback.path,
+            media_type=playback.media_type,
+            headers=PLAYBACK_HEADERS,
+        )
 
     @app.get("/api/quizzes/{quiz_id}")
     def read_quiz(quiz_id: str) -> dict[str, object]:

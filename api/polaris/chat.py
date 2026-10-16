@@ -8,12 +8,28 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from polaris.agent import ReplyAgent, ReplyResult
+from polaris.animation import (
+    FAILED as JOB_FAILED,
+    FAILURE_NOTICE,
+    READY as JOB_READY,
+    RUNNING as JOB_RUNNING,
+    AnimationProduceResult,
+    MissingJob,
+    MissingPlayback,
+    PlaybackFile,
+    find_playback,
+    job_payload,
+    produce as produce_animation,
+    waiting_notice_chunk,
+)
+from polaris.animation_writer import AnimationWriter, new_cli_loop
+from polaris.sandbox import run as sandbox_run
 from polaris.login import ApiKeyPresent
 from polaris.models import Pointing, Turn
 from polaris.profile import ProfilePass, apply_changes, load_profile, save_profile
@@ -122,25 +138,33 @@ class Chat:
         data_dir: Path,
         agent: ReplyAgent,
         profile_pass: ProfilePass | None = None,
+        animation_writer: AnimationWriter | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.agent = agent
         self._profile_pass = profile_pass
+        self._animation_writer = animation_writer
         self.db_path = data_dir / "polaris.db"
         self.profile_path = data_dir / "profile.json"
         self._lock = threading.Lock()
         self._busy: set[str] = set()
         self._pending: dict[str, list[dict[str, object]]] = {}
         self._mark_rollbacks: dict[str, list[tuple[str, str]]] = {}
+        self._animation_notices: dict[str, list[str]] = {}
+        self._animation_sandbox = sandbox_run
+        # job id -> worker writing that animation off the turn (AN-01).
+        self._animation_threads: dict[str, threading.Thread] = {}
         self._conn: sqlite3.Connection | None = None
         self._open_db()
         self._init_db()
+        self._fail_interrupted_jobs()
         binder = getattr(agent, "bind_store", None)
         if callable(binder):
             binder(
                 self.create_quiz,
                 self.create_whiteboard,
                 mark_whiteboard=self.mark_whiteboard,
+                start_animation_job=self.start_animation_job,
             )
 
     def list_sessions(self) -> list[dict[str, object]]:
@@ -289,6 +313,9 @@ class Chat:
             return taken
 
         try:
+            for notice in self.take_animation_notices(session_id):
+                parts.append(notice)
+                yield notice
             profile = await asyncio.to_thread(load_profile, self.profile_path)
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
@@ -312,6 +339,10 @@ class Chat:
                     yield artifact
             for artifact in drain():
                 yield artifact
+            notice = waiting_notice_chunk("".join(parts), created)
+            if notice:
+                parts.append(notice)
+                yield notice
             completed = True
         finally:
             self._busy.discard(session_id)
@@ -361,6 +392,209 @@ class Chat:
         with self._lock:
             self._pending.setdefault(session_id, []).append(payload)
         return payload
+
+    def start_animation_job(self, session_id: str, brief: str) -> dict[str, object]:
+        """Store a running job and return its id before any animation exists (AN-01).
+
+        The animation is written and run by a worker, outside the turn, so
+        the learner can keep talking in this session or another.
+        """
+
+        self._require(session_id)
+        brief = brief.strip()
+        if not brief:
+            raise ValueError("An animation job needs a brief.")
+        job_id = str(uuid.uuid4())
+        payload = job_payload(job_id, session_id, status=JOB_RUNNING)
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """
+                INSERT INTO artifacts (id, session_id, turn_id, kind, created_at)
+                VALUES (?, ?, NULL, 'animation', ?)
+                """,
+                (job_id, session_id, _now()),
+            )
+            conn.execute(
+                """
+                INSERT INTO animation_jobs (id, status)
+                VALUES (?, ?)
+                """,
+                (job_id, JOB_RUNNING),
+            )
+
+        self._with_db(write)
+        with self._lock:
+            self._pending.setdefault(session_id, []).append(payload)
+        self._launch_animation(session_id, job_id, brief)
+        return payload
+
+    def _launch_animation(self, session_id: str, job_id: str, brief: str) -> None:
+        writer = self._animation_writer
+        if writer is None:
+            return
+        thread = threading.Thread(
+            target=self._run_animation_job,
+            args=(writer, session_id, job_id, brief),
+            name=f"polaris-animation-{job_id[:8]}",
+            daemon=True,
+        )
+        with self._lock:
+            self._animation_threads[job_id] = thread
+        thread.start()
+
+    def _run_animation_job(
+        self, writer: AnimationWriter, session_id: str, job_id: str, brief: str
+    ) -> None:
+        """Worker: write, run, and fix one animation (AN-04, AN-05, AN-09).
+
+        Runs on its own loop, one that can spawn the Claude CLI.
+        """
+
+        loop = new_cli_loop()
+        last_code: str | None = None
+
+        def write_code(error: str | None) -> str:
+            nonlocal last_code
+            last_code = loop.run_until_complete(
+                writer.write(
+                    brief,
+                    failed_code=last_code if error is not None else None,
+                    error=error,
+                )
+            )
+            return last_code
+
+        try:
+            self.produce_animation_job(session_id, job_id, write_code)
+        except MissingJob:
+            # The turn that started the job failed and was discarded.
+            pass
+        except Exception:
+            self._fail_animation_job(session_id, job_id)
+        finally:
+            loop.close()
+            with self._lock:
+                self._animation_threads.pop(job_id, None)
+
+    def wait_for_animation_jobs(self, timeout: float | None = None) -> None:
+        """Block until every animation worker has finished."""
+
+        with self._lock:
+            threads = list(self._animation_threads.values())
+        for thread in threads:
+            thread.join(timeout)
+
+    def _fail_animation_job(self, session_id: str, job_id: str) -> None:
+        try:
+            self._set_animation_status(job_id, JOB_FAILED)
+        except RuntimeError:
+            # The chat database closed while the worker ran.
+            return
+        with self._lock:
+            self._animation_notices.setdefault(session_id, []).append(FAILURE_NOTICE)
+
+    def _fail_interrupted_jobs(self) -> None:
+        """A job still running at startup lost its worker when Polaris stopped (AN-09)."""
+
+        def write(conn: sqlite3.Connection) -> list[str]:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT a.session_id
+                FROM animation_jobs j
+                JOIN artifacts a ON a.id = j.id
+                WHERE j.status = ?
+                """,
+                (JOB_RUNNING,),
+            ).fetchall()
+            conn.execute(
+                "UPDATE animation_jobs SET status = ? WHERE status = ?",
+                (JOB_FAILED, JOB_RUNNING),
+            )
+            return [row["session_id"] for row in rows]
+
+        for session_id in self._with_db(write):
+            self._animation_notices.setdefault(session_id, []).append(FAILURE_NOTICE)
+
+    def get_animation_job(self, session_id: str, job_id: str) -> dict[str, object]:
+        self._require(session_id)
+
+        def read(conn: sqlite3.Connection) -> sqlite3.Row | None:
+            return conn.execute(
+                """
+                SELECT a.id, a.session_id, j.status
+                FROM artifacts a
+                JOIN animation_jobs j ON j.id = a.id
+                WHERE a.id = ? AND a.session_id = ? AND a.kind = 'animation'
+                """,
+                (job_id, session_id),
+            ).fetchone()
+
+        row = self._with_db(read)
+        if row is None:
+            raise MissingJob()
+        return job_payload(row["id"], row["session_id"], status=row["status"])
+
+    def get_animation_media(self, session_id: str, job_id: str) -> PlaybackFile:
+        """Playback file for a ready job (AN-06). Never includes agent code."""
+
+        job = self.get_animation_job(session_id, job_id)
+        if job["status"] != JOB_READY:
+            raise MissingPlayback()
+        found = find_playback(self.animation_work_dir(job_id))
+        if found is None:
+            raise MissingPlayback()
+        return found
+
+    def animation_work_dir(self, job_id: str) -> Path:
+        """Directory where sandbox output for this job is written."""
+
+        path = self.data_dir / "animation" / job_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def produce_animation_job(
+        self,
+        session_id: str,
+        job_id: str,
+        write_code: Callable[[str | None], str],
+    ) -> AnimationProduceResult:
+        """Write, run, and fix a started job (AN-04, AN-05, AN-09).
+
+        The code goes to the sandbox only. It is never stored on the job or
+        returned to the learner.
+        """
+
+        self.get_animation_job(session_id, job_id)
+        result = produce_animation(
+            work_dir=self.animation_work_dir(job_id),
+            write_code=write_code,
+            run_sandbox=self._animation_sandbox,
+        )
+        self._set_animation_status(job_id, result.status)
+        if result.session_notice:
+            with self._lock:
+                self._animation_notices.setdefault(session_id, []).append(
+                    result.session_notice
+                )
+        return result
+
+    def take_animation_notices(self, session_id: str) -> list[str]:
+        """Drain failure notices for a session (AN-09)."""
+
+        with self._lock:
+            return list(self._animation_notices.pop(session_id, []))
+
+    def _set_animation_status(self, job_id: str, status: str) -> None:
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """
+                UPDATE animation_jobs SET status = ? WHERE id = ?
+                """,
+                (status, job_id),
+            )
+
+        self._with_db(write)
 
     def create_whiteboard(
         self, session_id: str, drawing: dict[str, Any]
@@ -658,10 +892,11 @@ class Chat:
                 """
                 SELECT a.turn_id, a.id, a.session_id, a.kind,
                        q.questions_json, q.score_correct, q.score_total,
-                       q.submitted_json, w.drawing_json
+                       q.submitted_json, w.drawing_json, j.status AS job_status
                 FROM artifacts a
                 LEFT JOIN quizzes q ON q.id = a.id AND a.kind = 'quiz'
                 LEFT JOIN whiteboards w ON w.id = a.id AND a.kind = 'whiteboard'
+                LEFT JOIN animation_jobs j ON j.id = a.id AND a.kind = 'animation'
                 WHERE a.session_id = ?
                 ORDER BY a.created_at ASC, a.id ASC
                 """,
@@ -679,6 +914,13 @@ class Chat:
                     continue
                 if row["kind"] == "quiz":
                     by_turn.setdefault(turn_id, []).append(self._public_from_row(row))
+                    continue
+                if row["kind"] == "animation" and row["job_status"] is not None:
+                    by_turn.setdefault(turn_id, []).append(
+                        job_payload(
+                            row["id"], row["session_id"], status=row["job_status"]
+                        )
+                    )
             return tuple(
                 Turn(
                     learner_message=row["learner_message"],
@@ -764,6 +1006,16 @@ class Chat:
             conn.execute(
                 """
                 DELETE FROM whiteboards
+                WHERE id IN (
+                    SELECT id FROM artifacts
+                    WHERE session_id = ? AND turn_id IS NULL
+                )
+                """,
+                (session_id,),
+            )
+            conn.execute(
+                """
+                DELETE FROM animation_jobs
                 WHERE id IN (
                     SELECT id FROM artifacts
                     WHERE session_id = ? AND turn_id IS NULL
@@ -911,6 +1163,14 @@ class Chat:
                 CREATE TABLE IF NOT EXISTS whiteboards (
                     id TEXT PRIMARY KEY REFERENCES artifacts(id),
                     drawing_json TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS animation_jobs (
+                    id TEXT PRIMARY KEY REFERENCES artifacts(id),
+                    status TEXT NOT NULL
                 )
                 """
             )

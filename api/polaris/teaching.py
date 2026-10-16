@@ -3,8 +3,14 @@
 Streaming input (ClaudeSDKClient) is the mode the SDK documents for a chat
 UI. include_partial_messages yields StreamEvent text deltas as the reply is
 produced. A custom system prompt is the documented choice for a non-coding
-agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz, draw_whiteboard) are registered
-so a quiz or a whiteboard can be stored as an artifact; see custom-tools.md.
+agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz,
+draw_whiteboard, start_animation_job) are registered so a quiz, a
+whiteboard, or an animation job can be stored as an artifact; see
+custom-tools.md. start_animation_job takes only a plain-language brief.
+Its strict schema rejects any other argument, such as code, before the
+handler runs (custom-tools.md, jsonschema step). The job id is the artifact
+id from the store. The animation writer writes and runs the code outside
+the turn (AN-01), so the teaching agent never sends animation code.
 draw_whiteboard takes the Polaris drawing format. Its schema is an open
 object so every call reaches check_drawing. A strict schema would be
 rejected by the SDK before that check (custom-tools.md, jsonschema step).
@@ -74,9 +80,10 @@ _MISSING_PROFILE = (
 POLARIS_SERVER_NAME = "polaris"
 CREATE_QUIZ_TOOL = "mcp__polaris__create_quiz"
 DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
+START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
-# each fix attempt, one quiz, and one spare tool turn.
-TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2
+# each fix attempt, one animation job, one quiz, and one spare tool turn.
+TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3
 DRAW_WHITEBOARD_DESCRIPTION = (
     "Draw a whiteboard when a picture helps the learner see an idea: "
     "how parts connect, a sequence, a comparison, or a layout. "
@@ -212,10 +219,39 @@ CREATE_QUIZ_SCHEMA = {
     "required": ["title", "questions"],
     "additionalProperties": False,
 }
+ANIMATION_BRIEF_LIMIT = 2000
+# additionalProperties false rejects animation code, or any other field,
+# before the handler (custom-tools.md, jsonschema step).
+START_ANIMATION_JOB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "brief": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": ANIMATION_BRIEF_LIMIT,
+            "description": (
+                "What the animation shows, step by step, in plain words, "
+                "pitched for this learner. Not code."
+            ),
+        }
+    },
+    "required": ["brief"],
+    "additionalProperties": False,
+}
+START_ANIMATION_JOB_DESCRIPTION = (
+    "Start an animation job for this session when a moving explanation "
+    "helps the learner: motion, change over time, or a process with steps. "
+    "Send a brief that says what the animation shows. Do not send code; "
+    "Polaris writes and runs the animation after this turn. The job id comes "
+    "back before the animation is ready, and the learner can keep talking. "
+    "Polaris sets the session."
+)
 
 QuizHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 QuizStore = Callable[[str, dict[str, Any]], dict[str, Any]]
 WhiteboardHandler = QuizHandler
+AnimationHandler = QuizHandler
+AnimationJobStore = Callable[[str, str], dict[str, Any]]
 
 
 class TeachingFailed(RuntimeError):
@@ -263,6 +299,7 @@ def teaching_prompt() -> str:
         f"{_MISSING_PROFILE}\n"
         "Do not call create_quiz.\n"
         "Do not call draw_whiteboard.\n"
+        "Do not call start_animation_job.\n"
         "When the turn lists facts, teach the topic in the learner message using those facts.\n"
         "If a quiz would help check understanding, call create_quiz.\n"
         "Each question must have exactly one correct choice.\n"
@@ -287,6 +324,13 @@ def teaching_prompt() -> str:
         "When the learner asks for a simpler version of a whiteboard, "
         "call draw_whiteboard with fewer elements, a description, and simplifies "
         "set to that whiteboard's id. Do not change or delete the original whiteboard.\n"
+        "When the learner asks for an animation, or motion over time would "
+        "explain the idea better than a still drawing, call start_animation_job once.\n"
+        "Its brief says what the animation shows, step by step, for this learner. "
+        "Do not put code in the brief.\n"
+        "The animation is not ready when the tool returns. Do not say it is ready "
+        "and do not describe it as finished. Keep teaching in text meanwhile.\n"
+        "Polaris tells the learner how long it may take and how they will be told.\n"
         "Do not store, update, or delete profile facts.\n"
     )
 
@@ -378,6 +422,10 @@ async def _unavailable_whiteboard(_args: dict[str, Any]) -> dict[str, Any]:
         ],
         "is_error": True,
     }
+
+
+async def _unavailable_animation(_args: dict[str, Any]) -> dict[str, Any]:
+    return _tool_error("Animation jobs are not available.")
 
 
 def _tool_error(text: str) -> dict[str, Any]:
@@ -618,6 +666,7 @@ def polaris_mcp_server(
     *,
     create_quiz: QuizHandler,
     draw_whiteboard: WhiteboardHandler,
+    start_animation_job: AnimationHandler,
 ):
     @tool(
         "create_quiz",
@@ -639,10 +688,18 @@ def polaris_mcp_server(
     async def draw_whiteboard_tool(args: dict[str, Any]) -> dict[str, Any]:
         return await draw_whiteboard(args)
 
+    @tool(
+        "start_animation_job",
+        START_ANIMATION_JOB_DESCRIPTION,
+        START_ANIMATION_JOB_SCHEMA,
+    )
+    async def start_animation_job_tool(args: dict[str, Any]) -> dict[str, Any]:
+        return await start_animation_job(args)
+
     return create_sdk_mcp_server(
         name=POLARIS_SERVER_NAME,
         version="1.0.0",
-        tools=[create_quiz_tool, draw_whiteboard_tool],
+        tools=[create_quiz_tool, draw_whiteboard_tool, start_animation_job_tool],
     )
 
 
@@ -651,6 +708,7 @@ def teaching_options(
     cwd: Path,
     create_quiz: QuizHandler | None = None,
     draw_whiteboard: WhiteboardHandler | None = None,
+    start_animation_job: AnimationHandler | None = None,
 ) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=teaching_prompt(),
@@ -662,9 +720,14 @@ def teaching_options(
             POLARIS_SERVER_NAME: polaris_mcp_server(
                 create_quiz=create_quiz or _unavailable_quiz,
                 draw_whiteboard=draw_whiteboard or _unavailable_whiteboard,
+                start_animation_job=start_animation_job or _unavailable_animation,
             )
         },
-        allowed_tools=[CREATE_QUIZ_TOOL, DRAW_WHITEBOARD_TOOL],
+        allowed_tools=[
+            CREATE_QUIZ_TOOL,
+            DRAW_WHITEBOARD_TOOL,
+            START_ANIMATION_JOB_TOOL,
+        ],
         include_partial_messages=True,
         verbatim_prompts=True,
         permission_mode="dontAsk",
@@ -830,6 +893,7 @@ class ClaudeTeachingAgent:
         self._store_quiz = store_quiz
         self._store_whiteboard: WhiteboardStore | None = None
         self._mark_whiteboard: WhiteboardStore | None = None
+        self._start_animation_job: AnimationJobStore | None = None
         self._drawing_failures: dict[str, int] = {}
 
     def bind_store(
@@ -838,12 +902,14 @@ class ClaudeTeachingAgent:
         store_whiteboard: WhiteboardStore | None = None,
         *,
         mark_whiteboard: WhiteboardStore | None = None,
+        start_animation_job: AnimationJobStore | None = None,
     ) -> None:
         """Chat calls this so tools can store an artifact. Does not write the profile."""
 
         self._store_quiz = store_quiz
         self._store_whiteboard = store_whiteboard
         self._mark_whiteboard = mark_whiteboard
+        self._start_animation_job = start_animation_job
 
     def _handler_for(self, session_id: str) -> QuizHandler:
         async def handle(args: dict[str, Any]) -> dict[str, Any]:
@@ -898,6 +964,49 @@ class ClaudeTeachingAgent:
         )
         self._drawing_failures[session_id] = submission.failures
         return submission.tool_result
+
+    def _animation_handler_for(self, session_id: str) -> AnimationHandler:
+        async def handle(args: dict[str, Any]) -> dict[str, Any]:
+            return await self.handle_start_animation_job(session_id, args)
+
+        return handle
+
+    async def handle_start_animation_job(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Start a job for this session from a brief (AN-01). Only the brief is read."""
+
+        if self._start_animation_job is None:
+            return await _unavailable_animation({})
+        brief = args.get("brief") if isinstance(args, dict) else None
+        if not isinstance(brief, str) or not brief.strip():
+            return _tool_error(
+                "start_animation_job needs a brief that says what the animation shows."
+            )
+        try:
+            payload = await asyncio.to_thread(
+                self._start_animation_job,
+                session_id,
+                brief.strip()[:ANIMATION_BRIEF_LIMIT],
+            )
+        except Exception as exc:
+            return _tool_error(str(exc) or "The animation job did not start.")
+        job_id = payload.get("id") if isinstance(payload, dict) else None
+        if not isinstance(job_id, str) or not job_id:
+            return _tool_error("The animation job did not return an id.")
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Animation job started as id {job_id}. "
+                        "The animation is not ready yet. Polaris writes and runs it "
+                        "after this turn and tells the learner when it is ready. "
+                        "The learner can keep talking."
+                    ),
+                }
+            ]
+        }
 
     async def reply(
         self,
@@ -959,7 +1068,7 @@ class ClaudeTeachingAgent:
             cwd=self.work_dir,
             create_quiz=self._handler_for(session_id),
             draw_whiteboard=self._whiteboard_handler_for(session_id),
-        )
+            start_animation_job=self._animation_handler_for(session_id),        )
         include_transcript = False
         if sdk_session_id:
             options = replace(options, resume=sdk_session_id)

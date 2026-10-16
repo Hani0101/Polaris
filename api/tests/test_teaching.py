@@ -30,6 +30,10 @@ from polaris.teaching import (
     DRAW_WHITEBOARD_DESCRIPTION,
     DRAW_WHITEBOARD_SCHEMA,
     DRAW_WHITEBOARD_TOOL,
+    START_ANIMATION_JOB_DESCRIPTION,
+    START_ANIMATION_JOB_SCHEMA,
+    START_ANIMATION_JOB_TOOL,
+    TEACHING_MAX_TURNS,
     ClaudeTeachingAgent,
     TeachingFailed,
     _OffLoopClient,
@@ -37,7 +41,7 @@ from polaris.teaching import (
     teaching_options,
     turn_prompt,
 )
-from polaris.whiteboard import WHITEBOARD_TOOL_LIMITS, check_drawing, describe_whiteboard
+from polaris.whiteboard import check_drawing, describe_whiteboard
 from test_quiz import QUIZ_SPEC
 from test_whiteboard import valid_whiteboard
 
@@ -98,11 +102,15 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert options.setting_sources == []
     assert options.strict_mcp_config is True
     assert list(options.mcp_servers) == ["polaris"]
-    assert options.allowed_tools == [CREATE_QUIZ_TOOL, DRAW_WHITEBOARD_TOOL]
+    assert options.allowed_tools == [
+        CREATE_QUIZ_TOOL,
+        DRAW_WHITEBOARD_TOOL,
+        START_ANIMATION_JOB_TOOL,
+    ]
     assert options.include_partial_messages is True
     assert options.verbatim_prompts is True
     assert options.permission_mode == "dontAsk"
-    assert options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2
+    assert options.max_turns == TEACHING_MAX_TURNS
     assert CREATE_QUIZ_SCHEMA["additionalProperties"] is False
     assert CREATE_QUIZ_SCHEMA["properties"]["questions"]["minItems"] == 1
     question = CREATE_QUIZ_SCHEMA["properties"]["questions"]["items"]
@@ -110,6 +118,9 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     choices = question["properties"]["choices"]
     assert choices["minItems"] == 2
     assert choices["items"]["additionalProperties"] is False
+    assert START_ANIMATION_JOB_SCHEMA["type"] == "object"
+    assert START_ANIMATION_JOB_SCHEMA["properties"]["brief"]["type"] == "string"
+    assert START_ANIMATION_JOB_SCHEMA["additionalProperties"] is False
     assert options.cwd == tmp_path
     assert isinstance(options.system_prompt, str)
     prompt = options.system_prompt
@@ -122,7 +133,12 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "Do not teach the topic yet." in prompt
     assert "Do not call create_quiz." in prompt
     assert "Do not call draw_whiteboard." in prompt
+    assert "Do not call start_animation_job." in prompt
     assert "call draw_whiteboard." in prompt
+    assert "call start_animation_job once." in prompt
+    assert "run_animation" not in prompt
+    assert "Do not put code in the brief." in prompt
+    assert "Do not say it is ready" in prompt
     assert "Do not grade the learner's choices." in prompt
     assert "how parts connect" in DRAW_WHITEBOARD_DESCRIPTION
     assert "do not use it for a quiz" in DRAW_WHITEBOARD_DESCRIPTION
@@ -143,6 +159,9 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "[[step:<that step's id>]]" in prompt
     assert DRAW_WHITEBOARD_SCHEMA["type"] == "object"
     assert DRAW_WHITEBOARD_SCHEMA["additionalProperties"] is True
+    assert "Do not send code" in START_ANIMATION_JOB_DESCRIPTION
+    assert START_ANIMATION_JOB_SCHEMA["required"] == ["brief"]
+    assert list(START_ANIMATION_JOB_SCHEMA["properties"]) == ["brief"]
 
 
 def _agent(tmp_path: Path, messages, created: list[FakeClient]) -> ClaudeTeachingAgent:
@@ -546,12 +565,44 @@ def _capture_quiz_handlers(monkeypatch) -> list:
     handlers: list = []
     original = teaching_mod.teaching_options
 
-    def wrapped(*, cwd: Path, create_quiz=None, draw_whiteboard=None):
+    def wrapped(
+        *,
+        cwd: Path,
+        create_quiz=None,
+        draw_whiteboard=None,
+        start_animation_job=None,
+    ):
         handlers.append(create_quiz)
         return original(
             cwd=cwd,
             create_quiz=create_quiz,
             draw_whiteboard=draw_whiteboard,
+            start_animation_job=start_animation_job,
+        )
+
+    monkeypatch.setattr(teaching_mod, "teaching_options", wrapped)
+    return handlers
+
+
+def _capture_animation_handlers(monkeypatch) -> list:
+    import polaris.teaching as teaching_mod
+
+    handlers: list = []
+    original = teaching_mod.teaching_options
+
+    def wrapped(
+        *,
+        cwd: Path,
+        create_quiz=None,
+        draw_whiteboard=None,
+        start_animation_job=None,
+    ):
+        handlers.append(start_animation_job)
+        return original(
+            cwd=cwd,
+            create_quiz=create_quiz,
+            draw_whiteboard=draw_whiteboard,
+            start_animation_job=start_animation_job,
         )
 
     monkeypatch.setattr(teaching_mod, "teaching_options", wrapped)
@@ -596,8 +647,12 @@ def test_create_quiz_tool_stores_for_the_open_session(
     assert payload.get("is_error") is not True
     assert "quiz-1" in payload["content"][0]["text"]
     assert created[0].options.tools == []
-    assert created[0].options.allowed_tools == [CREATE_QUIZ_TOOL, DRAW_WHITEBOARD_TOOL]
-    assert created[0].options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2
+    assert created[0].options.allowed_tools == [
+        CREATE_QUIZ_TOOL,
+        DRAW_WHITEBOARD_TOOL,
+        START_ANIMATION_JOB_TOOL,
+    ]
+    assert created[0].options.max_turns == TEACHING_MAX_TURNS
 
 
 def test_create_quiz_tool_rejects_a_quiz_without_one_correct_choice(
@@ -689,8 +744,8 @@ def test_overlapping_clients_store_quiz_on_their_own_session(
     asyncio.run(overlap())
 
     assert [client.options.max_turns for client in created] == [
-        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2,
-        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2,
+        TEACHING_MAX_TURNS,
+        TEACHING_MAX_TURNS,
     ]
     assert stored == ["session-a", "session-b"]
     assert handlers[0] is not handlers[1]
@@ -711,6 +766,134 @@ def test_bind_store_sends_create_quiz_through_chat(tmp_path: Path):
     assert stored["session_id"] == session["id"]
     assert stored["title"] == "Fractions"
     assert stored["score"] is None
+
+
+def test_start_animation_job_tool_stores_for_the_open_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Scenario: the chat stays usable [AN-01]. The tool returns the job id."""
+
+    started: list[str] = []
+    handlers = _capture_animation_handlers(monkeypatch)
+
+    def store(session_id: str, brief: str) -> dict:
+        started.append((session_id, brief))
+        return {
+            "id": "job-1",
+            "kind": "animation",
+            "session_id": session_id,
+            "status": "running",
+        }
+
+    created: list[FakeClient] = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], created)
+    agent.bind_store(
+        lambda _session_id, _spec: {"id": "quiz"},
+        start_animation_job=store,
+    )
+
+    asyncio.run(_collect(agent, session_id="session-anim"))
+    payload = asyncio.run(handlers[0]({"brief": "  Show a ball rolling down a ramp.  "}))
+
+    assert started == [("session-anim", "Show a ball rolling down a ramp.")]
+    assert payload.get("is_error") is not True
+    assert "job-1" in payload["content"][0]["text"]
+    assert "code" not in payload["content"][0]["text"]
+    assert created[0].options.allowed_tools == [
+        CREATE_QUIZ_TOOL,
+        DRAW_WHITEBOARD_TOOL,
+        START_ANIMATION_JOB_TOOL,
+    ]
+
+
+def test_start_animation_job_tool_reads_only_the_brief(tmp_path: Path):
+    """The teaching agent cannot send code to run [AN-04 boundary]."""
+
+    started: list[str] = []
+
+    def store(session_id: str, brief: str) -> dict:
+        started.append((session_id, brief))
+        return {
+            "id": "job-2",
+            "kind": "animation",
+            "session_id": session_id,
+            "status": "running",
+        }
+
+    agent = _agent(tmp_path, [delta("Ok"), result()], [])
+    agent.bind_store(
+        lambda _session_id, _spec: {"id": "quiz"},
+        start_animation_job=store,
+    )
+
+    payload = asyncio.run(
+        agent.handle_start_animation_job(
+            "session-1",
+            {"brief": "Halve a pizza.", "code": "from manim import *", "script": "Scene()"},
+        )
+    )
+
+    assert started == [("session-1", "Halve a pizza.")]
+    assert payload.get("is_error") is not True
+    assert "job-2" in payload["content"][0]["text"]
+    text = payload["content"][0]["text"]
+    assert "manim" not in text
+    assert "Scene" not in text
+
+
+def test_bind_store_sends_start_animation_job_through_chat(tmp_path: Path):
+    created: list[FakeClient] = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], created)
+    chat = Chat(tmp_path, agent)
+    session, _ended = chat.start()
+
+    payload = asyncio.run(
+        agent.handle_start_animation_job(session["id"], {"brief": "Halve a pizza."})
+    )
+    job_id = payload["content"][0]["text"].split("id ", 1)[1].split(".", 1)[0]
+    stored = chat.get_animation_job(session["id"], job_id)
+
+    assert payload.get("is_error") is not True
+    assert stored == {
+        "id": job_id,
+        "kind": "animation",
+        "session_id": session["id"],
+        "status": "running",
+    }
+    assert "code" not in stored
+
+
+def test_start_animation_job_tool_needs_a_brief(tmp_path: Path):
+    started: list = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], [])
+    agent.bind_store(
+        lambda _session_id, _spec: {"id": "quiz"},
+        start_animation_job=lambda session_id, brief: started.append(brief),
+    )
+
+    payload = asyncio.run(agent.handle_start_animation_job("session-1", {"brief": "  "}))
+
+    assert payload.get("is_error") is True
+    assert "brief" in payload["content"][0]["text"]
+    assert started == []
+
+
+def test_bind_store_keeps_positional_callers(tmp_path: Path):
+    agent = _agent(tmp_path, [delta("Ok"), result()], [])
+
+    def store_quiz(session_id: str, spec: dict) -> dict:
+        del session_id, spec
+        return {"id": "quiz-pos"}
+
+    def store_board(session_id: str, drawing: dict) -> dict:
+        del session_id, drawing
+        return {"id": "board-pos"}
+
+    agent.bind_store(store_quiz, store_board)
+
+    assert agent._store_quiz is store_quiz
+    assert agent._store_whiteboard is store_board
+    assert agent._start_animation_job is None
 
 
 def test_reply_error_message_names_a_missing_cli():
