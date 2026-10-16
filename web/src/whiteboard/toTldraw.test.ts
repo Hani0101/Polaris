@@ -426,3 +426,14 @@ test('an older drawing has no bindings and empty box labels', () => {
   const box = shapeFor(sampleWhiteboard, 'rect-1')
   expect(plain((box.props as { richText: unknown }).richText)).toBe('')
 })
+
+test('an arrow keeps its bend', () => {
+  const [heat, ice, link] = linkedWhiteboard.steps[0].elements
+  const bent: Whiteboard = {
+    ...linkedWhiteboard,
+    steps: [{ ...linkedWhiteboard.steps[0], elements: [heat, ice, { ...link, bend: 120 }] }],
+  }
+
+  expect(shapeFor(bent, 'heat-to-ice').props).toMatchObject({ bend: 120 })
+  expect(shapeFor(linkedWhiteboard, 'heat-to-ice').props).toMatchObject({ bend: 0 })
+})

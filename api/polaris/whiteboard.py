@@ -436,7 +436,7 @@ class ElementBase(DrawingModel):
 
 # Version 7 fields. They are left out of the stored form when absent, so an
 # older drawing keeps the exact form it was stored with.
-_OPTIONAL_V7_FIELDS = ("label", "start_element_id", "end_element_id")
+_OPTIONAL_V7_FIELDS = ("label", "start_element_id", "end_element_id", "bend")
 
 
 def _omit_absent_v7_fields(data: object) -> object:
@@ -478,6 +478,9 @@ class ArrowElement(ElementBase):
     label: CommentText | None = None
     start_element_id: RequiredId | None = None
     end_element_id: RequiredId | None = None
+    # How far the middle of the arrow curves away from a straight line, in
+    # drawing units. Positive curves to the right of the arrow's direction.
+    bend: Coordinate | None = None
 
     @model_serializer(mode="wrap")
     def omit_absent_fields(self, handler):

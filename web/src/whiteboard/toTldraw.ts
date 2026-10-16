@@ -37,6 +37,7 @@ type DrawingElement = {
   label?: string
   start_element_id?: string
   end_element_id?: string
+  bend?: number
   text?: string
   points?: Point[]
   mark?: 'circle' | 'arrow' | 'note'
@@ -234,7 +235,7 @@ function shapeFor(
       props: {
         ...paintProps(element.style),
         kind: whiteboardMarks.arrowKind,
-        bend: whiteboardMarks.arrowBend,
+        bend: typeof element.bend === 'number' ? element.bend : whiteboardMarks.arrowBend,
         arrowheadStart: whiteboardMarks.arrowheadStart,
         arrowheadEnd: whiteboardMarks.arrowheadEnd,
         start: relative(element.position, element.start),

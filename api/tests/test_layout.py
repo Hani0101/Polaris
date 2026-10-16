@@ -585,3 +585,44 @@ def test_misplaced_marks_are_refused_while_fixes_remain():
     assert "call mark_whiteboard again" in first.tool_result["content"][0]["text"]
     assert len(stored) == 1
     assert "still have layout problems" in last.tool_result["content"][0]["text"]
+
+
+def test_a_flow_link_back_to_an_earlier_box_curves_around_the_boxes_between():
+    loop = {
+        "kind": "flow",
+        "nodes": [{"id": name, "label": name.title()} for name in ("plan", "build", "test")],
+        "links": [
+            {"from": "plan", "to": "build"},
+            {"from": "build", "to": "test"},
+            {"from": "test", "to": "plan", "label": "repeat"},
+        ],
+    }
+    across = {**loop, "direction": "right"}
+
+    down = _checked(expand_layout(_laid_out(loop)).drawing)
+    right = _checked(expand_layout(_laid_out(across)).drawing)
+
+    def bends(whiteboard):
+        return {e.id: e.bend for e in whiteboard.steps[0].elements if e.kind == "arrow"}
+
+    assert bends(down)["plan-to-build"] is None
+    assert bends(down)["test-to-plan"] > 0
+    assert bends(right)["test-to-plan"] < 0
+    assert layout_problems(down) == []
+    assert "bend" not in down.steps[0].elements[3].model_dump(mode="json")
+
+
+def test_a_bend_needs_version_7():
+    data = _linked()
+    data["steps"][0]["elements"][2]["bend"] = 40
+    assert _checked(data).steps[0].elements[2].bend == 40
+
+    data["version"] = 6
+    data["steps"][0]["elements"][2] = {
+        key: value
+        for key, value in data["steps"][0]["elements"][2].items()
+        if key not in ("label", "start_element_id", "end_element_id")
+    }
+    data["steps"][0]["elements"][0].pop("label")
+    data["steps"][0]["elements"][1].pop("label")
+    assert any("version 7" in error for error in check_drawing(data).errors)

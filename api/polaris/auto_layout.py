@@ -75,6 +75,7 @@ class _Link:
     label: str | None = None
     step: str | None = None
     id: str | None = None
+    bend: float | None = None
 
 
 @dataclass
@@ -361,7 +362,31 @@ def _flow(layout: dict[str, Any]) -> _Placed:
     links = _links(layout, {node.id for node in nodes})
     direction = _direction(layout)
     _place_layers(_layers(nodes, links, direction), direction, _main_gap(links))
+    _bend_back_links(nodes, links, direction)
     return _Placed(nodes, links)
+
+
+# Share of an arc's full bend reached a third of the way along it. A back
+# link is bent far enough that the boxes it passes there are still clear.
+_ARC_THIRD = 0.75
+
+
+def _bend_back_links(nodes: list[_Node], links: list[_Link], direction: str) -> None:
+    """Curve a link that goes back against the flow, so it passes beside the boxes
+    between its ends instead of through them."""
+
+    by_id = {node.id: node for node in nodes}
+    down = direction == "down"
+    clearance = max((node.width if down else node.height) for node in nodes) / 2
+    bend = math.ceil((clearance + AUTO_LAYOUT_LIMITS.cross_gap) / _ARC_THIRD)
+    for link in links:
+        start = by_id[link.start]
+        end = by_id[link.end]
+        backward = end.y < start.y if down else end.x < start.x
+        if backward:
+            # Going up, a positive bend curves right. Going left, a negative
+            # bend curves down. Both stay inside the drawing area.
+            link.bend = bend if down else -bend
 
 
 def _sequence(layout: dict[str, Any]) -> _Placed:
@@ -673,6 +698,8 @@ def _arrow_element(link: _Link, start: _Node, end: _Node) -> dict[str, object]:
     }
     if link.label:
         element["label"] = link.label
+    if link.bend:
+        element["bend"] = link.bend
     return element
 
 

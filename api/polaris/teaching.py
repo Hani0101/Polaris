@@ -105,7 +105,7 @@ _DRAWING_FORMAT = (
     "flow has nodes and links; each link has from, to, and an optional short label. "
     "sequence and cycle have nodes in order; Polaris links them. "
     "tree has nodes, and every node except the root has parent. "
-    "flow, sequence, and tree take direction down (the default) or right. "
+    "flow, sequence, and tree take direction down (the default, and best on a phone) or right. "
     "Each node has id and a short label, and optionally shape (rectangle or ellipse) and step. "
     "comparison has 2 or 3 columns, each with id, title, and items (short texts). "
     "parts has whole (id and label) and nodes, the labeled parts around it. "

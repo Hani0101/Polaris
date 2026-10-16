@@ -72,6 +72,7 @@ export type ArrowElement = WhiteboardElementBase & {
   label?: string
   start_element_id?: string
   end_element_id?: string
+  bend?: number
 }
 
 export type LineElement = WhiteboardElementBase & {
