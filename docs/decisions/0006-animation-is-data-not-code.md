@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 ---
 
 # An animation is data, not code

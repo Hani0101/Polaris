@@ -330,7 +330,11 @@ def _sample_xs(x_min: float, x_max: float, count: int) -> list[float]:
 
 
 def _sample_expression(
-    expression: str, x_min: float, x_max: float, sample_count: int
+    expression: str,
+    x_min: float,
+    x_max: float,
+    sample_count: int,
+    variable: str = "x",
 ) -> list[tuple[float, float]]:
     try:
         ast.parse(expression, mode="eval")
@@ -340,19 +344,23 @@ def _sample_expression(
     parsed = evaluator.parse(expression)
     points: list[tuple[float, float]] = []
     for x_value in _sample_xs(x_min, x_max, sample_count):
-        evaluator.names["x"] = x_value
+        evaluator.names[variable] = x_value
         raw = evaluator.eval(expression, previously_parsed=parsed)
         points.append((x_value, float(_real(raw))))
     return points
 
 
 def _plot_expression(
-    expression: str, x_min: float, x_max: float, sample_count: int
+    expression: str,
+    x_min: float,
+    x_max: float,
+    sample_count: int,
+    variable: str = "x",
 ) -> list[tuple[float, float]]:
     """Plot one function. Raises ValueError and nothing else."""
 
     try:
-        return _sample_expression(expression, x_min, x_max, sample_count)
+        return _sample_expression(expression, x_min, x_max, sample_count, variable)
     except _ExpressionRefusal as refusal:
         raise ValueError(refusal.args[0]) from None
     except NameNotDefined:
@@ -367,6 +375,17 @@ def _plot_expression(
         raise ValueError("expression result is not finite") from None
     except Exception:
         raise ValueError("expression is not allowed") from None
+
+
+def plot_expression(
+    expression: str, low: float, high: float, sample_count: int, *, variable: str = "x"
+) -> list[tuple[float, float]]:
+    """Sample one expression in ``variable`` with the graph rules. Raises ValueError only.
+
+    The animation format uses this for ``follow`` paths in ``t``.
+    """
+
+    return _plot_expression(expression, low, high, sample_count, variable)
 
 
 def _required_id(value: str) -> str:
