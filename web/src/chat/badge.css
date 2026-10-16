@@ -1,0 +1,23 @@
+/* Badge (DESIGN.md section 7). Text only, never a dot. */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-2xs) var(--space-xs);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.badge--neutral {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+}
+
+.badge--accent {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}

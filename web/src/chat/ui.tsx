@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { AlertCircle, Copy, Menu, MessageSquare, RotateCcw, Send, Square, Star, X } from 'lucide-react'
+import './badge.css'
 
 type IconButtonProps = {
   label: string
@@ -132,4 +133,14 @@ export function Toast({ message, onClose }: { message: string; onClose: () => vo
       </IconButton>
     </div>
   )
+}
+
+export function Badge({
+  children,
+  variant = 'neutral',
+}: {
+  children: ReactNode
+  variant?: 'neutral' | 'accent'
+}) {
+  return <span className={`badge badge--${variant}`}>{children}</span>
 }

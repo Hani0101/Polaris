@@ -1,0 +1,203 @@
+/* Modal and Dropdown menu (DESIGN.md section 7), plus the destructive button. */
+
+/* Button, variant destructive: soft error fill, error text. */
+button.destructive {
+  background: var(--color-action-destructive-default);
+  color: var(--color-state-error);
+}
+
+button.destructive:hover:not(:disabled) {
+  background: var(--color-action-destructive-hover);
+}
+
+button.destructive:active:not(:disabled) {
+  background: var(--color-action-destructive-active);
+}
+
+button.destructive:disabled {
+  background: var(--color-action-primary-disabled);
+  color: var(--color-text-disabled);
+}
+
+@keyframes overlay-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes overlay-fade-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+/* Modal */
+
+.modal-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-index-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--layout-page-margin-phone);
+  animation: overlay-fade-in var(--motion-duration-normal) var(--motion-easing-standard) both;
+}
+
+.modal-layer[data-state='closing'] {
+  animation: overlay-fade-out var(--motion-duration-fast) var(--motion-easing-exit) both;
+  pointer-events: none;
+}
+
+.modal-dim {
+  position: absolute;
+  inset: 0;
+  background: var(--color-surface-overlay);
+}
+
+.modal {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between modal title, text, and buttons, used space.stack.default */
+  gap: var(--space-stack-default);
+  width: 100%;
+  max-width: var(--layout-max-width-form);
+  padding: var(--space-card-padding);
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+}
+
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-inline-default);
+}
+
+.modal-title {
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+  letter-spacing: var(--font-letter-spacing-normal);
+  /* DS-GAP: title alignment with the 44px close button, used space.xs */
+  padding-top: var(--space-xs);
+}
+
+.modal-body {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-normal);
+}
+
+/* Phone: stacked full width, the main button on top. */
+.modal-actions {
+  display: flex;
+  flex-direction: column-reverse;
+  gap: var(--space-inline-default);
+}
+
+.modal-actions > button {
+  width: 100%;
+}
+
+/* Laptop: the main button on the right, secondary to its left. */
+@media (min-width: 640px) {
+  .modal-actions {
+    flex-direction: row;
+    justify-content: flex-end;
+  }
+
+  .modal-actions > button {
+    width: auto;
+  }
+}
+
+/* Dropdown menu */
+
+.dropdown-menu {
+  position: fixed;
+  z-index: var(--z-index-dropdown);
+  display: flex;
+  flex-direction: column;
+  min-width: var(--component-menu-min-width);
+  padding: var(--space-2xs);
+  /* DS-GAP: gap between the menu and its button, used space.2xs */
+  margin-top: var(--space-2xs);
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  animation: overlay-fade-in var(--motion-duration-normal) var(--motion-easing-standard) both;
+}
+
+.dropdown-menu.is-above {
+  margin-top: 0;
+  transform: translateY(calc(-100% - var(--space-2xs)));
+}
+
+.dropdown-menu[data-state='closing'] {
+  animation: overlay-fade-out var(--motion-duration-fast) var(--motion-easing-exit) both;
+  pointer-events: none;
+}
+
+.dropdown-item {
+  justify-content: flex-start;
+  gap: var(--space-inline-default);
+  width: 100%;
+  min-height: var(--component-tap-target-min);
+  padding: 0 var(--space-md);
+  /* Inner corner: radius.md minus the space.2xs padding, kept at radius.sm (5.4). */
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-normal);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.dropdown-item > svg {
+  flex: none;
+  width: var(--component-icon-size-md);
+  height: var(--component-icon-size-md);
+}
+
+.dropdown-item:hover:not(:disabled) {
+  background: var(--color-action-secondary-default);
+}
+
+.dropdown-item:active:not(:disabled) {
+  background: var(--color-action-secondary-hover);
+}
+
+.dropdown-item:disabled {
+  background: transparent;
+  border: none;
+  color: var(--color-text-disabled);
+}
+
+.dropdown-item.is-destructive {
+  color: var(--color-state-error);
+}
+
+.dropdown-separator {
+  height: var(--border-width-default);
+  margin: var(--space-2xs) 0;
+  background: var(--color-border-subtle);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-layer,
+  .dropdown-menu {
+    animation-duration: var(--motion-duration-fast);
+  }
+}

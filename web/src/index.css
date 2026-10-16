@@ -38,6 +38,21 @@
   --color-state-info: #2b5a8a;
   --color-state-info-bg: #e6eef7;
   --color-focus-ring: #0c0701;
+  --color-whiteboard-board-white: #faf8f4;
+  --color-whiteboard-board-night: #0c0701;
+  --color-whiteboard-board-default: var(--color-whiteboard-board-white);
+  --color-whiteboard-pen-on-light-tutor: #000000;
+  --color-whiteboard-pen-on-light-learner: #1d4ed8;
+  --color-whiteboard-pen-on-light-red: #dc2626;
+  --color-whiteboard-pen-on-light-green: #15803d;
+  --color-whiteboard-pen-on-light-orange: #c2410c;
+  --color-whiteboard-pen-on-light-purple: #7e22ce;
+  --color-whiteboard-pen-on-dark-tutor: #faf8f4;
+  --color-whiteboard-pen-on-dark-learner: #60a5fa;
+  --color-whiteboard-pen-on-dark-red: #f87171;
+  --color-whiteboard-pen-on-dark-green: #4ade80;
+  --color-whiteboard-pen-on-dark-orange: #fb923c;
+  --color-whiteboard-pen-on-dark-purple: #c084fc;
 
   --font-family-body: 'Atkinson Hyperlegible Next', Verdana, system-ui, sans-serif;
   --font-family-heading: var(--font-family-body);
@@ -84,9 +99,20 @@
   --layout-page-margin: var(--space-lg);
   --layout-page-margin-phone: var(--space-md);
   --layout-panel-left: 280px;
+  --layout-panel-right: 360px;
+  --layout-panel-right-wide: 480px;
   --layout-max-width-chat: 720px;
   --layout-max-width-form: 400px;
+  --layout-max-width-content: 1200px;
+  --layout-grid-columns: 12;
+  --layout-grid-gutter: var(--space-lg);
+  --component-progress-height: 8px;
+  --component-checkbox-size: 24px;
+  --component-radio-mark-size: 10px;
   --component-drawer-width: 80%;
+  --component-bottom-sheet-start-height: 33%;
+  --component-bottom-sheet-handle-width: 32px;
+  --component-bottom-sheet-handle-height: 4px;
   --component-tap-target-min: 44px;
   --component-button-height-md: 44px;
   --component-button-height-sm: 36px;
@@ -98,6 +124,9 @@
   --component-top-bar-height: 56px;
   --component-menu-min-width: 200px;
   --component-toast-duration: 5000ms;
+  --component-swatch-size: 32px;
+  --component-comment-pin-size: 32px;
+  --component-input-height: 44px;
 
   --z-index-sticky: 100;
   --z-index-dropdown: 200;
@@ -162,6 +191,7 @@
     --color-state-info: #9cc3ff;
     --color-state-info-bg: #0f1c2e;
     --color-focus-ring: #f08a4b;
+    --color-whiteboard-board-default: var(--color-whiteboard-board-night);
   }
 }
 
@@ -321,8 +351,10 @@ button:disabled {
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100%;
-  min-height: 100dvh;
+  /* The shell is exactly one screen tall. Only the chat, the session list,
+     and the tools panel scroll, so the top bar and chat input stay in place. */
+  height: 100dvh;
+  overflow: hidden;
   background: var(--color-bg-page);
 }
 
@@ -442,6 +474,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: var(--space-2xs);
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -507,6 +541,7 @@ button:disabled {
 .conversation-inner {
   width: 100%;
   max-width: var(--layout-max-width-chat);
+  min-height: 100%;
   margin: 0 auto;
   padding: var(--space-md) var(--layout-page-margin-phone);
   display: flex;
@@ -514,10 +549,12 @@ button:disabled {
   gap: var(--space-stack-default);
 }
 
+/* Empty states are the one centered thing (banned.md), in both directions. */
 .conversation-empty {
-  min-height: 60%;
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .conversation-hint {
@@ -868,143 +905,6 @@ button:disabled {
   color: var(--color-state-error);
 }
 
-.quiz-card {
-  margin-top: var(--space-sm);
-  padding: var(--space-md);
-  border: var(--border-width-default) solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  background: var(--color-surface-default);
-}
-
-.quiz-card-page {
-  margin-top: 0;
-}
-
-.quiz-head h3 {
-  margin: 0;
-  font-size: var(--font-size-xl);
-  color: var(--color-text-primary);
-}
-
-.quiz-progress {
-  margin: var(--space-2xs) 0 var(--space-sm);
-  color: var(--color-accent);
-  font-weight: var(--font-weight-bold);
-}
-
-.quiz-notice {
-  margin: 0 0 var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  border-radius: var(--radius-md);
-  background: var(--color-state-error-bg);
-  color: var(--color-state-error);
-}
-
-.quiz-questions {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.quiz-question {
-  margin: 0;
-  padding: var(--space-sm);
-  border: var(--border-width-default) solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-}
-
-.quiz-question.is-wrong {
-  background: var(--color-state-error-bg);
-  border-color: var(--color-state-error);
-}
-
-.quiz-question.is-right {
-  background: var(--color-state-success-bg);
-  border-color: var(--color-state-success);
-}
-
-.quiz-question legend {
-  padding: 0 var(--space-2xs);
-  color: var(--color-accent);
-  font-weight: var(--font-weight-bold);
-}
-
-.quiz-prompt {
-  margin: 0 0 var(--space-sm);
-}
-
-.quiz-choices {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-}
-
-.quiz-choice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-sm);
-  min-height: var(--component-tap-target-min);
-  padding: var(--space-sm);
-  border: var(--border-width-default) solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-default);
-}
-
-.quiz-choice:has(input:checked) {
-  border-color: var(--color-accent);
-}
-
-.quiz-choice input {
-  width: 1.15rem;
-  height: 1.15rem;
-  margin-top: 0.2rem;
-  flex: none;
-  accent-color: var(--color-accent);
-}
-
-.quiz-result {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-xs);
-  margin: var(--space-sm) 0 0;
-}
-
-.quiz-result.is-success {
-  color: var(--color-state-success);
-}
-
-.quiz-result.is-error {
-  color: var(--color-state-error);
-}
-
-.result-icon {
-  width: 1.25rem;
-  height: 1.25rem;
-  flex: none;
-  margin-top: 0.15rem;
-}
-
-.quiz-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  margin-top: var(--space-md);
-}
-
-.quiz-score {
-  margin: 0;
-  color: var(--color-text-secondary);
-}
-
-@media (min-width: 720px) {
-  .quiz-card-page {
-    max-width: 40rem;
-  }
-}
-
 .turn-whiteboard {
   display: flex;
   flex-direction: column;
@@ -1069,35 +969,6 @@ a.whiteboard-original {
   position: absolute;
 }
 
-.whiteboard-tools,
-.whiteboard-comment-form {
-  align-items: center;
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-  padding: var(--space-xs) var(--space-sm);
-}
-
-.whiteboard-tools button,
-.whiteboard-comment-form button {
-  min-height: var(--component-button-height-sm);
-}
-
-.whiteboard-comment-form label {
-  align-items: center;
-  display: flex;
-  flex: 1;
-  gap: var(--space-xs);
-  min-width: 12rem;
-}
-
-.whiteboard-comment-form input {
-  flex: 1;
-  min-height: var(--component-button-height-sm);
-  min-width: 0;
-}
-
 .whiteboard-code {
   font-family: var(--font-family-mono);
   font-size: var(--font-size-sm);
@@ -1111,24 +982,13 @@ a.whiteboard-original {
   white-space: pre-wrap;
 }
 
-.whiteboard-caption,
-.whiteboard-comment-hint,
-.whiteboard-comments {
+.whiteboard-caption {
   color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
   margin: 0;
   padding: 0 var(--space-sm) var(--space-xs);
 }
 
-.whiteboard-comments {
-  list-style: none;
-}
-
-.whiteboard-comments li {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
-}
 
 .whiteboard-surface {
   flex: 1;
