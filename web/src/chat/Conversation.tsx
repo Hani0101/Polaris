@@ -1,0 +1,356 @@
+import { useEffect, useRef } from 'react'
+import type { FormEvent, KeyboardEvent } from 'react'
+import type { Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import { revealWhiteboard, visibleReply } from '../whiteboard/reveal.ts'
+import type { RevealPhase } from '../whiteboard/reveal.ts'
+import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
+import { whiteboardPagePath } from '../whiteboard/simpler.ts'
+import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
+import {
+  AlertBanner,
+  AlertIcon,
+  CopyIcon,
+  EmptyState,
+  IconButton,
+  PolarisStar,
+  RetryIcon,
+  SendIcon,
+  StopIcon,
+  ThinkingIndicator,
+} from './ui.tsx'
+
+export type ViewTurn = {
+  key: string
+  learner: string
+  reply: string
+  artifacts: Artifact[]
+  streaming: boolean
+  stopped?: boolean
+  failed: boolean
+  pointing?: Pointing | null
+}
+
+type ConversationProps = {
+  turns: ViewTurn[]
+  draft: string
+  sending: boolean
+  sendError: string | null
+  sessionOpen: boolean
+  onDraftChange: (value: string) => void
+  onSend: (event: FormEvent<HTMLFormElement>) => void
+  onStop: () => void
+  onCopy: (text: string) => void
+  onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
+  onOpenQuiz: (quizId: string) => void
+  onOpenWhiteboard: (whiteboardId: string) => void
+  onSimpler?: (whiteboardId: string) => void
+  sessionId?: string | null
+  onStart: () => void
+  pointing?: Pointing | null
+  onRemovePoint?: (elementId: string) => void
+  onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+}
+
+const PHONE_QUERY = '(max-width: 639px)'
+
+export function Conversation({
+  turns,
+  draft,
+  sending,
+  sendError,
+  sessionOpen,
+  onDraftChange,
+  onSend,
+  onStop,
+  onCopy,
+  onTryAgain,
+  onOpenQuiz,
+  onOpenWhiteboard,
+  onSimpler,
+  sessionId = null,
+  onStart,
+  pointing = null,
+  onRemovePoint,
+  onAsk,
+}: ConversationProps) {
+  const scroller = useRef<HTMLDivElement>(null)
+  const textarea = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    const node = scroller.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+  }, [turns])
+
+  useEffect(() => {
+    const node = textarea.current
+    if (!node) return
+    node.style.height = 'auto'
+    const max = 1.5 * 16 * 6
+    node.style.height = `${Math.min(node.scrollHeight, max)}px`
+  }, [draft])
+
+  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey) return
+    if (window.matchMedia(PHONE_QUERY).matches) return
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
+  const empty = sessionOpen && turns.length === 0
+  const canSend = draft.trim() !== '' && !sending
+
+  return (
+    <section className="conversation" aria-label="Conversation">
+      <div className="conversation-scroll" ref={scroller} aria-busy={sending || undefined}>
+        <div className="conversation-inner">
+          {!sessionOpen ? (
+            <div className="conversation-empty">
+              <EmptyState
+                title="No session open"
+                body="Start a session or pick one from the list."
+                action={
+                  <button type="button" onClick={onStart}>
+                    Start a session
+                  </button>
+                }
+              />
+            </div>
+          ) : null}
+          {empty ? (
+            <p className="conversation-hint">Ask Polaris to start this session.</p>
+          ) : null}
+          {turns.map((turn) => (
+            <TurnBlock
+              key={turn.key}
+              turn={turn}
+              onCopy={onCopy}
+              onTryAgain={onTryAgain}
+              onOpenQuiz={onOpenQuiz}
+              onOpenWhiteboard={onOpenWhiteboard}
+              onSimpler={onSimpler}
+              sending={sending}
+              sessionId={sessionId}
+              onAsk={onAsk}
+            />
+          ))}
+        </div>
+      </div>
+      {sessionOpen ? (
+        <form className="chat-input-bar" onSubmit={onSend}>
+          {pointing && pointing.parts.length > 0 ? (
+            <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
+          ) : null}
+          <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
+            <label className="visually-hidden" htmlFor="learner-message">
+              Message to Polaris
+            </label>
+            <textarea
+              id="learner-message"
+              ref={textarea}
+              value={draft}
+              rows={1}
+              placeholder="Ask about a topic"
+              onChange={(event) => onDraftChange(event.target.value)}
+              onKeyDown={onComposerKeyDown}
+            />
+            {sending ? (
+              <IconButton label="Stop" variant="primary" onClick={onStop}>
+                <StopIcon />
+              </IconButton>
+            ) : (
+              <IconButton
+                label="Send"
+                variant="primary"
+                type="submit"
+                disabled={!canSend}
+              >
+                <SendIcon />
+              </IconButton>
+            )}
+          </div>
+          {sendError ? (
+            <p className="chat-input-error">
+              <AlertIcon />
+              {sendError}
+            </p>
+          ) : null}
+        </form>
+      ) : null}
+    </section>
+  )
+}
+
+function revealPhase(turn: ViewTurn): RevealPhase {
+  if (turn.streaming) return 'streaming'
+  if (turn.stopped) return 'stopped'
+  return 'done'
+}
+
+function PointChips({
+  parts,
+  onRemove,
+}: {
+  parts: PointedPart[]
+  onRemove?: (elementId: string) => void
+}) {
+  return (
+    <ul className="point-chips" aria-label="Pointed at">
+      {parts.map((part) => (
+        <li key={part.id} className="point-chip">
+          <span>{part.label}</span>
+          {onRemove ? (
+            <button
+              type="button"
+              className="ghost"
+              aria-label={`Remove ${part.label}`}
+              onClick={() => onRemove(part.id)}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+          ) : null}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function TurnBlock({
+  turn,
+  onCopy,
+  onTryAgain,
+  onOpenQuiz,
+  onOpenWhiteboard,
+  onSimpler,
+  sending,
+  sessionId,
+  onAsk,
+}: {
+  turn: ViewTurn
+  onCopy: (text: string) => void
+  onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
+  onOpenQuiz: (quizId: string) => void
+  onOpenWhiteboard: (whiteboardId: string) => void
+  onSimpler?: (whiteboardId: string) => void
+  sending: boolean
+  sessionId: string | null
+  onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+}) {
+  const quizzes = turn.artifacts.filter((artifact): artifact is Quiz => artifact.kind === 'quiz')
+  const phase = revealPhase(turn)
+  const storedBoards = turn.artifacts.filter(
+    (artifact): artifact is WhiteboardArtifact => artifact.kind === 'whiteboard',
+  )
+  const markers = storedBoards.flatMap((whiteboard) =>
+    whiteboard.steps.map((step) => step.reply_part),
+  )
+  const reply = visibleReply(turn.reply, turn.streaming, markers)
+  const whiteboards = storedBoards.flatMap((whiteboard) => {
+    const revealed = revealWhiteboard(whiteboard, turn.reply, phase)
+    return revealed ? [{ ...revealed, kind: 'whiteboard' as const }] : []
+  })
+  const thinking = turn.streaming && reply === '' && whiteboards.length === 0 && !turn.failed
+  const finished = !turn.streaming && !turn.failed && turn.reply !== ''
+  const visible = reply !== '' || quizzes.length > 0 || whiteboards.length > 0
+
+  return (
+    <article className="turn">
+      <div className="chat-msg chat-msg--learner">
+        {turn.pointing && turn.pointing.parts.length > 0 ? (
+          <PointChips parts={turn.pointing.parts} />
+        ) : null}
+        <p>{turn.learner}</p>
+      </div>
+      {thinking ? <ThinkingIndicator status="Thinking" /> : null}
+      {turn.failed ? (
+        <div className="chat-msg chat-msg--tutor">
+          <AlertBanner
+            action={
+              <button type="button" className="secondary" onClick={() => onTryAgain(turn.learner, turn.pointing)}>
+                Try again
+              </button>
+            }
+          >
+            Couldn&apos;t finish that reply. Try again, or ask in a new way.
+          </AlertBanner>
+        </div>
+      ) : null}
+      {!thinking && !turn.failed && visible ? (
+        <div className="chat-msg chat-msg--tutor">
+          <div className="tutor-name">
+            <PolarisStar />
+            <p>Polaris</p>
+          </div>
+          {reply !== '' ? (
+            <p className="tutor-body" aria-live={turn.streaming ? 'polite' : undefined}>
+              {reply}
+            </p>
+          ) : null}
+          {quizzes.map((quiz) => (
+            <div className="quiz-chip" key={quiz.id}>
+              <p className="quiz-chip-title">{quiz.title}</p>
+              <button type="button" className="secondary" onClick={() => onOpenQuiz(quiz.id)}>
+                Open quiz
+              </button>
+            </div>
+          ))}
+          {whiteboards.map((whiteboard) => (
+            <div className="turn-whiteboard" key={whiteboard.id}>
+              <div className="turn-whiteboard-actions">
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => onOpenWhiteboard(whiteboard.id)}
+                >
+                  Open whiteboard
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={sending || !onSimpler}
+                  onClick={() => onSimpler?.(whiteboard.id)}
+                >
+                  Simpler
+                </button>
+                {sessionId && whiteboard.simplifies ? (
+                  <a
+                    className="whiteboard-original"
+                    href={whiteboardPagePath(sessionId, whiteboard.simplifies)}
+                    onClick={(event) => {
+                      const originalId = whiteboard.simplifies
+                      if (!originalId) return
+                      event.preventDefault()
+                      onOpenWhiteboard(originalId)
+                    }}
+                  >
+                    Original whiteboard
+                  </a>
+                ) : null}
+              </div>
+              <div className="turn-whiteboard-board">
+                <Whiteboard
+                  whiteboard={whiteboard}
+                  onAsk={onAsk ? (parts) => onAsk(whiteboard.id, parts) : undefined}
+                />
+              </div>
+            </div>
+          ))}
+          {finished ? (
+            <div className="tutor-actions">
+              <IconButton label="Copy" size="sm" onClick={() => onCopy(reply)}>
+                <CopyIcon />
+              </IconButton>
+              <IconButton
+                label="Try again"
+                size="sm"
+                onClick={() => onTryAgain(turn.learner, turn.pointing)}
+              >
+                <RetryIcon />
+              </IconButton>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </article>
+  )
+}

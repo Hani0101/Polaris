@@ -1,0 +1,437 @@
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, expect, test, vi } from 'vitest'
+import type { WhiteboardArtifact } from '../api.ts'
+import { readableDescription } from '../whiteboard/description.ts'
+import { revealWhiteboard } from '../whiteboard/reveal.ts'
+import { sampleWhiteboard } from '../whiteboard/sampleWhiteboard.ts'
+import { Conversation } from './Conversation.tsx'
+
+afterEach(() => {
+  cleanup()
+})
+
+const noop = () => {}
+
+test('the composer is named and Send stays off while empty', () => {
+  render(
+    <Conversation
+      turns={[]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+  expect(screen.getByLabelText('Message to Polaris')).toBeTruthy()
+  expect((screen.getByRole('button', { name: 'Send' }) as HTMLButtonElement).disabled).toBe(true)
+})
+
+test('Send becomes Stop while the reply is being produced', () => {
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'pending',
+          learner: 'What is a vertex?',
+          reply: '',
+          artifacts: [],
+          streaming: true,
+          failed: false,
+        },
+      ]}
+      draft="follow up"
+      sending
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+  expect(screen.getByText('Thinking')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy()
+  expect(screen.queryByRole('button', { name: 'Send' })).toBeNull()
+})
+
+test('a turn shows a whiteboard', async () => {
+  const whiteboard: WhiteboardArtifact = { ...sampleWhiteboard, kind: 'whiteboard' }
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-0',
+          learner: 'Explain fractions with a drawing.',
+          reply: 'A fraction is one part of a whole.',
+          artifacts: [whiteboard],
+          streaming: false,
+          failed: false,
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+  expect(await screen.findByRole('region', { name: readableDescription(whiteboard) })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Open whiteboard' })).toBeTruthy()
+  expect(screen.getByText('A fraction is one part of a whole.')).toBeTruthy()
+})
+
+test('a turn opens its whiteboard on its own', async () => {
+  const whiteboard: WhiteboardArtifact = { ...sampleWhiteboard, kind: 'whiteboard' }
+  const onOpenWhiteboard = vi.fn()
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-0',
+          learner: 'Explain fractions with a drawing.',
+          reply: 'A fraction is one part of a whole.',
+          artifacts: [whiteboard],
+          streaming: false,
+          failed: false,
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={onOpenWhiteboard}
+      onStart={noop}
+    />,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Open whiteboard' }))
+  expect(onOpenWhiteboard).toHaveBeenCalledWith(whiteboard.id)
+})
+
+test('Simpler sends that whiteboard without a typed message', async () => {
+  const whiteboard: WhiteboardArtifact = { ...sampleWhiteboard, kind: 'whiteboard' }
+  const onSimpler = vi.fn()
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-0',
+          learner: 'Explain fractions with a drawing.',
+          reply: 'A fraction is one part of a whole.',
+          artifacts: [whiteboard],
+          streaming: false,
+          failed: false,
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onSimpler={onSimpler}
+      onStart={noop}
+    />,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Simpler' }))
+  expect(onSimpler).toHaveBeenCalledWith(whiteboard.id)
+})
+
+test('a simpler whiteboard links to the original', async () => {
+  const whiteboard: WhiteboardArtifact = {
+    ...sampleWhiteboard,
+    kind: 'whiteboard',
+    id: 'wb-simple',
+    version: 4,
+    description: 'One box stands for the whole.',
+    simplifies: 'wb-1',
+  }
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-1',
+          learner: 'Draw a simpler version of this whiteboard.',
+          reply: 'Here is a simpler drawing.',
+          artifacts: [whiteboard],
+          streaming: false,
+          failed: false,
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      sessionId="session-1"
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onSimpler={noop}
+      onStart={noop}
+    />,
+  )
+  const link = await screen.findByRole('link', { name: 'Original whiteboard' })
+  expect(link.getAttribute('href')).toBe('/whiteboard/session-1/wb-1')
+})
+
+const stepped: WhiteboardArtifact = {
+  ...sampleWhiteboard,
+  kind: 'whiteboard',
+  comments: [
+    { id: 'c-whole', author: 'agent', text: 'the whole', element_id: 'rect-1' },
+    { id: 'c-part', author: 'agent', text: 'the part', element_id: 'rect-2' },
+    { id: 'c-here', author: 'agent', text: 'over here', position: { x: 4, y: 8 } },
+  ],
+}
+
+function renderStepped(turn: {
+  reply: string
+  streaming: boolean
+  stopped?: boolean
+}) {
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'pending',
+          learner: 'Explain fractions with a drawing.',
+          reply: turn.reply,
+          artifacts: [stepped],
+          streaming: turn.streaming,
+          stopped: turn.stopped,
+          failed: false,
+        },
+      ]}
+      draft=""
+      sending={turn.streaming}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+}
+
+test('steps follow the text', async () => {
+  // Scenario: steps follow the text [WB-06]
+  renderStepped({ reply: '', streaming: true })
+  expect(screen.queryByRole('region', { name: readableDescription(stepped) })).toBeNull()
+
+  cleanup()
+  renderStepped({ reply: '[[step:ste', streaming: true })
+  expect(screen.queryByRole('region', { name: readableDescription(stepped) })).toBeNull()
+  expect(screen.queryByText(/\[\[step:/)).toBeNull()
+
+  cleanup()
+  const firstReply = '[[step:step-1]] The left box is the whole.'
+  renderStepped({
+    reply: firstReply,
+    streaming: true,
+  })
+  const revealed = revealWhiteboard(stepped, firstReply, 'streaming')
+  expect(
+    await screen.findByRole('region', { name: readableDescription(revealed ?? stepped) }),
+  ).toBeTruthy()
+  expect(screen.getByText('The left box is the whole.')).toBeTruthy()
+  expect(screen.getByText('the whole')).toBeTruthy()
+  expect(screen.getByText('over here')).toBeTruthy()
+  expect(screen.queryByText('the part')).toBeNull()
+  expect(screen.queryByText(/\[\[step:/)).toBeNull()
+
+  cleanup()
+  renderStepped({
+    reply: '[[step:step-1]] The left box is the whole. [[step:step-2]] The right box is one part.',
+    streaming: true,
+  })
+  expect(await screen.findByText('the part')).toBeTruthy()
+  expect(screen.getByText('The left box is the whole. The right box is one part.')).toBeTruthy()
+})
+
+test('a stopped turn keeps later steps hidden', async () => {
+  renderStepped({
+    reply: '[[step:step-1]] The left box is the whole.',
+    streaming: false,
+    stopped: true,
+  })
+  expect(await screen.findByText('the whole')).toBeTruthy()
+  expect(screen.queryByText('the part')).toBeNull()
+})
+
+test('the composer shows pointed-at chips and can remove one', () => {
+  const onRemovePoint = vi.fn()
+  render(
+    <Conversation
+      turns={[]}
+      draft="What is this part?"
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+      pointing={{
+        whiteboardId: 'wb-1',
+        parts: [
+          { id: 'text-1', label: 'half' },
+          { id: 'rect-1', label: 'rectangle' },
+        ],
+      }}
+      onRemovePoint={onRemovePoint}
+    />,
+  )
+
+  expect(screen.getByText('half')).toBeTruthy()
+  expect(screen.getByText('rectangle')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Remove half' }))
+  expect(onRemovePoint).toHaveBeenCalledWith('text-1')
+})
+
+test('a sent turn shows the pointed-at chip', () => {
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-0',
+          learner: 'What is this part?',
+          reply: 'The left box is the whole.',
+          artifacts: [],
+          streaming: false,
+          failed: false,
+          pointing: {
+            whiteboardId: 'wb-1',
+            parts: [{ id: 'rect-1', label: 'rectangle' }],
+          },
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+
+  expect(screen.getByRole('list', { name: 'Pointed at' }).textContent).toContain('rectangle')
+  expect(screen.queryByRole('button', { name: 'Remove rectangle' })).toBeNull()
+})
+
+test('a finished turn shows every step', async () => {
+  renderStepped({
+    reply: 'The reply ended without a marker.',
+    streaming: false,
+  })
+  expect(await screen.findByText('the whole')).toBeTruthy()
+  expect(screen.getByText('the part')).toBeTruthy()
+  expect(screen.getByText('over here')).toBeTruthy()
+})
+
+test('a screen reader reads the drawing', async () => {
+  // Scenario: a screen reader reads the drawing [WB-10]
+  const description = 'Two boxes show one half of a whole.'
+  const board: WhiteboardArtifact = {
+    version: 4,
+    id: 'wb-read',
+    session_id: 'session-1',
+    kind: 'whiteboard',
+    description,
+    comments: [],
+    steps: [
+      {
+        id: 'step-1',
+        reply_part: '[[step:step-1]]',
+        elements: [sampleWhiteboard.steps[0].elements[0]],
+      },
+    ],
+  }
+
+  function show(reply: string, streaming: boolean) {
+    render(
+      <Conversation
+        turns={[
+          {
+            key: 'pending',
+            learner: 'Explain fractions with a drawing.',
+            reply,
+            artifacts: [board],
+            streaming,
+            failed: false,
+          },
+        ]}
+        draft=""
+        sending={streaming}
+        sendError={null}
+        sessionOpen
+        onDraftChange={noop}
+        onSend={noop}
+        onStop={noop}
+        onCopy={noop}
+        onTryAgain={noop}
+        onOpenQuiz={noop}
+        onOpenWhiteboard={noop}
+        onStart={noop}
+      />,
+    )
+  }
+
+  show('', true)
+  expect(screen.queryByRole('region', { name: description })).toBeNull()
+  expect(screen.queryByText(description)).toBeNull()
+
+  cleanup()
+  show('[[step:step-1]] The left box is the whole.', true)
+  const region = await screen.findByRole('region', { name: description })
+  const caption = screen.getByText(description)
+  expect(region.getAttribute('aria-labelledby')).toBe(caption.id)
+  expect(caption.classList.contains('visually-hidden')).toBe(false)
+})
