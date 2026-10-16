@@ -1,11 +1,21 @@
 import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Tldraw, type Editor, type TLShape } from 'tldraw'
+import { DefaultColorStyle, Tldraw, useValue, type Editor, type TLShape } from 'tldraw'
 import 'katex/dist/katex.min.css'
 import 'tldraw/tldraw.css'
 import type { Comment, Whiteboard as WhiteboardData } from '../api.ts'
+import { CommentPins } from './CommentPins.tsx'
 import { readableDescription } from './description.ts'
-import { learnerDrawingTools } from './drawingTools.ts'
+import {
+  allowedTldrawTools,
+  learnerDrawingTools,
+  tldrawToolFor,
+  toolFromTldraw,
+  type ToolId,
+} from './drawingTools.ts'
 import { pointedParts, type PointedPart } from './pointing.ts'
+import { learnerPenColor, type PenColor } from './style.ts'
+import { SwatchPicker } from './SwatchPicker.tsx'
+import { Toolbar } from './Toolbar.tsx'
 import {
   applyLearnerShapes,
   isCanonicalAgentShape,
@@ -15,9 +25,7 @@ import { graphShapeUtils } from './graphShapes.tsx'
 import { mathCodeShapeUtils } from './mathCodeShapes.tsx'
 import { whiteboardToShapes } from './toTldraw.ts'
 
-const ALLOWED_TOOLS = new Set(['select', 'draw', 'line', 'arrow', 'geo', 'text'])
-
-type ToolId = 'select' | (typeof learnerDrawingTools)[number]['id']
+const penTools = new Set<ToolId>(learnerDrawingTools.map((item) => item.id))
 
 type WhiteboardProps = {
   whiteboard: WhiteboardData
@@ -134,7 +142,9 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   const converted = useMemo(() => whiteboardToShapes(whiteboard), [whiteboard])
   const region = useRef<HTMLElement>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
-  const [tool, setTool] = useState<ToolId>('select')
+  const [commenting, setCommenting] = useState(false)
+  const [geo, setGeo] = useState<'rectangle' | 'ellipse'>('rectangle')
+  const commentField = useRef<HTMLInputElement>(null)
   const [ask, setAsk] = useState<AskAt | null>(null)
   const [draft, setDraft] = useState('')
   const [comments, setComments] = useState(whiteboard.comments)
@@ -148,6 +158,19 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   const commentFieldId = useId()
   const captionId = useId()
   const [drawn, setDrawn] = useState(whiteboard)
+  const tldrawTool = useValue('tool', () => editor?.getCurrentToolId() ?? 'select', [editor])
+  const active = toolFromTldraw(tldrawTool, geo, commenting)
+  // Pens follow the board (DESIGN.md 2.3). The board follows the app mode.
+  const penSet = useValue(
+    'pen set',
+    () => (editor?.getColorMode() === 'dark' ? 'onDark' : 'onLight'),
+    [editor],
+  )
+  const penColor = useValue(
+    'pen color',
+    (): string => (editor ? editor.getStyleForNextShape(DefaultColorStyle) : learnerPenColor),
+    [editor],
+  )
 
   useEffect(() => {
     setDrawn(whiteboard)
@@ -216,6 +239,10 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
           seeding.current = false
         }
       }
+      // The learner draws with pen box 2 (DESIGN.md 2.3).
+      editor.setStyleForNextShapes(DefaultColorStyle, learnerPenColor, { history: 'ignore' })
+      // Undo starts empty, so it never takes back the stored drawing.
+      editor.clearHistory()
       const stopCreate = editor.sideEffects.registerBeforeCreateHandler('shape', (shape) => {
         if (shape.meta?.author === 'agent' || shape.meta?.author === 'learner') return shape
         const existing =
@@ -237,7 +264,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       })
       const stopTools = editor.store.listen(
         () => {
-          if (!ALLOWED_TOOLS.has(editor.getCurrentToolId())) editor.setCurrentTool('select')
+          if (!allowedTldrawTools.has(editor.getCurrentToolId())) editor.setCurrentTool('select')
         },
         { source: 'user', scope: 'session' },
       )
@@ -280,11 +307,28 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
     if (!editor) return
     if (next === 'rectangle' || next === 'ellipse') {
       geoKind.current = next
-      editor.setCurrentTool('geo')
-    } else {
-      editor.setCurrentTool(next)
+      setGeo(next)
     }
-    setTool(next)
+    setCommenting(next === 'comment')
+    editor.setCurrentTool(tldrawToolFor[next])
+    // Comment uses the select tool: pick a part, then write in the comment field.
+    if (next === 'comment') commentField.current?.focus()
+  }
+
+  function choosePen(color: PenColor) {
+    editor?.setStyleForNextShapes(DefaultColorStyle, color)
+  }
+
+  // Removes only the learner's shapes. The agent's drawing and marks stay,
+  // and the comments stay. It is not undoable, as the confirm dialog says.
+  function clearBoard() {
+    if (!editor) return
+    const learner = editor
+      .getCurrentPageShapes()
+      .filter((shape) => shape.meta?.author === 'learner')
+      .map((shape) => shape.id)
+    if (learner.length > 0) editor.deleteShapes(learner)
+    editor.clearHistory()
   }
 
   function leaveComment(event: FormEvent) {
@@ -301,6 +345,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
     commentsRef.current = nextComments
     setComments(nextComments)
     setDraft('')
+    setCommenting(false)
     const next = {
       ...applyLearnerShapes(
         whiteboardRef.current,
@@ -323,36 +368,23 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
           Some parts of this whiteboard were left out.
         </p>
       ) : null}
-      {mode === 'draw' ? (
-        <div className="whiteboard-tools" role="toolbar" aria-label="Drawing tools">
-          <button
-            type="button"
-            aria-pressed={tool === 'select'}
-            disabled={!editor}
-            onClick={() => chooseTool('select')}
-          >
-            Select
-          </button>
-          {learnerDrawingTools.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              aria-pressed={tool === item.id}
-              disabled={!editor}
-              onClick={() => chooseTool(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
       <div className="whiteboard-surface">
         <Tldraw
           hideUi
           autoFocus={false}
+          colorScheme="system"
           onMount={setEditor}
           shapeUtils={[...mathCodeShapeUtils, ...graphShapeUtils]}
         />
+        <CommentPins editor={editor} comments={shown} />
+        {mode === 'draw' ? (
+          <div className="wb-dock">
+            <Toolbar editor={editor} active={active} onTool={chooseTool} onClear={clearBoard} />
+            {active && penTools.has(active) ? (
+              <SwatchPicker set={penSet} value={penColor} onChange={choosePen} />
+            ) : null}
+          </div>
+        ) : null}
         {ask && onAsk ? (
           <button
             type="button"
@@ -368,7 +400,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
         {caption}
       </p>
       {shown.length > 0 ? (
-        <ul className="whiteboard-comments" aria-label="Comments">
+        <ul className="visually-hidden" aria-label="Comments">
           {shown.map((comment) => (
             <li key={comment.id}>
               <span>{comment.text}</span>
@@ -384,18 +416,22 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
         </ul>
       ) : null}
       {mode === 'draw' ? (
-        <form className="whiteboard-comment-form" onSubmit={leaveComment}>
-          <label htmlFor={commentFieldId}>
+        <form className="wb-comment-form" onSubmit={leaveComment}>
+          <label htmlFor={commentFieldId} className="wb-comment-label">
             Comment
+          </label>
+          <div className="wb-comment-row">
             <input
+              ref={commentField}
               id={commentFieldId}
+              className="wb-comment-input"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
             />
-          </label>
-          <button type="submit" disabled={!editor || !draft.trim()}>
-            Leave comment
-          </button>
+            <button type="submit" className="secondary" disabled={!editor || !draft.trim()}>
+              Leave comment
+            </button>
+          </div>
         </form>
       ) : null}
     </section>

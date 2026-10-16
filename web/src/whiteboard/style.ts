@@ -38,6 +38,34 @@ const STROKE_WIDTH_BY_SIZE: Record<string, number> = {
 
 export const learnerTextHeight = 32
 
+export type PenSet = 'onLight' | 'onDark'
+
+// The 6 pen boxes (DESIGN.md 2.3 and Color swatch picker). Box 1 is the
+// tutor's pen, box 2 the learner's. The swatch shows the token color for the
+// board's pen set; the stroke is drawn with a tldraw named color.
+// DS-GAP: tldraw draws only its named palette, not the pen hex values, so each
+// box maps to one named color by meaning (orange stays orange), used
+// color.whiteboard.pen.* for the swatch only. tldraw's "black" turns light on
+// a dark board, which matches the onDark tutor pen.
+export const penColors = [
+  { key: 'tutor', tldraw: 'black', name: { onLight: 'Black', onDark: 'White' } },
+  { key: 'learner', tldraw: 'blue', name: { onLight: 'Blue', onDark: 'Blue' } },
+  { key: 'red', tldraw: 'red', name: { onLight: 'Red', onDark: 'Red' } },
+  { key: 'green', tldraw: 'green', name: { onLight: 'Green', onDark: 'Green' } },
+  { key: 'orange', tldraw: 'orange', name: { onLight: 'Orange', onDark: 'Orange' } },
+  { key: 'purple', tldraw: 'violet', name: { onLight: 'Purple', onDark: 'Purple' } },
+] as const
+
+export type PenColor = (typeof penColors)[number]['tldraw']
+
+/** The learner pen, box 2. */
+export const learnerPenColor: PenColor = 'blue'
+
+export function penSwatchVar(set: PenSet, key: (typeof penColors)[number]['key']): string {
+  const mode = set === 'onDark' ? 'on-dark' : 'on-light'
+  return `var(--color-whiteboard-pen-${mode}-${key})`
+}
+
 export const whiteboardMarks = {
   dash: 'solid',
   font: 'sans',

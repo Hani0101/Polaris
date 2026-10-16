@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Box, createShapeId, DefaultColorStyle, toRichText } from 'tldraw'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { Whiteboard as WhiteboardData } from '../api.ts'
 import { learnerDrawingTools } from './drawingTools.ts'
@@ -14,13 +15,45 @@ afterEach(() => {
   cleanup()
 })
 
+const toolbarNames = [
+  'Select and move',
+  'Pen',
+  'Eraser',
+  'Shapes',
+  'Text',
+  'Comment',
+  'Undo',
+  'Redo',
+  'Pan and zoom',
+  'More',
+]
+
+async function drawBoard(whiteboard: WhiteboardData = sampleWhiteboard) {
+  const onChange = vi.fn()
+  render(<Whiteboard whiteboard={whiteboard} mode="draw" onChange={onChange} />)
+  const region = await screen.findByRole('region', { name: readableDescription(whiteboard) })
+  await waitFor(() => {
+    expect(region.getAttribute('data-ready')).toBe('true')
+  })
+  return { region, editor: whiteboardEditor(region), onChange }
+}
+
+function pressed(name: string) {
+  return screen.getByRole('button', { name }).getAttribute('aria-pressed')
+}
+
+function elementIds(editor: ReturnType<typeof whiteboardEditor>) {
+  return editor.getCurrentPageShapes().map((shape) => shape.meta.elementId)
+}
+
 test('a stored whiteboard renders', async () => {
   render(<Whiteboard whiteboard={sampleWhiteboard} />)
   const region = await screen.findByRole('region', { name: readableDescription(sampleWhiteboard) })
   await waitFor(() => {
     expect(region.getAttribute('data-ready')).toBe('true')
   })
-  expect(screen.queryByRole('button', { name: 'Freehand' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Pen' })).toBeNull()
+  expect(screen.queryByRole('toolbar', { name: 'Drawing tools' })).toBeNull()
 })
 
 test('a comment on the drawing is shown', async () => {
@@ -52,8 +85,8 @@ test('draw mode offers the learner tools and saves a comment', async () => {
     expect(region.getAttribute('data-ready')).toBe('true')
   })
 
-  for (const item of learnerDrawingTools) {
-    expect(screen.getByRole('button', { name: item.label })).toBeTruthy()
+  for (const name of toolbarNames) {
+    expect(screen.getByRole('button', { name })).toBeTruthy()
   }
   const leave = screen.getByRole('button', { name: 'Leave comment' })
   expect(leave.hasAttribute('disabled')).toBe(true)
@@ -80,7 +113,7 @@ test('selecting parts offers ask about this with polaris ids', async () => {
     expect(region.getAttribute('data-ready')).toBe('true')
   })
   expect(screen.queryByRole('button', { name: 'Ask about this' })).toBeNull()
-  expect(screen.queryByRole('button', { name: 'Freehand' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Pen' })).toBeNull()
 
   selectElements(region, ['rect-1', 'text-1'])
 
@@ -173,7 +206,7 @@ test('a graph shows axes and a polyline from plotted points', async () => {
     expect(region.getAttribute('data-ready')).toBe('true')
   })
   expect(screen.queryByRole('button', { name: 'Graph' })).toBeNull()
-  expect(screen.getByRole('button', { name: 'Freehand' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Pen' })).toBeTruthy()
   expect(learnerDrawingTools.some((item) => item.label === 'Graph')).toBe(false)
 
   const editor = whiteboardEditor(region)
@@ -270,4 +303,187 @@ test('learner changes update the description', async () => {
   const region = await screen.findByRole('region', { name: expected })
   expect(region).toBeTruthy()
   expect(screen.getByText(expected)).toBeTruthy()
+})
+
+test('choosing a tool marks it pressed and offers the pen colors', async () => {
+  const { editor } = await drawBoard()
+  expect(pressed('Select and move')).toBe('true')
+  expect(screen.queryByRole('group', { name: 'Pen color' })).toBeNull()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Pen' }))
+  await waitFor(() => {
+    expect(pressed('Pen')).toBe('true')
+  })
+  expect(pressed('Select and move')).toBe('false')
+  expect(editor.getCurrentToolId()).toBe('draw')
+
+  const colors = screen.getByRole('group', { name: 'Pen color' })
+  const boxes = [...colors.querySelectorAll('button')].map((box) => box.getAttribute('aria-label'))
+  expect(boxes).toEqual(['Black', 'Blue', 'Red', 'Green', 'Orange', 'Purple'])
+  expect(pressed('Blue')).toBe('true')
+  expect(editor.getStyleForNextShape(DefaultColorStyle)).toBe('blue')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Red' }))
+  await waitFor(() => {
+    expect(pressed('Red')).toBe('true')
+  })
+  expect(pressed('Blue')).toBe('false')
+  expect(editor.getStyleForNextShape(DefaultColorStyle)).toBe('red')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Pan and zoom' }))
+  await waitFor(() => {
+    expect(pressed('Pan and zoom')).toBe('true')
+  })
+  expect(editor.getCurrentToolId()).toBe('hand')
+  expect(screen.queryByRole('group', { name: 'Pen color' })).toBeNull()
+})
+
+test('shapes share one button that opens a menu', async () => {
+  const { editor } = await drawBoard()
+  const shapes = screen.getByRole('button', { name: 'Shapes' })
+  fireEvent.click(shapes)
+
+  const menu = await screen.findByRole('menu', { name: 'Shapes' })
+  const rows = [...menu.querySelectorAll('[role="menuitem"]')].map((row) => row.textContent)
+  expect(rows).toEqual(['Line', 'Arrow', 'Rectangle', 'Circle'])
+  await waitFor(() => {
+    expect(document.activeElement?.textContent).toBe('Line')
+  })
+
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Circle' }))
+  await waitFor(() => {
+    expect(shapes.getAttribute('aria-pressed')).toBe('true')
+  })
+  expect(editor.getCurrentToolId()).toBe('geo')
+  expect(document.activeElement).toBe(shapes)
+  await waitFor(() => {
+    expect(screen.queryByRole('menu')).toBeNull()
+  })
+})
+
+test('undo and redo follow the history and the stored drawing cannot be undone', async () => {
+  const { editor } = await drawBoard()
+  const undo = screen.getByRole('button', { name: 'Undo' })
+  const redo = screen.getByRole('button', { name: 'Redo' })
+  expect(undo.hasAttribute('disabled')).toBe(true)
+  expect(redo.hasAttribute('disabled')).toBe(true)
+
+  act(() => {
+    editor.createShape({
+      id: createShapeId('mine'),
+      type: 'text',
+      x: 300,
+      y: 300,
+      props: { richText: toRichText('my note') },
+    })
+  })
+  await waitFor(() => {
+    expect(undo.hasAttribute('disabled')).toBe(false)
+  })
+
+  fireEvent.click(undo)
+  await waitFor(() => {
+    expect(redo.hasAttribute('disabled')).toBe(false)
+  })
+  expect(editor.getShape(createShapeId('mine'))).toBeUndefined()
+  expect(elementIds(editor)).toContain('rect-1')
+
+  fireEvent.click(redo)
+  await waitFor(() => {
+    expect(editor.getShape(createShapeId('mine'))).toBeTruthy()
+  })
+})
+
+test('clear board asks first, Escape cancels, and only the learner drawing is cleared', async () => {
+  const { editor, onChange } = await drawBoard()
+  expect(elementIds(editor)).toContain('ellipse-1')
+  const more = screen.getByRole('button', { name: 'More' })
+
+  fireEvent.click(more)
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear board' }))
+  const dialog = await screen.findByRole('alertdialog', { name: 'Clear this board?' })
+  expect(dialog.textContent).toContain("This can't be undone.")
+  expect(dialog.contains(document.activeElement)).toBe(true)
+
+  fireEvent.keyDown(document.activeElement ?? dialog, { key: 'Escape' })
+  await waitFor(() => {
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+  expect(document.activeElement).toBe(more)
+  expect(elementIds(editor)).toContain('ellipse-1')
+
+  fireEvent.click(more)
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Clear board' }))
+  await screen.findByRole('alertdialog', { name: 'Clear this board?' })
+  fireEvent.click(screen.getByRole('button', { name: 'Clear board' }))
+
+  await waitFor(() => {
+    expect(elementIds(editor)).not.toContain('ellipse-1')
+  })
+  expect(elementIds(editor)).toContain('rect-1')
+  expect(elementIds(editor)).toContain('text-1')
+  expect(screen.getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(true)
+  await waitFor(() => {
+    expect(onChange).toHaveBeenCalled()
+  })
+  const saved = onChange.mock.calls.at(-1)?.[0] as WhiteboardData
+  const authors = saved.steps.flatMap((step) => step.elements.map((element) => element.author))
+  expect(authors).not.toContain('learner')
+  expect(authors.length).toBe(sampleWhiteboard.steps[0].elements.length - 1)
+})
+
+test('the comment tool starts a comment in the comment field', async () => {
+  await drawBoard()
+  fireEvent.click(screen.getByRole('button', { name: 'Comment' }))
+  await waitFor(() => {
+    expect(pressed('Comment')).toBe('true')
+  })
+  expect(pressed('Select and move')).toBe('false')
+  expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Comment' }))
+})
+
+test('a comment shows as a pin that opens a card', async () => {
+  const whiteboard: WhiteboardData = {
+    ...sampleWhiteboard,
+    comments: [
+      { id: 'comment-1', author: 'learner', text: 'why this box', element_id: 'rect-1' },
+      { id: 'comment-2', author: 'agent', text: 'look here', position: { x: 40, y: 40 } },
+    ],
+  }
+  render(<Whiteboard whiteboard={whiteboard} />)
+  const region = await screen.findByRole('region', { name: readableDescription(whiteboard) })
+  await waitFor(() => {
+    expect(region.getAttribute('data-ready')).toBe('true')
+  })
+  // jsdom has no layout, so give the board a real size, then fit the drawing.
+  const editor = whiteboardEditor(region)
+  act(() => {
+    editor.updateViewportScreenBounds(new Box(0, 0, 800, 600))
+    editor.zoomToFit({ animation: { duration: 0 } })
+  })
+  const pin = await screen.findByRole('button', { name: 'Comment 1 from You' })
+  expect(screen.getByRole('button', { name: 'Comment 2 from Polaris' })).toBeTruthy()
+  const list = screen.getByRole('list', { name: 'Comments' })
+  expect(list.classList.contains('visually-hidden')).toBe(true)
+  expect(pin.getAttribute('aria-expanded')).toBe('false')
+
+  fireEvent.click(pin)
+  const card = await screen.findByRole('group', { name: 'Comment 1 from You' })
+  expect(pin.getAttribute('aria-expanded')).toBe('true')
+  expect(card.textContent).toContain('You')
+  expect(card.textContent).toContain('why this box')
+
+  fireEvent.keyDown(document, { key: 'Escape' })
+  await waitFor(() => {
+    expect(screen.queryByRole('group', { name: 'Comment 1 from You' })).toBeNull()
+  })
+  expect(document.activeElement).toBe(pin)
+
+  fireEvent.click(screen.getByRole('button', { name: 'Comment 2 from Polaris' }))
+  const agentCard = await screen.findByRole('group', { name: 'Comment 2 from Polaris' })
+  expect(agentCard.textContent).toContain('Polaris')
+  fireEvent.pointerDown(document.body)
+  await waitFor(() => {
+    expect(screen.queryByRole('group', { name: 'Comment 2 from Polaris' })).toBeNull()
+  })
 })

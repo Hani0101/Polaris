@@ -1,0 +1,254 @@
+/* Whiteboard toolbar, color swatch picker, comment pin (DESIGN.md section 7). */
+
+/* The board opens on color.whiteboard.board.default (2.3). isolation keeps
+   tldraw's own layers under the toolbar and pins. */
+.whiteboard-surface > .tl-container {
+  --tl-color-background: var(--color-whiteboard-board-default);
+  isolation: isolate;
+}
+
+/* Toolbar and pen colors. Phone: at the bottom of the board, pen colors above. */
+.wb-dock {
+  position: absolute;
+  left: 50%;
+  /* DS-GAP: distance of the floating toolbar from the board edge, used space.xs */
+  bottom: var(--space-xs);
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+  /* DS-GAP: gap between the toolbar and the pen colors, used space.xs */
+  gap: var(--space-xs);
+  max-width: calc(100% - 2 * var(--layout-page-margin-phone));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.wb-dock > * {
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+/* Laptop: floating at the top center of the board. */
+@media (min-width: 640px) {
+  .wb-dock {
+    top: var(--space-xs);
+    bottom: auto;
+    flex-direction: column;
+  }
+}
+
+.wb-toolbar {
+  display: flex;
+  align-items: center;
+  /* DS-GAP: gap between toolbar tools, used space.2xs */
+  gap: var(--space-2xs);
+  padding: var(--space-2xs);
+  /* DS-GAP: the bar is wider than a phone, so it scrolls sideways; menus open outside it */
+  overflow-x: auto;
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.wb-tool > svg {
+  flex: none;
+  width: var(--component-icon-size-lg);
+  height: var(--component-icon-size-lg);
+}
+
+.wb-tool[aria-pressed='true'],
+.wb-tool[aria-pressed='true']:hover:not(:disabled),
+.wb-tool[aria-pressed='true']:active:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+/* Color swatch picker, pen variant. */
+.wb-swatches {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  /* DS-GAP: the pen menu's container is not specified, used the toolbar bar's look;
+     padding space.xs so the selected ring and the 44px tap area fit inside */
+  padding: var(--space-xs);
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.wb-swatch {
+  position: relative;
+  flex: none;
+  width: var(--component-swatch-size);
+  height: var(--component-swatch-size);
+  min-height: var(--component-swatch-size);
+  padding: 0;
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-sm);
+  background: var(--wb-swatch-color);
+}
+
+/* The 44px tap area around the 32px box. */
+.wb-swatch::before {
+  content: '';
+  position: absolute;
+  inset: calc((var(--component-swatch-size) - var(--component-tap-target-min)) / 2);
+}
+
+.wb-swatch:hover:not(:disabled),
+.wb-swatch:active:not(:disabled) {
+  background: var(--wb-swatch-color);
+  border-color: var(--color-text-secondary);
+}
+
+/* Selected: 2px ring in the primary text color, 2px away. */
+.wb-swatch[aria-pressed='true'] {
+  outline: var(--border-width-emphasis) solid var(--color-text-primary);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+.wb-swatch:focus-visible {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+/* Comment pins */
+.wb-pins {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.wb-pin {
+  position: absolute;
+  width: var(--component-tap-target-min);
+  height: var(--component-tap-target-min);
+  min-height: var(--component-tap-target-min);
+  padding: 0;
+  background: transparent;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+
+.wb-pin:hover:not(:disabled),
+.wb-pin:active:not(:disabled) {
+  background: transparent;
+}
+
+.wb-pin-face {
+  display: grid;
+  place-items: center;
+  width: var(--component-comment-pin-size);
+  height: var(--component-comment-pin-size);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  background: var(--color-surface-raised);
+  color: var(--color-text-primary);
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.wb-pin-face > svg {
+  width: var(--component-icon-size-md);
+  height: var(--component-icon-size-md);
+}
+
+.wb-pin:hover .wb-pin-face {
+  border-color: var(--color-text-secondary);
+}
+
+.wb-pin[aria-expanded='true'] .wb-pin-face {
+  border: var(--border-width-emphasis) solid var(--color-accent);
+}
+
+.wb-pin:focus-visible {
+  outline: none;
+}
+
+.wb-pin:focus-visible .wb-pin-face {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+.wb-pin-card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between the comment author and its text, used space.2xs */
+  gap: var(--space-2xs);
+  width: max-content;
+  max-width: var(--layout-panel-left);
+  padding: var(--space-sm);
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  pointer-events: auto;
+}
+
+/* The card starts at the edge of the pin's tap area. */
+.wb-pin-card.is-below {
+  margin-top: calc(var(--component-tap-target-min) / 2);
+}
+
+.wb-pin-card.is-above {
+  margin-bottom: calc(var(--component-tap-target-min) / 2);
+}
+
+.wb-pin-author {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.wb-pin-text {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-regular);
+  line-height: var(--font-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+/* Comment form under the board (Text input). */
+.wb-comment-form {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-form-label-gap);
+  /* DS-GAP: padding around the comment form under the board, used space.xs and space.sm */
+  padding: var(--space-xs) var(--space-sm);
+}
+
+.wb-comment-label {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.wb-comment-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+}
+
+.wb-comment-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--component-input-height);
+  padding: 0 var(--space-md);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.wb-comment-input:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.wb-comment-row > button {
+  flex: none;
+}
