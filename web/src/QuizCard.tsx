@@ -45,9 +45,16 @@ function CheckButton({ label, pending, disabled, variant = 'primary', onClick }:
   )
 }
 
-function ResultFeedback({ right, explanation }: { right: boolean; explanation?: string }) {
+type ResultFeedbackProps = {
+  right: boolean
+  explanation: string
+  whyWrong?: string
+}
+
+/** QZ-06: why the correct choice is right; on a miss, first why the learner's pick is not. */
+function ResultFeedback({ right, explanation, whyWrong }: ResultFeedbackProps) {
   let headline: ReactNode
-  let body: string | undefined
+  const body: string[] = []
   if (right) {
     headline = (
       <>
@@ -55,7 +62,6 @@ function ResultFeedback({ right, explanation }: { right: boolean; explanation?: 
         Correct
       </>
     )
-    body = 'You picked the right answer.'
   } else {
     headline = (
       <>
@@ -63,12 +69,17 @@ function ResultFeedback({ right, explanation }: { right: boolean; explanation?: 
         Not quite, here's why
       </>
     )
-    body = explanation
+    if (whyWrong) body.push(whyWrong)
   }
+  if (explanation) body.push(explanation)
   return (
     <div className={right ? 'qz-feedback is-correct' : 'qz-feedback is-incorrect'}>
       <p className="qz-feedback-headline">{headline}</p>
-      {body ? <p className="qz-feedback-text">{body}</p> : null}
+      {body.map((text, line) => (
+        <p key={line} className="qz-feedback-text">
+          {text}
+        </p>
+      ))}
     </div>
   )
 }
@@ -89,9 +100,9 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
   const scoreRef = useRef<HTMLParagraphElement>(null)
   const focusNext = useRef<'question' | 'score' | null>(null)
 
-  const mistakes = useMemo(
-    () => new Map((view.mistakes ?? []).map((mistake) => [mistake.question_id, mistake.explanation])),
-    [view.mistakes],
+  const feedback = useMemo(
+    () => new Map((view.feedback ?? []).map((item) => [item.question_id, item])),
+    [view.feedback],
   )
 
   useEffect(() => {
@@ -110,9 +121,7 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
   const picked = picks[current.id]
   const isLast = position === total - 1
   const done = position + (picked ? 1 : 0)
-  const explanation = mistakes.get(current.id)
-  const wrong = graded && explanation !== undefined
-  const right = graded && picked !== undefined && !wrong
+  const review = graded ? feedback.get(current.id) : undefined
   const QuestionHeading = expanded ? 'h2' : 'h4'
 
   function go(to: number) {
@@ -129,7 +138,7 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
     }
     setPending(true)
     try {
-      // One call grades the whole quiz (QZ-04): the key never leaves the server.
+      // One call grades the whole quiz (QZ-04). The key comes back only with the graded result (QZ-03).
       const next = await gradeQuiz(view.id, draft)
       setFailed(false)
       focusNext.current = 'score'
@@ -177,10 +186,17 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
         <div className="qz-options">
           {current.choices.map((choice) => {
             const chosen = picked === choice.id
-            // QZ-03: the browser never receives the answer key. In review only the learner's
-            // own pick is marked. For a question they missed, the correct choice is unknown
-            // here and is not revealed (this overrides DESIGN.md's "correct answer revealed").
-            const outcome = chosen && right ? 'correct' : chosen && wrong ? 'incorrect' : null
+            // QZ-03: the answer key arrives only with a graded quiz, inside its feedback, so
+            // nothing is marked before grading. In review the correct choice is marked, and a
+            // missed question also marks the learner's pick as their answer (QZ-06).
+            const outcome =
+              review === undefined
+                ? null
+                : choice.id === review.correct_choice_id
+                  ? 'correct'
+                  : chosen && !review.right
+                    ? 'incorrect'
+                    : null
             const classes = ['qz-option']
             if (graded) classes.push('is-locked')
             if (outcome === 'correct') classes.push('is-correct')
@@ -204,7 +220,7 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
                   {outcome === 'correct' ? (
                     <span className="qz-option-mark">
                       <Check size={16} strokeWidth={2} aria-hidden="true" />
-                      Correct
+                      Correct answer
                     </span>
                   ) : null}
                   {outcome === 'incorrect' ? (
@@ -221,8 +237,13 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
       </fieldset>
 
       <div aria-live="polite">
-        {right || wrong ? (
-          <ResultFeedback key={current.id} right={right} explanation={explanation} />
+        {review ? (
+          <ResultFeedback
+            key={current.id}
+            right={review.right}
+            explanation={review.explanation}
+            whyWrong={review.why_wrong}
+          />
         ) : null}
       </div>
 

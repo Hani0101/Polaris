@@ -6,6 +6,7 @@ and yields the message types the streaming-output doc describes.
 
 import asyncio
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -23,6 +24,7 @@ from polaris.chat import Chat
 from polaris.login import ApiKeyPresent
 from polaris.models import Pointing, Profile, Turn
 from polaris.agent import ReplyResult
+from polaris.key_check import KeyCheckFailed
 from polaris.quiz import normalize_spec
 from polaris.teaching import (
     CREATE_QUIZ_SCHEMA,
@@ -102,7 +104,7 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert options.include_partial_messages is True
     assert options.verbatim_prompts is True
     assert options.permission_mode == "dontAsk"
-    assert options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2
+    assert options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3
     assert CREATE_QUIZ_SCHEMA["additionalProperties"] is False
     assert CREATE_QUIZ_SCHEMA["properties"]["questions"]["minItems"] == 1
     question = CREATE_QUIZ_SCHEMA["properties"]["questions"]["items"]
@@ -110,6 +112,7 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     choices = question["properties"]["choices"]
     assert choices["minItems"] == 2
     assert choices["items"]["additionalProperties"] is False
+    assert choices["items"]["properties"]["why_wrong"]["type"] == "string"
     assert options.cwd == tmp_path
     assert isinstance(options.system_prompt, str)
     prompt = options.system_prompt
@@ -145,13 +148,36 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert DRAW_WHITEBOARD_SCHEMA["additionalProperties"] is True
 
 
-def _agent(tmp_path: Path, messages, created: list[FakeClient]) -> ClaudeTeachingAgent:
+class FakeKeyCheck:
+    """Answers without the key (QZ-10). Records what it was shown."""
+
+    def __init__(self, answers: dict[str, str] | None = None, fail: bool = False) -> None:
+        self.answers = answers if answers is not None else {"q1": "b", "q2": "b"}
+        self.fail = fail
+        self.seen: list[dict] = []
+
+    async def answer(self, quiz: dict) -> dict[str, str]:
+        self.seen.append(quiz)
+        if self.fail:
+            raise KeyCheckFailed("no answer")
+        ids = [question["id"] for question in quiz["questions"]]
+        return {qid: self.answers[qid] for qid in ids if qid in self.answers}
+
+
+def _agent(
+    tmp_path: Path,
+    messages,
+    created: list[FakeClient],
+    key_check: FakeKeyCheck | None = None,
+) -> ClaudeTeachingAgent:
     def factory(options):
         client = FakeClient(options, messages)
         created.append(client)
         return client
 
-    return ClaudeTeachingAgent(tmp_path, client_factory=factory)
+    return ClaudeTeachingAgent(
+        tmp_path, client_factory=factory, key_check=key_check or FakeKeyCheck()
+    )
 
 
 async def _collect(agent: ClaudeTeachingAgent, **kwargs) -> tuple[str, ReplyResult]:
@@ -565,7 +591,7 @@ ONE_QUESTION = {
             "id": "q1",
             "prompt": "What is 1/2 of 4?",
             "choices": [
-                {"id": "a", "text": "1"},
+                {"id": "a", "text": "1", "why_wrong": "1 is half of 2, not of 4."},
                 {"id": "b", "text": "2"},
             ],
             "correct_choice_id": "b",
@@ -597,7 +623,7 @@ def test_create_quiz_tool_stores_for_the_open_session(
     assert "quiz-1" in payload["content"][0]["text"]
     assert created[0].options.tools == []
     assert created[0].options.allowed_tools == [CREATE_QUIZ_TOOL, DRAW_WHITEBOARD_TOOL]
-    assert created[0].options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2
+    assert created[0].options.max_turns == 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3
 
 
 def test_create_quiz_tool_rejects_a_quiz_without_one_correct_choice(
@@ -665,6 +691,93 @@ def test_create_quiz_tool_reports_a_blank_explanation(tmp_path: Path):
     assert payload["content"][0]["text"] == "q2: explanation is blank"
 
 
+def test_create_quiz_tool_refuses_a_key_the_check_disagrees_with(tmp_path: Path):
+    """QZ-10: a second model picks another choice, so the quiz is not stored."""
+
+    stored: list[dict] = []
+    check = FakeKeyCheck({"q1": "a"})
+    agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
+    agent.bind_store(lambda session_id, spec: stored.append(spec) or {"id": "x"})
+
+    payload = asyncio.run(agent.handle_create_quiz("session-1", ONE_QUESTION))
+
+    assert payload["is_error"] is True
+    text = payload["content"][0]["text"]
+    assert "disagreed" in text
+    assert '- q1: it chose a ("1"), the key says b.' in text
+    assert stored == []
+
+
+def test_create_quiz_tool_refuses_a_quiz_the_check_cannot_answer(tmp_path: Path):
+    """QZ-10: when the check cannot finish, the quiz is not stored."""
+
+    stored: list[dict] = []
+    check = FakeKeyCheck(fail=True)
+    agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
+    agent.bind_store(lambda session_id, spec: stored.append(spec) or {"id": "x"})
+
+    payload = asyncio.run(agent.handle_create_quiz("session-1", ONE_QUESTION))
+
+    assert payload["is_error"] is True
+    assert "could not be checked" in payload["content"][0]["text"]
+    assert stored == []
+
+
+def test_a_quiz_refused_twice_is_not_checked_again(tmp_path: Path):
+    """QZ-10: one retry per reply, so a refused quiz cannot use up the turn budget."""
+
+    check = FakeKeyCheck({"q1": "a"})
+    agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
+    agent.bind_store(lambda session_id, spec: {"id": "x"})
+
+    async def three_tries():
+        return [
+            await agent.handle_create_quiz("session-1", ONE_QUESTION) for _ in range(3)
+        ]
+
+    payloads = asyncio.run(three_tries())
+
+    assert [payload["is_error"] for payload in payloads] == [True, True, True]
+    assert "too many times" in payloads[2]["content"][0]["text"]
+    assert len(check.seen) == 2
+
+    asyncio.run(_collect(agent, session_id="session-1"))
+    check.answers = {"q1": "b"}
+    payload = asyncio.run(agent.handle_create_quiz("session-1", ONE_QUESTION))
+    assert payload.get("is_error") is not True
+
+
+def test_the_key_check_never_sees_the_key(tmp_path: Path):
+    check = FakeKeyCheck()
+    agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
+    agent.bind_store(lambda session_id, spec: {"id": "quiz-1"})
+
+    payload = asyncio.run(agent.handle_create_quiz("session-1", QUIZ_SPEC))
+
+    assert payload.get("is_error") is not True
+    shown = json.dumps(check.seen)
+    assert "correct_choice_id" not in shown
+    assert "explanation" not in shown
+    assert "why_wrong" not in shown
+    assert [question["id"] for question in check.seen[0]["questions"]] == ["q1", "q2"]
+
+
+def test_a_quiz_without_notes_is_refused_before_the_check(tmp_path: Path):
+    """QZ-11: a wrong choice without a note never reaches the key check."""
+
+    check = FakeKeyCheck()
+    agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
+    agent.bind_store(lambda session_id, spec: {"id": "quiz-1"})
+    spec = copy.deepcopy(ONE_QUESTION)
+    del spec["questions"][0]["choices"][0]["why_wrong"]
+
+    payload = asyncio.run(agent.handle_create_quiz("session-1", spec))
+
+    assert payload["is_error"] is True
+    assert payload["content"][0]["text"] == "q1: choice a needs a why_wrong note"
+    assert check.seen == []
+
+
 def test_overlapping_clients_store_quiz_on_their_own_session(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -689,8 +802,8 @@ def test_overlapping_clients_store_quiz_on_their_own_session(
     asyncio.run(overlap())
 
     assert [client.options.max_turns for client in created] == [
-        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2,
-        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 2,
+        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3,
+        1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 3,
     ]
     assert stored == ["session-a", "session-b"]
     assert handlers[0] is not handlers[1]

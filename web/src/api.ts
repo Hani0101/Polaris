@@ -14,9 +14,14 @@ export type QuizScore = {
   total: number
 }
 
-export type QuizMistake = {
+/** Graded only (QZ-03): the key and the notes arrive with the score, never before. */
+export type QuizFeedback = {
   question_id: string
+  right: boolean
+  correct_choice_id: string
   explanation: string
+  // Only on a wrong answer, and absent on quizzes stored before notes existed.
+  why_wrong?: string
 }
 
 export type Quiz = {
@@ -27,7 +32,7 @@ export type Quiz = {
   questions: QuizQuestion[]
   score: QuizScore | null
   submitted?: Record<string, string>
-  mistakes?: QuizMistake[]
+  feedback?: QuizFeedback[]
 }
 
 export type Point = {

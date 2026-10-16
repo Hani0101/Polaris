@@ -48,6 +48,10 @@ _Avoid_: canvas, diagram
 A set of questions used to check what the learner understood.
 _Avoid_: test, exam, questionnaire
 
+**Wrong-choice note**:
+A short sentence stored with a wrong choice on a quiz. It says why a learner might pick that choice and why it is wrong. It is part of the answer key.
+_Avoid_: note, hint, distractor
+
 **Animation**:
 A moving explanation the learner can watch.
 _Avoid_: illustration, video

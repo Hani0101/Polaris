@@ -4,13 +4,15 @@ status: proposed
 
 # Quiz evidence and feedback
 
-Findings about what a quiz does after the learner submits it. Each finding has a proposal and names the rules and decisions it would change. Nothing here is in force until it is accepted. Finding 1's teaching side is accepted as QZ-09.
+Findings about what a quiz does after the learner submits it. Each finding has a proposal and names the rules and decisions it would change. Nothing here is in force until it is accepted.
+
+Accepted: finding 1's teaching side (QZ-09), finding 2 (QZ-10), finding 3 (QZ-03, QZ-06, [decision 0006](../decisions/0006-answer-key-shown-after-grading.md)), and finding 5 (QZ-11). With finding 3, a right answer also shows its explanation. Finding 4 and the profile side of finding 1 are still proposals.
 
 ## 1. Quiz results go nowhere
 
 Before QZ-09, the next reply never saw the score. The profile pass reads only the text of each turn (`session_prompt` in `api/polaris/profile_pass.py`). So the pass decides milestones (PR-06) without the quiz evidence.
 
-- Teaching side: done. QZ-09 gives every later reply in the session the score, the wrong questions, and the learner's choice for each one. It does not give the answer key.
+- Teaching side: done. QZ-09 gives every later reply in the session the score, the wrong questions, and the learner's choice for each one.
 - Profile side: open. Feeding quiz results to the pass changes how the pass reads a session, so it needs research first, per [decision 0003](../decisions/0003-profile-pass-is-a-proposal.md). The research should ask whether a graded quiz is enough to set a milestone, and whether a missed question should lower one already stored.
 
 ## 2. The answer key is never checked
@@ -41,7 +43,7 @@ Would change QZ-06 and QZ-09, the grade request, and the stored submission.
 
 Today one explanation covers a question, whichever wrong choice the learner made. Diagnostic questions, such as Eedi's, store a short note for each wrong choice that names the misconception behind it.
 
-Proposal: each wrong choice carries a short note on why it is wrong. After grading, a missed question shows the note for the choice the learner made, then the explanation. The note is part of the key until grading, so QZ-03 covers it.
+Proposal: each wrong choice carries a wrong-choice note on why it is wrong. After grading, a missed question shows the wrong-choice note for the choice the learner made, then the explanation. The wrong-choice note is part of the key until grading, so QZ-03 covers it.
 
 Would change QZ-06 and the quiz the agent creates (`create_quiz` input and `normalize_spec`).
 

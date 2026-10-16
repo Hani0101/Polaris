@@ -1,4 +1,4 @@
-"""Quiz scenarios: QZ-01 through QZ-09, CH-02, and decision 0002.
+"""Quiz scenarios: QZ-01 through QZ-11, CH-02, and decisions 0002 and 0006.
 
 A filled profile is seeded so a quiz can be created without teaching on an
 empty profile. Nothing here writes the profile.
@@ -29,9 +29,9 @@ QUIZ_SPEC = {
             "id": "q1",
             "prompt": "What is 1/2 of 4?",
             "choices": [
-                {"id": "a", "text": "1"},
+                {"id": "a", "text": "1", "why_wrong": "1 is half of 2, not of 4."},
                 {"id": "b", "text": "2"},
-                {"id": "c", "text": "4"},
+                {"id": "c", "text": "4", "why_wrong": "4 is the whole, not half of it."},
             ],
             "correct_choice_id": "b",
             "explanation": "Half of 4 is 2, because 4 divided by 2 is 2.",
@@ -40,7 +40,7 @@ QUIZ_SPEC = {
             "id": "q2",
             "prompt": "Which fraction equals one whole?",
             "choices": [
-                {"id": "a", "text": "1/2"},
+                {"id": "a", "text": "1/2", "why_wrong": "1/2 is one of two halves."},
                 {"id": "b", "text": "2/2"},
             ],
             "correct_choice_id": "b",
@@ -162,8 +162,10 @@ def test_quiz_payload_has_no_answers(make_client):
     encoded = json.dumps(questions)
     assert "correct_choice_id" not in encoded
     assert "explanation" not in encoded
+    assert "why_wrong" not in encoded
+    assert "is half of 2" not in json.dumps(saved)
     assert artifacts[0]["score"] is None
-    assert "mistakes" not in artifacts[0]
+    assert "feedback" not in artifacts[0]
 
 
 def test_one_correct_choice(make_client):
@@ -219,7 +221,9 @@ def test_code_grades_the_quiz(make_client):
     assert _forbidden_fields(body, in_question=False) == []
 
 
-def test_after_grading_wrong_questions_are_explained(make_client):
+def test_grading_shows_the_key(make_client):
+    """QZ-03, QZ-06: once graded, every question is explained and a miss shows the key."""
+
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
 
@@ -228,14 +232,62 @@ def test_after_grading_wrong_questions_are_explained(make_client):
         json={"choices": {"q1": "a", "q2": "b"}},
     ).json()
 
-    assert body["mistakes"] == [
+    assert body["feedback"] == [
         {
             "question_id": "q1",
+            "right": False,
+            "correct_choice_id": "b",
             "explanation": "Half of 4 is 2, because 4 divided by 2 is 2.",
-        }
+            "why_wrong": "1 is half of 2, not of 4.",
+        },
+        {
+            "question_id": "q2",
+            "right": True,
+            "correct_choice_id": "b",
+            "explanation": "2/2 means two halves, which make one whole.",
+        },
     ]
-    assert "q2" not in [mistake["question_id"] for mistake in body["mistakes"]]
     assert _forbidden_fields(body["questions"], in_question=True) == []
+    reloaded = client.get(f"/api/quizzes/{quiz['id']}").json()
+    assert reloaded["feedback"] == body["feedback"]
+
+
+def test_a_wrong_choice_needs_a_note():
+    """QZ-11: every wrong choice carries a note. The correct choice has none."""
+
+    spec = copy.deepcopy(QUIZ_SPEC)
+    del spec["questions"][0]["choices"][2]["why_wrong"]
+    with pytest.raises(InvalidQuiz, match="q1: choice c needs a why_wrong note"):
+        normalize_spec(spec)
+
+    spec = copy.deepcopy(QUIZ_SPEC)
+    spec["questions"][0]["choices"][1]["why_wrong"] = "It is right."
+    stored = normalize_spec(spec)
+    assert "why_wrong" not in stored["questions"][0]["choices"][1]
+
+
+def test_a_quiz_stored_without_notes_still_grades(make_client):
+    """Quizzes stored before QZ-11 have no notes. A miss still shows the key."""
+
+    stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
+    for question in stored["questions"]:
+        for choice in question["choices"]:
+            choice.pop("why_wrong", None)
+
+    graded = public_payload(
+        "quiz-1",
+        "session-1",
+        stored,
+        score={"earned": 1, "total": 2},
+        submitted={"q1": "a", "q2": "b"},
+    )
+
+    assert graded["feedback"][0] == {
+        "question_id": "q1",
+        "right": False,
+        "correct_choice_id": "b",
+        "explanation": "Half of 4 is 2, because 4 divided by 2 is 2.",
+    }
 
 
 def test_score_is_kept_with_the_quiz(make_client):
@@ -268,11 +320,13 @@ def test_the_next_reply_sees_the_quiz_score(make_client):
     seen = agent.seen_quizzes[-1]
     assert [item["id"] for item in seen] == [quiz["id"]]
     assert seen[0]["score"] == {"earned": 1, "total": 2}
-    assert [mistake["question_id"] for mistake in seen[0]["mistakes"]] == ["q1"]
+    assert [item["question_id"] for item in seen[0]["feedback"] if not item["right"]] == [
+        "q1"
+    ]
 
 
-def test_quiz_result_names_the_learner_choice_not_the_key():
-    """QZ-09 with QZ-03: a missed question names what the learner chose, not the key."""
+def test_quiz_result_names_the_learner_choice_and_the_key():
+    """QZ-09: a missed question names the learner's choice, the correct one, and the note."""
 
     stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
     graded = public_payload(
@@ -287,7 +341,10 @@ def test_quiz_result_names_the_learner_choice_not_the_key():
     text = describe_result(graded)
     lines = text.splitlines()
     assert lines[0] == 'Quiz quiz-1 "Fractions": the learner scored 1 of 2.'
-    assert lines[1] == '- q1 wrong: What is 1/2 of 4? The learner chose "1".'
+    assert lines[1] == (
+        '- q1 wrong: What is 1/2 of 4? The learner chose "1". '
+        'The correct choice is "2". Why their choice is wrong: 1 is half of 2, not of 4.'
+    )
     assert lines[2] == '- q2 right: Which fraction equals one whole? The learner chose "2/2".'
     assert describe_result(ungraded) == 'Quiz quiz-2 "Fractions": not graded yet.'
 
@@ -297,6 +354,12 @@ def test_quiz_result_names_the_learner_choice_not_the_key():
     section = prompt.split("Quizzes in this session", 1)[1]
     assert text in section
     assert "correct_choice_id" not in prompt
+
+    ungraded_prompt = turn_prompt(
+        Profile(("wants short explanations",)), "Hint?", quizzes=(ungraded,)
+    )
+    assert "The correct choice" not in ungraded_prompt
+    assert "half of 2" not in ungraded_prompt
 
 
 def test_the_learner_expands_the_quiz(make_client):
@@ -386,7 +449,7 @@ def test_invalid_submission_is_rejected_and_not_stored(make_client, choices):
     assert response.status_code == 422, response.text
     assert reloaded["score"] is None
     assert "submitted" not in reloaded
-    assert "mistakes" not in reloaded
+    assert "feedback" not in reloaded
 
 
 def test_unknown_quiz_is_not_found(make_client):

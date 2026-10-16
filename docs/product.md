@@ -44,7 +44,7 @@ Success for this scope is a correct explanation, an animation that plays, a quiz
 
 ## Security
 
-v1 security is three rules already written: the browser never receives the answer key (QZ-03), grading is done in code (QZ-04), and animation code runs only in the sandbox (AN-04).
+v1 security is three rules already written: the browser never receives the answer key before the quiz is graded (QZ-03), grading is done in code (QZ-04), and animation code runs only in the sandbox (AN-04).
 
 ## Limits
 

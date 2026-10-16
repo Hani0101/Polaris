@@ -1,4 +1,5 @@
-"""Quiz artifacts: the answer key stays in the database and code grades it."""
+"""Quiz artifacts: the answer key stays in the database until the quiz is
+graded, and code grades it. A wrong choice's why_wrong note is part of the key."""
 
 from typing import Any
 
@@ -50,7 +51,8 @@ def public_payload(
     score: dict[str, int] | None,
     submitted: dict[str, str] | None,
 ) -> dict[str, Any]:
-    """Learner-visible quiz. Questions never include answer or correct fields."""
+    """Learner-visible quiz. Before grading, questions never include answer or
+    correct fields (QZ-03). A graded quiz is locked, so its key is shown (QZ-06)."""
 
     payload: dict[str, Any] = {
         "id": quiz_id,
@@ -62,7 +64,7 @@ def public_payload(
     }
     if submitted is not None:
         payload["submitted"] = submitted
-        payload["mistakes"] = _mistakes(stored["questions"], submitted)
+        payload["feedback"] = _feedback(stored["questions"], submitted)
     return payload
 
 
@@ -92,24 +94,55 @@ def grade(
 
 def describe_result(payload: dict[str, Any]) -> str:
     """Text for the teaching agent about one quiz, built from the learner-visible
-    payload. A missed question names the learner's choice, never the key."""
+    payload. A quiz not yet graded shows no key."""
 
     title = f'Quiz {payload["id"]} "{payload["title"]}"'
     score = payload.get("score")
     if score is None:
         return f"{title}: not graded yet."
     submitted = payload.get("submitted") or {}
-    missed = {mistake["question_id"] for mistake in payload.get("mistakes", [])}
+    feedback = {item["question_id"]: item for item in payload.get("feedback", [])}
     lines = [f"{title}: the learner scored {score['earned']} of {score['total']}."]
     for question in payload["questions"]:
         texts = {choice["id"]: choice["text"] for choice in question["choices"]}
         chosen = texts.get(submitted.get(question["id"], ""), "")
-        result = "wrong" if question["id"] in missed else "right"
-        lines.append(
-            f'- {question["id"]} {result}: {question["prompt"]} '
-            f'The learner chose "{chosen}".'
+        item = feedback.get(question["id"], {})
+        if item.get("right"):
+            lines.append(
+                f'- {question["id"]} right: {question["prompt"]} '
+                f'The learner chose "{chosen}".'
+            )
+            continue
+        line = (
+            f'- {question["id"]} wrong: {question["prompt"]} '
+            f'The learner chose "{chosen}". '
+            f'The correct choice is "{texts.get(item.get("correct_choice_id", ""), "")}".'
         )
+        if item.get("why_wrong"):
+            line += f' Why their choice is wrong: {item["why_wrong"]}'
+        lines.append(line)
     return "\n".join(lines)
+
+
+def disagreements(
+    stored: dict[str, Any], answers: dict[str, str]
+) -> list[str]:
+    """Questions where a check that never saw the key picked another choice (QZ-10)."""
+
+    return [
+        question["id"]
+        for question in stored["questions"]
+        if answers.get(question["id"]) != question["correct_choice_id"]
+    ]
+
+
+def check_view(stored: dict[str, Any]) -> dict[str, Any]:
+    """The quiz as the key check sees it: no key, no explanation, no notes."""
+
+    return {
+        "title": stored["title"],
+        "questions": [_public_question(question) for question in stored["questions"]],
+    }
 
 
 def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
@@ -137,6 +170,11 @@ def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
     explanation = question.get("explanation")
     if not isinstance(explanation, str) or not explanation.strip():
         raise InvalidQuiz(f"{qid}: explanation is blank")
+    for choice in choices:
+        if choice["id"] == correct_id:
+            choice.pop("why_wrong", None)
+        elif not choice.get("why_wrong"):
+            raise InvalidQuiz(f"{qid}: choice {choice['id']} needs a why_wrong note")
     return {
         "id": qid,
         "prompt": prompt.strip(),
@@ -155,7 +193,11 @@ def _normalize_choice(choice: Any, *, question_id: str) -> dict[str, str]:
         raise InvalidQuiz(f"{question_id}: a choice has a blank id")
     if not isinstance(text, str) or not text.strip():
         raise InvalidQuiz(f"{question_id}: a choice has blank text")
-    return {"id": choice_id.strip(), "text": text.strip()}
+    stored = {"id": choice_id.strip(), "text": text.strip()}
+    note = choice.get("why_wrong")
+    if isinstance(note, str) and note.strip():
+        stored["why_wrong"] = note.strip()
+    return stored
 
 
 def _public_question(question: dict[str, Any]) -> dict[str, Any]:
@@ -169,16 +211,29 @@ def _public_question(question: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _mistakes(
+def _feedback(
     questions: list[dict[str, Any]], submitted: dict[str, str]
-) -> list[dict[str, str]]:
-    wrong: list[dict[str, str]] = []
+) -> list[dict[str, Any]]:
+    shown: list[dict[str, Any]] = []
     for question in questions:
-        if submitted.get(question["id"]) != question["correct_choice_id"]:
-            wrong.append(
-                {
-                    "question_id": question["id"],
-                    "explanation": question["explanation"],
-                }
+        picked = submitted.get(question["id"])
+        right = picked == question["correct_choice_id"]
+        item: dict[str, Any] = {
+            "question_id": question["id"],
+            "right": right,
+            "correct_choice_id": question["correct_choice_id"],
+            "explanation": question["explanation"],
+        }
+        if not right:
+            note = next(
+                (
+                    choice.get("why_wrong")
+                    for choice in question["choices"]
+                    if choice["id"] == picked
+                ),
+                None,
             )
-    return wrong
+            if note:
+                item["why_wrong"] = note
+        shown.append(item)
+    return shown
