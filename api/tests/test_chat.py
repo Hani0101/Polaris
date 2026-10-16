@@ -35,8 +35,11 @@ class TeachingStub:
         learner_message: str,
         prior_turns,
         sdk_session_id: str | None,
+        whiteboards=(),
+        pointing=None,
+        simplify=None,
     ):
-        del session_id, prior_turns, sdk_session_id
+        del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         if profile.facts:
             text = f"Noted {profile.facts[0]}. {learner_message}"
         else:
@@ -62,8 +65,11 @@ class GatedAgent:
         learner_message: str,
         prior_turns,
         sdk_session_id: str | None,
+        whiteboards=(),
+        pointing=None,
+        simplify=None,
     ):
-        del session_id, profile, learner_message, prior_turns, sdk_session_id
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         yield "partial"
         await asyncio.to_thread(self.release.wait)
         yield " tail"
@@ -111,6 +117,8 @@ def make_client(tmp_path, monkeypatch):
             (tmp_path / "profile.json").write_text(profile, encoding="utf-8")
         stub = TeachingStub() if agent is None else agent
         client = TestClient(create_app(tmp_path, stub))
+        if hasattr(stub, "chat"):
+            stub.chat = client.app.state.chat
         client.__enter__()
         opened.append(client)
         return client, stub
@@ -134,6 +142,7 @@ def test_typed_message_is_stored_as_a_turn(make_client):
         {
             "learner_message": "What is a fraction?",
             "reply": EMPTY_PROFILE_REPLY,
+            "artifacts": [],
         }
     ]
     assert reply_text(events) == EMPTY_PROFILE_REPLY
@@ -226,6 +235,7 @@ def test_reopening_a_session_shows_its_turns(make_client):
         {
             "learner_message": "Remember this",
             "reply": EMPTY_PROFILE_REPLY,
+            "artifacts": [],
         }
     ]
 
@@ -328,6 +338,9 @@ class SdkIdStub(TeachingStub):
         learner_message: str,
         prior_turns,
         sdk_session_id: str | None,
+        whiteboards=(),
+        pointing=None,
+        simplify=None,
     ):
         async for chunk in super().reply(
             session_id=session_id,
@@ -335,6 +348,9 @@ class SdkIdStub(TeachingStub):
             learner_message=learner_message,
             prior_turns=prior_turns,
             sdk_session_id=sdk_session_id,
+            whiteboards=whiteboards,
+            pointing=pointing,
+            simplify=simplify,
         ):
             yield chunk
         yield ReplyResult(sdk_session_id="sdk-from-result")
@@ -412,3 +428,46 @@ def test_turn_index_and_wal_apply_to_new_and_existing_databases(tmp_path, monkey
     with TestClient(app) as client:
         assert client.get("/api/sessions").json() == {"sessions": []}
     _assert_index_and_wal(db_path)
+
+
+class BoomAgent:
+    """Fails before any text, the way a missing CLI or a crashed connect() does."""
+
+    async def reply(
+        self,
+        *,
+        session_id: str,
+        profile,
+        learner_message: str,
+        prior_turns,
+        sdk_session_id: str | None,
+        whiteboards=(),
+        pointing=None,
+        simplify=None,
+    ):
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        raise RuntimeError("Failed to start Claude Code")
+        yield  # pragma: no cover
+
+    async def close_session(self, session_id: str) -> None:
+        del session_id
+
+
+def test_unexpected_teaching_failure_yields_an_sse_error(make_client):
+    client, _agent = make_client(BoomAgent())
+    session = client.post("/api/sessions").json()
+
+    response = client.post(
+        f"/api/sessions/{session['id']}/turns",
+        json={"message": "hi"},
+    )
+    events, rest = parse_sse(response.text)
+
+    assert response.status_code == 200, response.text
+    assert rest == ""
+    errors = [event["error"] for event in events if "error" in event]
+    assert errors, events
+    assert "ended early" not in errors[0].lower()
+    assert "Failed to start Claude Code" in errors[0]
+    assert not any(event.get("done") for event in events)
+    assert client.get(f"/api/sessions/{session['id']}").json()["turns"] == []

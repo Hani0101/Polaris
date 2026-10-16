@@ -3,8 +3,9 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -12,17 +13,32 @@ from polaris.agent import ReplyAgent
 from polaris.chat import (
     BlankMessage,
     Chat,
+    InvalidDrawing,
+    InvalidPointing,
     MissingSession,
     ReplyInProgress,
     SessionEnded,
 )
 from polaris.login import ApiKeyPresent, assert_claude_login
 from polaris.profile import ProfileUnreadable, load_profile
-from polaris.teaching import ClaudeTeachingAgent, TeachingFailed
+from polaris.quiz import AlreadyGraded, InvalidSubmission, MissingQuiz
+from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
+from polaris.teaching import ClaudeTeachingAgent, TeachingFailed, reply_error_message
+
+
+class PointingBody(BaseModel):
+    whiteboard_id: str
+    element_ids: list[str]
 
 
 class TurnBody(BaseModel):
     message: str
+    pointing: PointingBody | None = None
+    simplifies: str | None = None
+
+
+class GradeBody(BaseModel):
+    choices: dict[str, str]
 
 
 def _sse(payload: dict[str, object]) -> str:
@@ -84,6 +100,36 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
     async def reply_in_progress(_request, exc: ReplyInProgress) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
+    @app.exception_handler(MissingQuiz)
+    async def missing_quiz(_request, exc: MissingQuiz) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(MissingWhiteboard)
+    async def missing_whiteboard(_request, exc: MissingWhiteboard) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(WhiteboardUnreadable)
+    async def whiteboard_unreadable(
+        _request, exc: WhiteboardUnreadable
+    ) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidDrawing)
+    async def invalid_drawing(_request, exc: InvalidDrawing) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidPointing)
+    async def invalid_pointing(_request, exc: InvalidPointing) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(AlreadyGraded)
+    async def already_graded(_request, exc: AlreadyGraded) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidSubmission)
+    async def invalid_submission(_request, exc: InvalidSubmission) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -125,18 +171,38 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
     @app.post("/api/sessions/{session_id}/turns")
     async def send_turn(session_id: str, body: TurnBody) -> StreamingResponse:
         text = await asyncio.to_thread(chat.validate_turn, session_id, body.message)
+        pointing = None
+        if body.pointing is not None:
+            pointing = await asyncio.to_thread(
+                chat.resolve_pointing,
+                session_id,
+                body.pointing.whiteboard_id,
+                body.pointing.element_ids,
+            )
+        simplify = None
+        if body.simplifies is not None and body.simplifies.strip():
+            simplify = await asyncio.to_thread(
+                chat.resolve_simplify,
+                session_id,
+                body.simplifies,
+            )
         chat.raise_if_busy(session_id)
 
         async def events() -> AsyncIterator[str]:
             try:
-                async for chunk in chat.stream_reply(session_id, text):
-                    yield _sse({"text": chunk})
+                async for chunk in chat.stream_reply(session_id, text, pointing, simplify):
+                    if isinstance(chunk, str):
+                        yield _sse({"text": chunk})
+                    else:
+                        yield _sse({"artifact": chunk})
                 yield _sse({"done": True})
             except ApiKeyPresent as exc:
                 app.state.api_key_stop = True
                 yield _sse({"error": str(exc)})
             except (TeachingFailed, ProfileUnreadable) as exc:
                 yield _sse({"error": str(exc)})
+            except Exception as exc:
+                yield _sse({"error": reply_error_message(exc)})
 
         return StreamingResponse(
             events(),
@@ -146,5 +212,29 @@ def create_app(data_dir: Path, agent: ReplyAgent | None = None) -> FastAPI:
                 "X-Accel-Buffering": "no",
             },
         )
+
+    @app.get("/api/sessions/{session_id}/whiteboards")
+    def list_whiteboards(session_id: str) -> dict[str, list[dict[str, object]]]:
+        return {"whiteboards": chat.list_whiteboards(session_id)}
+
+    @app.get("/api/sessions/{session_id}/whiteboards/{whiteboard_id}")
+    def read_whiteboard(session_id: str, whiteboard_id: str) -> dict[str, object]:
+        return chat.get_whiteboard(session_id, whiteboard_id)
+
+    @app.put("/api/sessions/{session_id}/whiteboards/{whiteboard_id}")
+    def update_whiteboard(
+        session_id: str,
+        whiteboard_id: str,
+        drawing: dict[str, Any] = Body(),
+    ) -> dict[str, object]:
+        return chat.update_whiteboard(session_id, whiteboard_id, drawing)
+
+    @app.get("/api/quizzes/{quiz_id}")
+    def read_quiz(quiz_id: str) -> dict[str, object]:
+        return chat.get_quiz(quiz_id)
+
+    @app.post("/api/quizzes/{quiz_id}/grade")
+    def grade_quiz(quiz_id: str, body: GradeBody) -> dict[str, object]:
+        return chat.grade_quiz(quiz_id, body.choices)
 
     return app

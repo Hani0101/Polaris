@@ -2,7 +2,8 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from polaris.models import Profile, Turn
+from polaris.models import Pointing, Profile, Turn
+from polaris.whiteboard import Whiteboard
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,9 @@ class ReplyAgent(Protocol):
         learner_message: str,
         prior_turns: Sequence[Turn],
         sdk_session_id: str | None,
+        whiteboards: Sequence[Whiteboard] = (),
+        pointing: Pointing | None = None,
+        simplify: Whiteboard | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result."""
 
