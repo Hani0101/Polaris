@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Editor } from 'tldraw'
 import { getWhiteboard, saveWhiteboard } from './api.ts'
-import type { Whiteboard, WhiteboardArtifact } from './api.ts'
+import type { BoardPicture, Whiteboard, WhiteboardArtifact } from './api.ts'
+import { boardPicture } from './whiteboard/picture.ts'
 import type { PointedPart } from './whiteboard/pointing.ts'
 import { whiteboardPagePath } from './whiteboard/simpler.ts'
 import { Whiteboard as WhiteboardBoard } from './whiteboard/Whiteboard.tsx'
@@ -19,6 +21,8 @@ type WhiteboardPageProps = {
   onAsk?: (parts: PointedPart[]) => void
   onSimpler?: (whiteboardId: string) => void
   onOpenOriginal?: (whiteboardId: string) => void
+  // A picture of the board after each saved learner change, for the next turn.
+  onPicture?: (picture: BoardPicture) => void
   simplerBusy?: boolean
 }
 
@@ -29,6 +33,7 @@ export function WhiteboardPage({
   onAsk,
   onSimpler,
   onOpenOriginal,
+  onPicture,
   simplerBusy = false,
 }: WhiteboardPageProps) {
   const [whiteboard, setWhiteboard] = useState<WhiteboardArtifact | null>(null)
@@ -38,6 +43,10 @@ export function WhiteboardPage({
   const [mode, setMode] = useState<'view' | 'draw'>('view')
   const pendingRef = useRef<Whiteboard | null>(null)
   const timerRef = useRef<number | null>(null)
+  const editorRef = useRef<Editor | null>(null)
+  const onEditor = useCallback((editor: Editor | null) => {
+    editorRef.current = editor
+  }, [])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -72,7 +81,12 @@ export function WhiteboardPage({
       setSaveError(null)
     } catch (caught) {
       setSaveError(errorText(caught))
+      return
     }
+    const editor = editorRef.current
+    if (!editor || !onPicture) return
+    const picture = await boardPicture(editor, whiteboardId)
+    if (picture) onPicture(picture)
   }
 
   function onDrawingChange(next: Whiteboard) {
@@ -152,6 +166,7 @@ export function WhiteboardPage({
             mode={mode}
             onChange={onDrawingChange}
             onAsk={onAsk}
+            onEditor={onEditor}
           />
         </div>
       ) : null}

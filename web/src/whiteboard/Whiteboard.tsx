@@ -23,7 +23,7 @@ import {
 } from './fromTldraw.ts'
 import { graphShapeUtils } from './graphShapes.tsx'
 import { mathCodeShapeUtils } from './mathCodeShapes.tsx'
-import { whiteboardToShapes } from './toTldraw.ts'
+import { whiteboardToShapes, type WhiteboardShapes } from './toTldraw.ts'
 
 const penTools = new Set<ToolId>(learnerDrawingTools.map((item) => item.id))
 
@@ -32,6 +32,8 @@ type WhiteboardProps = {
   mode?: 'view' | 'draw'
   onChange?: (whiteboard: WhiteboardData) => void
   onAsk?: (parts: PointedPart[]) => void
+  // The page uses the editor to take a picture of the board for the next turn.
+  onEditor?: (editor: Editor | null) => void
 }
 
 type AskAt = {
@@ -138,7 +140,18 @@ function nextCommentId(comments: Comment[]): string {
   return id
 }
 
-export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: WhiteboardProps) {
+function drawShapes(editor: Editor, converted: WhiteboardShapes) {
+  if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+  if (converted.bindings.length > 0) editor.createBindings(converted.bindings)
+}
+
+export function Whiteboard({
+  whiteboard,
+  mode = 'view',
+  onChange,
+  onAsk,
+  onEditor,
+}: WhiteboardProps) {
   const converted = useMemo(() => whiteboardToShapes(whiteboard), [whiteboard])
   const region = useRef<HTMLElement>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
@@ -177,6 +190,12 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   }, [whiteboard])
 
   useEffect(() => {
+    if (!onEditor) return
+    onEditor(editor)
+    return () => onEditor(null)
+  }, [editor, onEditor])
+
+  useEffect(() => {
     whiteboardRef.current = whiteboard
     commentsRef.current = comments
     onChangeRef.current = onChange
@@ -199,7 +218,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       editor.updateInstanceState({ isReadonly: false })
       const existing = [...editor.getCurrentPageShapeIds()]
       if (existing.length > 0) editor.deleteShapes(existing)
-      if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+      drawShapes(editor, converted)
       editor.setSelectedShapes([])
       editor.zoomToFit({ animation: { duration: 0 } })
       node.dataset.ready = 'true'
@@ -232,8 +251,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       if (editor.getCurrentPageShapeIds().size === 0) {
         seeding.current = true
         try {
-          const shapes = convertedRef.current.shapes
-          if (shapes.length > 0) editor.createShapes(shapes)
+          drawShapes(editor, convertedRef.current)
           editor.zoomToFit({ animation: { duration: 0 } })
         } finally {
           seeding.current = false

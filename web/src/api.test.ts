@@ -9,3 +9,13 @@ test('a simpler turn sends the original whiteboard id', () => {
   })
   expect(turnBody('Hello', null)).toEqual({ message: 'Hello' })
 })
+
+test('a turn can carry a picture of a whiteboard', () => {
+  const picture = { whiteboard_id: 'wb-1', media_type: 'image/png' as const, data: 'iVBORw0K' }
+
+  expect(turnBody('Is this right?', null, null, picture)).toEqual({
+    message: 'Is this right?',
+    picture,
+  })
+  expect(turnBody('Is this right?', null, null, null)).toEqual({ message: 'Is this right?' })
+})

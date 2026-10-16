@@ -435,3 +435,31 @@ test('a screen reader reads the drawing', async () => {
   expect(region.getAttribute('aria-labelledby')).toBe(caption.id)
   expect(caption.classList.contains('visually-hidden')).toBe(false)
 })
+
+test('the composer shows an attached picture of the drawing and can remove it', () => {
+  const onRemovePicture = vi.fn()
+  render(
+    <Conversation
+      turns={[]}
+      draft="Is my sketch right?"
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+      pictureAttached
+      onRemovePicture={onRemovePicture}
+    />,
+  )
+
+  const list = screen.getByRole('list', { name: 'Sent with your message' })
+  expect(list.textContent).toContain('Picture of your drawing')
+  fireEvent.click(screen.getByRole('button', { name: 'Remove picture of your drawing' }))
+  expect(onRemovePicture).toHaveBeenCalledTimes(1)
+})

@@ -52,6 +52,9 @@ type ConversationProps = {
   onStart: () => void
   pointing?: Pointing | null
   onRemovePoint?: (elementId: string) => void
+  // A picture of the learner's drawing goes with the next message.
+  pictureAttached?: boolean
+  onRemovePicture?: () => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
   /** Phone only: opens the tools bottom sheet from the + button in the chat input. */
   onOpenTools?: () => void
@@ -79,6 +82,8 @@ export function Conversation({
   onStart,
   pointing = null,
   onRemovePoint,
+  pictureAttached = false,
+  onRemovePicture,
   onAsk,
   onOpenTools,
   toolsButtonRef,
@@ -152,6 +157,7 @@ export function Conversation({
           {pointing && pointing.parts.length > 0 ? (
             <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
           ) : null}
+          {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
           <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
             {onOpenTools ? (
               <button
@@ -234,6 +240,28 @@ function PointChips({
           ) : null}
         </li>
       ))}
+    </ul>
+  )
+}
+
+const PICTURE_LABEL = 'Picture of your drawing'
+
+function PictureChip({ onRemove }: { onRemove?: () => void }) {
+  return (
+    <ul className="point-chips" aria-label="Sent with your message">
+      <li className="point-chip">
+        <span>{PICTURE_LABEL}</span>
+        {onRemove ? (
+          <button
+            type="button"
+            className="ghost"
+            aria-label={`Remove ${PICTURE_LABEL.toLowerCase()}`}
+            onClick={onRemove}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        ) : null}
+      </li>
     </ul>
   )
 }

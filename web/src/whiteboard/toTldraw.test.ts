@@ -3,6 +3,7 @@ import { expect, test } from 'vitest'
 import type { Whiteboard } from '../api.ts'
 import { formulaWhiteboard } from './formulaWhiteboard.ts'
 import { graphWhiteboard } from './graphWhiteboard.ts'
+import { linkedWhiteboard } from './linkedWhiteboard.ts'
 import { sampleWhiteboard } from './sampleWhiteboard.ts'
 import { agentMarkLook } from './style.ts'
 import { whiteboardToShapes } from './toTldraw.ts'
@@ -376,4 +377,52 @@ test('marks render with the agent style and stay locked to the agent', () => {
     },
   })
   expect(learner.props).not.toMatchObject({ dash: agentMarkLook.dash, color: agentMarkLook.color })
+})
+
+function plain(richText: unknown): string {
+  return JSON.stringify(richText).match(/"text":"([^"]*)"/)?.[1] ?? ''
+}
+
+test('a box label is drawn inside the box, centered', () => {
+  const box = shapeFor(linkedWhiteboard, 'heat')
+  const ellipse = shapeFor(linkedWhiteboard, 'ice')
+
+  expect(plain((box.props as { richText: unknown }).richText)).toBe('Heat')
+  expect(box.props).toMatchObject({ align: 'middle', verticalAlign: 'middle' })
+  expect(plain((ellipse.props as { richText: unknown }).richText)).toBe('Ice melts')
+})
+
+test('an attached arrow end becomes a binding to the drawn part', () => {
+  const [heat, ice, link] = linkedWhiteboard.steps[0].elements
+  const loose: Whiteboard = {
+    ...linkedWhiteboard,
+    steps: [{ ...linkedWhiteboard.steps[0], elements: [heat, ice, { ...link, end_element_id: 'missing' }] }],
+  }
+  const converted = whiteboardToShapes(loose)
+  const arrow = shapeFor(loose, 'heat-to-ice')
+
+  expect(plain((arrow.props as { richText: unknown }).richText)).toBe('causes')
+  // The end names a part that is not drawn, so only the start is attached.
+  expect(converted.bindings).toEqual([
+    {
+      type: 'arrow',
+      fromId: 'shape:heat-to-ice',
+      toId: 'shape:heat',
+      props: {
+        terminal: 'start',
+        normalizedAnchor: { x: 0.5, y: 0.5 },
+        isExact: false,
+        isPrecise: false,
+        snap: 'none',
+      },
+    },
+  ])
+})
+
+test('an older drawing has no bindings and empty box labels', () => {
+  const converted = whiteboardToShapes(sampleWhiteboard)
+
+  expect(converted.bindings).toEqual([])
+  const box = shapeFor(sampleWhiteboard, 'rect-1')
+  expect(plain((box.props as { richText: unknown }).richText)).toBe('')
 })

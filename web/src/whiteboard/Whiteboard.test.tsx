@@ -7,6 +7,7 @@ import { agentMarkLook } from './style.ts'
 import { readableDescription } from './description.ts'
 import { formulaWhiteboard } from './formulaWhiteboard.ts'
 import { graphWhiteboard } from './graphWhiteboard.ts'
+import { linkedWhiteboard } from './linkedWhiteboard.ts'
 import { CodeBlock, MathFormula } from './mathCodeShapes.tsx'
 import { selectElements, Whiteboard, whiteboardEditor } from './Whiteboard.tsx'
 import { sampleWhiteboard } from './sampleWhiteboard.ts'
@@ -486,4 +487,19 @@ test('a comment shows as a pin that opens a card', async () => {
   await waitFor(() => {
     expect(screen.queryByRole('group', { name: 'Comment 2 from Polaris' })).toBeNull()
   })
+})
+
+test('an attached arrow stays bound to its boxes on the board', async () => {
+  render(<Whiteboard whiteboard={linkedWhiteboard} />)
+  const region = await screen.findByRole('region', { name: readableDescription(linkedWhiteboard) })
+  await waitFor(() => {
+    expect(region.getAttribute('data-ready')).toBe('true')
+  })
+  const editor = whiteboardEditor(region)
+
+  const bindings = editor.getBindingsFromShape(createShapeId('heat-to-ice'), 'arrow')
+  expect(bindings.map((binding) => [binding.props.terminal, binding.toId]).sort()).toEqual([
+    ['end', createShapeId('ice')],
+    ['start', createShapeId('heat')],
+  ])
 })

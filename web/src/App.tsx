@@ -8,7 +8,15 @@ import {
   sendTurn,
   startSession,
 } from './api.ts'
-import type { Artifact, Quiz, Session, SessionSummary, Turn, WhiteboardArtifact } from './api.ts'
+import type {
+  Artifact,
+  BoardPicture,
+  Quiz,
+  Session,
+  SessionSummary,
+  Turn,
+  WhiteboardArtifact,
+} from './api.ts'
 import { animationPagePath, pathAnimation } from './animationPath.ts'
 import { AnimationPage } from './AnimationPage.tsx'
 import { watchRunningAnimations } from './chat/animationNotices.ts'
@@ -168,6 +176,8 @@ function App() {
   const [open, setOpen] = useState<Session | null>(null)
   const [draft, setDraft] = useState('')
   const [pointing, setPointing] = useState<Pointing | null>(null)
+  // The latest picture of a board the learner drew on, for their next message.
+  const [picture, setPicture] = useState<BoardPicture | null>(null)
   const [pending, setPending] = useState<PendingTurn | null>(null)
   const [kept, setKept] = useState<KeptTurn[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -305,6 +315,7 @@ function App() {
     setKept([])
     setDraft('')
     setPointing(null)
+    setPicture(null)
     setSendError(null)
   }
 
@@ -426,9 +437,12 @@ function App() {
     if (!open || sending.current) return
     if (pending?.status === 'streaming') return
     sending.current = true
+    // A simpler redraw is asked from the description alone, so the picture waits.
+    const sentPicture = simplifies ? null : picture
     setSendError(null)
     setDraft('')
     setPointing(null)
+    if (sentPicture) setPicture(null)
     const after =
       open.turns.length + kept.length + (pending?.status === 'stopped' ? 1 : 0)
     if (pending?.status === 'stopped') {
@@ -473,7 +487,7 @@ function App() {
               : current,
           )
         },
-        { signal: controller.signal, pointing: attached, simplifies },
+        { signal: controller.signal, pointing: attached, simplifies, picture: sentPicture },
       )
       if (controller.signal.aborted) return
       setPending((current) =>
@@ -495,6 +509,7 @@ function App() {
         setPending(null)
         setDraft(message)
         setPointing(attached)
+        if (sentPicture) setPicture(sentPicture)
         setSendError(errorText(caught, fallback))
       }
     } finally {
@@ -564,6 +579,9 @@ function App() {
             goTo('/')
           }}
           onSimpler={(id) => void askSimpler(id)}
+          onPicture={(next) => {
+            if (open?.id === whiteboardRoute.sessionId) setPicture(next)
+          }}
           onOpenOriginal={(id) => goTo(whiteboardPath(whiteboardRoute.sessionId, id))}
           simplerBusy={pending?.status === 'streaming' || pending?.status === 'done'}
         />
@@ -617,6 +635,8 @@ function App() {
           onSimpler={(id) => void askSimpler(id)}
           pointing={pointing}
           onRemovePoint={removePoint}
+          pictureAttached={picture !== null}
+          onRemovePicture={() => setPicture(null)}
           onAsk={askAbout}
           toast={toast}
           onCloseToast={() => setToast(null)}
