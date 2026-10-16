@@ -10,7 +10,7 @@ These docs are the language and the rules for Polaris. Read them before changing
 4. Use the feature page for the rules of that feature. Each rule has an id. A scenario names the rule it checks.
 
 - [Chat](features/chat.md)
-- [Profile](features/profile.md). PR-02 is accepted. Writing the profile (PR-05 to PR-08) is proposed. Refuse to build that writing while [decision 0003](decisions/0003-profile-pass-is-a-proposal.md) stays proposed. Until a writer exists, an empty profile is asked for on every reply ([decision 0005](decisions/0005-empty-profile-keeps-asking.md)).
+- [Profile](features/profile.md). PR-01 through PR-08 are in force. The session-end writer is accepted so it can run. The pass design still needs research; see [decision 0003](decisions/0003-profile-pass-is-a-proposal.md). During a session with an empty profile, every reply still asks and does not teach ([decision 0005](decisions/0005-empty-profile-keeps-asking.md)).
 - [Whiteboard](features/whiteboard.md)
 - [Quiz](features/quiz.md)
 - [Animation](features/animation.md)

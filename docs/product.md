@@ -17,7 +17,7 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 ## MVP scope
 
 - Chat, as sessions made of turns. The learner can keep more than one session and reopen any of them.
-- Profile, shared across sessions. The teaching agent reads it before every reply and does not write it. An empty profile is asked for on every reply until a writer exists, because nothing stores the answer. Writing it is a proposal. See [Profile pass is a proposal](decisions/0003-profile-pass-is-a-proposal.md) and [An empty profile keeps being asked](decisions/0005-empty-profile-keeps-asking.md).
+- Profile, shared across sessions. The teaching agent reads it before every reply and does not write it. A separate pass writes it when a session ends. During a session with an empty profile, every reply asks and does not teach. The pass design still needs research. See [Profile pass](decisions/0003-profile-pass-is-a-proposal.md) and [An empty profile keeps being asked](decisions/0005-empty-profile-keeps-asking.md).
 - Whiteboard, which the agent and the learner can both draw on
 - Quiz, graded against a stored answer key. It starts in the chat, and the learner can expand it onto its own page.
 - Animation. A later long-running job uses the same notice rules as animation (AN-02, AN-03, AN-07, AN-08).

@@ -6,4 +6,4 @@ Follow the rules in `docs/features/` for the feature being changed. A scenario i
 
 Before writing or changing Claude Agent SDK code, read `.claude/skills/claude-sdk-docs/SKILL.md`.
 
-Profile writing is proposed, not accepted. Read `docs/decisions/0003-profile-pass-is-a-proposal.md` before any profile-writing work, and refuse to implement it while that decision is proposed.
+Profile writing is the session-end pass. Read `docs/decisions/0003-profile-pass-is-a-proposal.md` before changing that pass. The design still needs research; a later research note may keep it or replace it.
