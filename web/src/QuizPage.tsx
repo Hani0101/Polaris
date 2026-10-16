@@ -1,22 +1,38 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft } from 'lucide-react'
 import { getQuiz } from './api.ts'
 import type { Quiz } from './api.ts'
+import { AlertBanner } from './chat/ui.tsx'
 import { QuizCard } from './QuizCard.tsx'
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return 'That quiz could not be opened.'
-}
+import './quiz.css'
 
 type QuizPageProps = {
   quizId: string
   onBack: () => void
 }
 
+/** Loading skeleton: the shape of the page title and the quiz card (DESIGN.md: Loading skeleton). */
+function QuizSkeleton() {
+  return (
+    <div className="qz-page-column" role="status">
+      <span className="visually-hidden">Loading the quiz</span>
+      <div className="qz-card" aria-hidden="true">
+        <div className="skeleton qz-skeleton-small" />
+        <div className="skeleton qz-skeleton-bar" />
+        <div className="skeleton qz-skeleton-question" />
+        <div className="skeleton qz-skeleton-option" />
+        <div className="skeleton qz-skeleton-option" />
+        <div className="skeleton qz-skeleton-option" />
+        <div className="skeleton qz-skeleton-button" />
+      </div>
+    </div>
+  )
+}
+
 export function QuizPage({ quizId, onBack }: QuizPageProps) {
   const [quiz, setQuiz] = useState<Quiz | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -25,32 +41,62 @@ export function QuizPage({ quizId, onBack }: QuizPageProps) {
         const next = await getQuiz(quizId, controller.signal)
         if (controller.signal.aborted) return
         setQuiz(next)
-      } catch (caught) {
+      } catch {
         if (controller.signal.aborted) return
-        setError(errorText(caught))
-      } finally {
-        if (!controller.signal.aborted) setLoading(false)
+        setFailed(true)
       }
     }
     void load()
     return () => controller.abort()
-  }, [quizId])
+  }, [quizId, attempt])
+
+  function tryAgain() {
+    setFailed(false)
+    setAttempt((count) => count + 1)
+  }
 
   return (
-    <div className="app">
-      <header className="top">
-        <h1>Polaris</h1>
-        <button type="button" className="secondary" onClick={onBack}>
-          Back to the conversation
-        </button>
+    <div className="qz-page">
+      <header className="top-bar">
+        <div className="top-bar-start">
+          <button type="button" className="ghost" onClick={onBack}>
+            <ArrowLeft size={20} strokeWidth={2} aria-hidden="true" />
+            Back to the conversation
+          </button>
+          <p className="top-bar-mark">Polaris</p>
+        </div>
+        <p className="top-bar-title" />
+        <div className="top-bar-end" />
       </header>
-      {error ? (
-        <p className="notice" role="alert">
-          {error} Ask in the conversation if you need another way in.
-        </p>
-      ) : null}
-      {loading ? <p>Loading the quiz.</p> : null}
-      {quiz ? <QuizCard quiz={quiz} expanded onGraded={setQuiz} /> : null}
+      <main className="qz-page-main">
+        <div className="qz-page-grid">
+          {failed ? (
+            <div className="qz-page-column">
+              <AlertBanner
+                action={
+                  <button type="button" className="secondary" onClick={tryAgain}>
+                    Try again
+                  </button>
+                }
+              >
+                Couldn't open this quiz. Try again, or go back to the conversation.
+              </AlertBanner>
+            </div>
+          ) : quiz ? (
+            <>
+              <h1 className="qz-page-title">{quiz.title}</h1>
+              <div className="qz-page-column">
+                <QuizCard quiz={quiz} expanded onGraded={setQuiz} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="skeleton qz-skeleton-title" aria-hidden="true" />
+              <QuizSkeleton />
+            </>
+          )}
+        </div>
+      </main>
     </div>
   )
 }
