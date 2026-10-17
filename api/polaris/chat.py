@@ -34,6 +34,7 @@ from polaris.animation import (
 from polaris.animation_format import Animation
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.login import ApiKeyPresent
+from polaris.board_picture import BoardPicture, picture_errors
 from polaris.models import AnimationStep, Pointing, Turn
 from polaris.profile import ProfilePass, apply_changes, load_profile, save_profile
 from polaris.quiz import AlreadyGraded, MissingQuiz, grade, normalize_spec, public_payload
@@ -81,6 +82,12 @@ class InvalidAnimationStep(Exception):
 
 
 class InvalidPointing(Exception):
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("\n".join(errors))
+        self.errors = errors
+
+
+class InvalidPicture(Exception):
     def __init__(self, errors: list[str]) -> None:
         super().__init__("\n".join(errors))
         self.errors = errors
@@ -189,6 +196,7 @@ class Chat:
                 self.create_quiz,
                 self.create_whiteboard,
                 mark_whiteboard=self.mark_whiteboard,
+                preview_marks=self.preview_marks,
                 start_animation_job=self.start_animation_job,
             )
 
@@ -312,6 +320,17 @@ class Chat:
             raise InvalidPointing(errors)
         return Pointing(whiteboard_id=whiteboard.id, element_ids=tuple(cleaned))
 
+    def resolve_picture(
+        self, session_id: str, whiteboard_id: str, media_type: str, data: str
+    ) -> BoardPicture:
+        """Accept a picture only of a whiteboard in this session, as a small PNG."""
+
+        whiteboard = self._stored_whiteboard(session_id, whiteboard_id.strip())
+        errors = picture_errors(media_type, data)
+        if errors:
+            raise InvalidPicture(errors)
+        return BoardPicture(whiteboard_id=whiteboard.id, media_type=media_type, data=data)
+
     def resolve_animation_step(
         self, session_id: str, job_id: str, step_id: str
     ) -> AnimationStep:
@@ -336,6 +355,7 @@ class Chat:
         message: str,
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        picture: BoardPicture | None = None,
         animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | dict[str, object]]:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
@@ -359,6 +379,8 @@ class Chat:
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)
+            # The picture is for this turn only and is not stored.
+            extra: dict[str, Any] = {"picture": picture} if picture is not None else {}
             animations = await asyncio.to_thread(self.animations_for_reply, session_id)
             async for item in self.agent.reply(
                 session_id=session_id,
@@ -369,6 +391,7 @@ class Chat:
                 whiteboards=whiteboards,
                 pointing=pointing,
                 simplify=simplify,
+                **extra,
                 animations=animations,
                 animation_step=animation_step,
             ):
@@ -804,10 +827,8 @@ class Chat:
         payload["kind"] = "whiteboard"
         return payload
 
-    def mark_whiteboard(
-        self, session_id: str, action: dict[str, Any]
-    ) -> dict[str, object]:
-        """Append agent marks onto a stored whiteboard and show the update."""
+    def _marked(self, session_id: str, action: dict[str, Any]) -> tuple[Whiteboard, str]:
+        """The stored whiteboard with the marks applied, and its stored JSON."""
 
         self._require(session_id)
         whiteboard_id = _mark_target_id(action)
@@ -822,8 +843,20 @@ class Chat:
         checked = apply_marks(checked_stored.whiteboard, action)
         if checked.whiteboard is None:
             raise InvalidDrawing(checked.errors)
+        return checked.whiteboard, raw
 
-        canonical = checked.whiteboard.model_dump(mode="json")
+    def preview_marks(self, session_id: str, action: dict[str, Any]) -> Whiteboard:
+        """What mark_whiteboard would store. Nothing is written."""
+
+        return self._marked(session_id, action)[0]
+
+    def mark_whiteboard(
+        self, session_id: str, action: dict[str, Any]
+    ) -> dict[str, object]:
+        """Append agent marks onto a stored whiteboard and show the update."""
+
+        marked, raw = self._marked(session_id, action)
+        canonical = marked.model_dump(mode="json")
         whiteboard_id = str(canonical["id"])
 
         def write(conn: sqlite3.Connection) -> None:

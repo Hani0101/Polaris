@@ -102,6 +102,12 @@ function screenPhrase(element: WhiteboardElement): string {
     return 'text'
   }
   if (element.kind === 'freehand') return 'a freehand line'
+  if (
+    (element.kind === 'rectangle' || element.kind === 'ellipse' || element.kind === 'arrow') &&
+    element.label?.trim()
+  ) {
+    return `${an(element.kind)} labeled "${element.label}"`
+  }
   return an(element.kind)
 }
 

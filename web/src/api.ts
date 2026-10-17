@@ -54,18 +54,25 @@ type WhiteboardElementBase = {
   style: Style
 }
 
+// label, start_element_id, and end_element_id exist on version 7 only.
 export type RectangleElement = WhiteboardElementBase & {
   kind: 'rectangle'
+  label?: string
 }
 
 export type EllipseElement = WhiteboardElementBase & {
   kind: 'ellipse'
+  label?: string
 }
 
 export type ArrowElement = WhiteboardElementBase & {
   kind: 'arrow'
   start: Point
   end: Point
+  label?: string
+  start_element_id?: string
+  end_element_id?: string
+  bend?: number
 }
 
 export type LineElement = WhiteboardElementBase & {
@@ -211,13 +218,22 @@ export type TurnBody = {
   message: string
   pointing?: TurnPointing
   simplifies?: string
+  picture?: BoardPicture
   animation_step?: TurnAnimationStep
+}
+
+/** A PNG of one whiteboard, sent with the next turn only. data is base64. */
+export type BoardPicture = {
+  whiteboard_id: string
+  media_type: 'image/png'
+  data: string
 }
 
 export function turnBody(
   message: string,
   pointing: { whiteboardId: string; parts: { id: string }[] } | null,
   simplifies?: string | null,
+  picture?: BoardPicture | null,
   animationStep?: { jobId: string; stepId: string } | null,
 ): TurnBody {
   const body: TurnBody = { message }
@@ -228,6 +244,7 @@ export function turnBody(
     }
   }
   if (simplifies) body.simplifies = simplifies
+  if (picture) body.picture = picture
   if (animationStep) {
     body.animation_step = { job_id: animationStep.jobId, step_id: animationStep.stepId }
   }
@@ -382,6 +399,7 @@ export async function sendTurn(
     signal?: AbortSignal
     pointing?: { whiteboardId: string; parts: { id: string }[] } | null
     simplifies?: string | null
+    picture?: BoardPicture | null
     animationStep?: { jobId: string; stepId: string } | null
   },
 ): Promise<void> {
@@ -396,6 +414,7 @@ export async function sendTurn(
         message,
         options?.pointing ?? null,
         options?.simplifies,
+        options?.picture,
         options?.animationStep,
       ),
     ),

@@ -57,6 +57,8 @@ type ChatShellProps = {
   onSimpler: (whiteboardId: string) => void
   pointing: Pointing | null
   onRemovePoint: (elementId: string) => void
+  pictureAttached?: boolean
+  onRemovePicture?: () => void
   onAsk: (whiteboardId: string, parts: PointedPart[]) => void
   animationStep?: AskedStep | null
   onAskAboutStep?: (ask: AskAboutStep) => void
@@ -100,6 +102,8 @@ export function ChatShell({
   onSimpler,
   pointing,
   onRemovePoint,
+  pictureAttached,
+  onRemovePicture,
   onAsk,
   animationStep = null,
   onAskAboutStep,
@@ -193,6 +197,8 @@ export function ChatShell({
           onStart={onStart}
           pointing={pointing}
           onRemovePoint={onRemovePoint}
+          pictureAttached={pictureAttached}
+          onRemovePicture={onRemovePicture}
           animationStep={animationStep}
           onRemoveAnimationStep={onRemoveAnimationStep}
           onAsk={onAsk}

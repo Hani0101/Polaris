@@ -8,7 +8,15 @@ import {
   sendTurn,
   startSession,
 } from './api.ts'
-import type { Artifact, Quiz, Session, SessionSummary, Turn, WhiteboardArtifact } from './api.ts'
+import type {
+  Artifact,
+  BoardPicture,
+  Quiz,
+  Session,
+  SessionSummary,
+  Turn,
+  WhiteboardArtifact,
+} from './api.ts'
 import { animationPagePath, pathAnimation } from './animationPath.ts'
 import type { AskedStep } from './animation/askedStep.ts'
 import type { AskAboutStep } from './animation/ScenePlayer.tsx'
@@ -201,6 +209,8 @@ function App() {
   const [open, setOpen] = useState<Session | null>(null)
   const [draft, setDraft] = useState('')
   const [pointing, setPointing] = useState<Pointing | null>(null)
+  // The latest picture of a board the learner drew on, for their next message.
+  const [picture, setPicture] = useState<BoardPicture | null>(null)
   const [askedStep, setAskedStep] = useState<AskedStep | null>(null)
   // Steps asked about in this visit, so a saved turn's chip can name them.
   const [knownSteps, setKnownSteps] = useState<ReadonlyMap<string, AskedStep>>(() => new Map())
@@ -341,6 +351,7 @@ function App() {
     setKept([])
     setDraft('')
     setPointing(null)
+    setPicture(null)
     setAskedStep(null)
     setSendError(null)
   }
@@ -475,9 +486,12 @@ function App() {
     if (!open || sending.current) return
     if (pending?.status === 'streaming') return
     sending.current = true
+    // A simpler redraw is asked from the description alone, so the picture waits.
+    const sentPicture = simplifies ? null : picture
     setSendError(null)
     setDraft('')
     setPointing(null)
+    if (sentPicture) setPicture(null)
     setAskedStep(null)
     const after =
       open.turns.length + kept.length + (pending?.status === 'stopped' ? 1 : 0)
@@ -525,7 +539,13 @@ function App() {
               : current,
           )
         },
-        { signal: controller.signal, pointing: attached, simplifies, animationStep: step },
+        {
+          signal: controller.signal,
+          pointing: attached,
+          simplifies,
+          picture: sentPicture,
+          animationStep: step,
+        },
       )
       if (controller.signal.aborted) return
       setPending((current) =>
@@ -547,6 +567,7 @@ function App() {
         setPending(null)
         setDraft(message)
         setPointing(attached)
+        if (sentPicture) setPicture(sentPicture)
         setAskedStep(step)
         setSendError(errorText(caught, fallback))
       }
@@ -621,6 +642,9 @@ function App() {
             goTo('/')
           }}
           onSimpler={(id) => void askSimpler(id)}
+          onPicture={(next) => {
+            if (open?.id === whiteboardRoute.sessionId) setPicture(next)
+          }}
           onOpenOriginal={(id) => goTo(whiteboardPath(whiteboardRoute.sessionId, id))}
           simplerBusy={pending?.status === 'streaming' || pending?.status === 'done'}
         />
@@ -682,6 +706,8 @@ function App() {
           onSimpler={(id) => void askSimpler(id)}
           pointing={pointing}
           onRemovePoint={removePoint}
+          pictureAttached={picture !== null}
+          onRemovePicture={() => setPicture(null)}
           onAsk={askAbout}
           animationStep={askedStep}
           onAskAboutStep={askAboutStep}

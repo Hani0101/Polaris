@@ -59,6 +59,9 @@ type ConversationProps = {
   onStart: () => void
   pointing?: Pointing | null
   onRemovePoint?: (elementId: string) => void
+  // A picture of the learner's drawing goes with the next message.
+  pictureAttached?: boolean
+  onRemovePicture?: () => void
   /** The animation step the next turn asks about, shown as a chip (AN-17). */
   animationStep?: AskedStep | null
   onRemoveAnimationStep?: () => void
@@ -89,6 +92,8 @@ export function Conversation({
   onStart,
   pointing = null,
   onRemovePoint,
+  pictureAttached = false,
+  onRemovePicture,
   animationStep = null,
   onRemoveAnimationStep,
   onAsk,
@@ -164,6 +169,7 @@ export function Conversation({
           {pointing && pointing.parts.length > 0 ? (
             <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
           ) : null}
+          {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
           {animationStep ? (
             <StepChip step={animationStep} onRemove={onRemoveAnimationStep} />
           ) : null}
@@ -249,6 +255,28 @@ function PointChips({
           ) : null}
         </li>
       ))}
+    </ul>
+  )
+}
+
+const PICTURE_LABEL = 'Picture of your drawing'
+
+function PictureChip({ onRemove }: { onRemove?: () => void }) {
+  return (
+    <ul className="point-chips" aria-label="Sent with your message">
+      <li className="point-chip">
+        <span>{PICTURE_LABEL}</span>
+        {onRemove ? (
+          <button
+            type="button"
+            className="ghost"
+            aria-label={`Remove ${PICTURE_LABEL.toLowerCase()}`}
+            onClick={onRemove}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        ) : null}
+      </li>
     </ul>
   )
 }

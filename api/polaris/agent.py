@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from polaris.animation_format import Animation
+from polaris.board_picture import BoardPicture
 from polaris.models import AnimationStep, Pointing, Profile, Turn
 from polaris.whiteboard import Whiteboard
 
@@ -28,10 +29,14 @@ class ReplyAgent(Protocol):
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
-        """Stream reply text, then one ReplyResult when the stream reaches a result."""
+        """Stream reply text, then one ReplyResult when the stream reaches a result.
+
+        Chat passes picture only when the learner's turn carries one.
+        """
 
     async def close_session(self, session_id: str) -> None:
         """Drop the agent connection for a session the learner left."""

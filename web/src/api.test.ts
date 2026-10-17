@@ -14,8 +14,18 @@ test('a simpler turn sends the original whiteboard id', () => {
   expect(turnBody('Hello', null)).toEqual({ message: 'Hello' })
 })
 
+test('a turn can carry a picture of a whiteboard', () => {
+  const picture = { whiteboard_id: 'wb-1', media_type: 'image/png' as const, data: 'iVBORw0K' }
+
+  expect(turnBody('Is this right?', null, null, picture)).toEqual({
+    message: 'Is this right?',
+    picture,
+  })
+  expect(turnBody('Is this right?', null, null, null)).toEqual({ message: 'Is this right?' })
+})
+
 test('a turn about an animation step names the job and the step (AN-17)', () => {
-  expect(turnBody('Why?', null, null, { jobId: 'job-1', stepId: 'discard' })).toEqual({
+  expect(turnBody('Why?', null, null, null, { jobId: 'job-1', stepId: 'discard' })).toEqual({
     message: 'Why?',
     animation_step: { job_id: 'job-1', step_id: 'discard' },
   })

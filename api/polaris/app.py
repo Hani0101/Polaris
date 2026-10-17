@@ -17,6 +17,7 @@ from polaris.chat import (
     Chat,
     InvalidAnimationStep,
     InvalidDrawing,
+    InvalidPicture,
     InvalidPointing,
     MissingSession,
     ReplyInProgress,
@@ -35,6 +36,12 @@ class PointingBody(BaseModel):
     element_ids: list[str]
 
 
+class PictureBody(BaseModel):
+    whiteboard_id: str
+    media_type: str
+    data: str
+
+
 class AnimationStepBody(BaseModel):
     job_id: str
     step_id: str
@@ -44,6 +51,7 @@ class TurnBody(BaseModel):
     message: str
     pointing: PointingBody | None = None
     simplifies: str | None = None
+    picture: PictureBody | None = None
     animation_step: AnimationStepBody | None = None
 
 
@@ -168,6 +176,10 @@ def create_app(
     async def invalid_pointing(_request, exc: InvalidPointing) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(InvalidPicture)
+    async def invalid_picture(_request, exc: InvalidPicture) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.exception_handler(InvalidAnimationStep)
     async def invalid_animation_step(
         _request, exc: InvalidAnimationStep
@@ -247,6 +259,15 @@ def create_app(
                 session_id,
                 body.simplifies,
             )
+        picture = None
+        if body.picture is not None:
+            picture = await asyncio.to_thread(
+                chat.resolve_picture,
+                session_id,
+                body.picture.whiteboard_id,
+                body.picture.media_type,
+                body.picture.data,
+            )
         animation_step = None
         if body.animation_step is not None:
             animation_step = await asyncio.to_thread(
@@ -260,7 +281,12 @@ def create_app(
         async def events() -> AsyncIterator[str]:
             try:
                 async for chunk in chat.stream_reply(
-                    session_id, text, pointing, simplify, animation_step
+                    session_id,
+                    text,
+                    pointing,
+                    simplify,
+                    picture=picture,
+                    animation_step=animation_step,
                 ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})

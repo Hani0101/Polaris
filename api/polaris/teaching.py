@@ -4,16 +4,18 @@ Streaming input (ClaudeSDKClient) is the mode the SDK documents for a chat
 UI. include_partial_messages yields StreamEvent text deltas as the reply is
 produced. A custom system prompt is the documented choice for a non-coding
 agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz,
-draw_whiteboard, start_animation_job) are registered so a quiz, a
-whiteboard, or an animation job can be stored as an artifact; see
+draw_whiteboard, mark_whiteboard, simplify_whiteboard, start_animation_job)
+are registered so a quiz, a whiteboard, or an animation job can be stored
+as an artifact; see
 custom-tools.md. start_animation_job takes only a plain-language brief.
 Its strict schema rejects any other argument, such as code, before the
 handler runs (custom-tools.md, jsonschema step). The job id is the artifact
 id from the store. The animation writer writes the animation data outside
 the turn (AN-01), so the teaching agent never sends animation data or code.
-draw_whiteboard takes the Polaris drawing format. Its schema is an open
-object so every call reaches check_drawing. A strict schema would be
-rejected by the SDK before that check (custom-tools.md, jsonschema step).
+The whiteboard tools take the Polaris drawing format. Their schemas type
+each field but require little, so a drawing with mistakes still reaches
+check_drawing and its fix limit instead of stopping at the SDK's schema
+check (custom-tools.md, jsonschema step).
 setting_sources=[] and skills=[] keep filesystem settings
 and skills out. verbatim_prompts sends the assembled profile and earlier
 turns without @path expansion.
@@ -34,7 +36,7 @@ import contextlib
 import json
 import sys
 import threading
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -58,10 +60,11 @@ from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.models import AnimationStep, Pointing, Profile, Turn
 from polaris.quiz import InvalidQuiz
+from polaris.auto_layout import expand_layout
+from polaris.board_picture import BoardPicture
+from polaris.layout_check import LayoutProblem, layout_problems, mark_problems
 from polaris.whiteboard import (
-    DESCRIBED_DRAWING_VERSION,
-    GRAPH_DRAWING_VERSION,
-    MATH_CODE_DRAWING_VERSION,
+    CURRENT_DRAWING_VERSION,
     WHITEBOARD_TOOL_LIMITS,
     MissingWhiteboard,
     Whiteboard,
@@ -70,6 +73,7 @@ from polaris.whiteboard import (
     describe_whiteboard,
     element_count,
     pointed_element_errors,
+    summarize_whiteboard,
 )
 
 _MISSING_PROFILE = (
@@ -81,28 +85,41 @@ _MISSING_PROFILE = (
 POLARIS_SERVER_NAME = "polaris"
 CREATE_QUIZ_TOOL = "mcp__polaris__create_quiz"
 DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
+MARK_WHITEBOARD_TOOL = "mcp__polaris__mark_whiteboard"
+SIMPLIFY_WHITEBOARD_TOOL = "mcp__polaris__simplify_whiteboard"
 START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
 # each fix attempt, one animation job, one quiz, one quiz fix attempt after a
 # QZ-10 refusal, and one spare tool turn.
 TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 4
-DRAW_WHITEBOARD_DESCRIPTION = (
-    "Draw a whiteboard when a picture helps the learner see an idea: "
-    "how parts connect, a sequence, a comparison, or a layout. "
-    "Do not use this when the explanation is clear as text, and do not use it for a quiz. "
-    "The input is one Polaris drawing: version 4, id, description, session_id, steps, and comments. "
-    "A drawing that contains math or code is version 5 and still includes a description. "
-    "A drawing that contains a graph is version 6 and still includes a description. "
-    "description is required on a new whiteboard. It is the text a person who cannot see the drawing reads. "
-    "Polaris sets session_id to the open session. "
+_DRAWING_FORMAT = (
+    "The input is one Polaris drawing: id, description, steps, comments, and optionally layout. "
+    "Polaris sets the version and session_id. "
+    "description is required. It is the text a person who cannot see the drawing reads. "
     "Each step has id, reply_part, and elements. "
     "reply_part must be [[step:<that step's id>]], for example [[step:step-1]] "
     "when the step id is step-1. "
     "Write that same marker in the reply at the start of the part that step explains. "
+    "For boxes joined by arrows, send layout instead of placing them yourself. "
+    "Polaris places the boxes, puts each label inside its box, and attaches each arrow to its boxes. "
+    "layout has kind: flow, sequence, cycle, tree, comparison, or parts. "
+    "flow has nodes and links; each link has from, to, and an optional short label. "
+    "sequence and cycle have nodes in order; Polaris links them. "
+    "tree has nodes, and every node except the root has parent. "
+    "flow, sequence, and tree take direction down (the default, and best on a phone) or right. "
+    "Each node has id and a short label, and optionally shape (rectangle or ellipse) and step. "
+    "comparison has 2 or 3 columns, each with id, title, and items (short texts). "
+    "parts has whole (id and label) and nodes, the labeled parts around it. "
+    "A node, link, or column with step appears in that step; without step it is in the first step. "
+    "Elements you list in a step are kept beside the layout. "
     "Each element has id, kind, author (agent or learner), position (x, y), "
     "size (width, height), and style (stroke, fill, stroke_width). "
-    "kind is rectangle, ellipse, arrow, line, text, freehand, mark, math, code, or graph. "
-    "arrow and line also have start and end. text also has text. freehand also has points. "
+    "Keep every part between (0, 0) and (1000, 1400); the learner may be on a phone. "
+    "kind is rectangle, ellipse, arrow, line, text, freehand, math, code, or graph. "
+    "A rectangle or ellipse may have label, drawn inside it. "
+    "arrow and line also have start and end. An arrow may also have label, and "
+    "start_element_id and end_element_id to attach its ends to parts. "
+    "text also has text. freehand also has points. "
     "math also has latex, the LaTeX source of one formula. "
     "code also has language, a short name such as python, and code, the source text. "
     "Use a math element for a formula and a code element for code. "
@@ -114,38 +131,193 @@ DRAW_WHITEBOARD_DESCRIPTION = (
     "Each series is a function with expression and sample_count, or data with points of x and y. "
     "expression may use x and sin, cos, tan, asin, acos, atan, sqrt, log, log10, exp, abs, floor, ceil, pi, and e. "
     "Do not send plotted points. Polaris computes them. "
-    "A mark targets one learner element. It has mark (circle, arrow, or note), "
-    "author agent, and target_element_id. An arrow mark also has start and end. "
-    "A note also has text. "
-    "To mark a whiteboard already in the session, send whiteboard_id, step_id, "
-    "reply_part [[step:<step_id>]], and marks. Do not send a description, and do not send the learner's elements. "
-    "Do not change, move, or delete learner elements or learner comments. "
+    "Polaris checks the layout too: parts must not overlap, text must fit its box, "
+    "arrow ends must touch a part, and a drawing has at most 24 parts. "
+    "A refused drawing comes back with what to fix. "
     "comments is a list. Each comment has id, author, text, and either a position "
     "(x, y) or the element_id of the element it is about. "
-    "Use a new id for the whiteboard, every step, every element, every mark, and every comment. "
-    "To draw a simpler version of a whiteboard already in the session, send a new "
-    "whiteboard with fewer elements, a description, and simplifies set to the "
-    "original whiteboard id. Do not change or delete the original."
+    "Use a new id for the whiteboard, every step, every element, and every comment. "
 )
-# properties is required so the SDK treats this as JSON Schema. An open
-# object lets invalid drawings reach check_drawing instead of failing earlier.
-# steps, comments, and marks stay untyped. The model then sends those lists
-# as JSON text, and _decode_json_lists reads that text before the check.
+DRAW_WHITEBOARD_DESCRIPTION = (
+    "Draw a new whiteboard when a picture helps the learner see an idea: "
+    "how parts connect, a sequence, a comparison, or a layout. "
+    "Do not use this when the explanation is clear as text, and do not use it for a quiz. "
+    + _DRAWING_FORMAT
+    + "To mark the learner's drawing, use mark_whiteboard. "
+    "For a simpler version of a whiteboard, use simplify_whiteboard."
+)
+MARK_WHITEBOARD_DESCRIPTION = (
+    "Mark the learner's drawing on a whiteboard already in the session: a circle, an arrow, "
+    "or a note on one learner element, for example to show a mistake. "
+    "Send whiteboard_id, step_id, reply_part [[step:<step_id>]], and marks. "
+    "Write that same marker in the reply where the marks should appear. "
+    "Each mark has id, mark (circle, arrow, or note), target_element_id, position (x, y), "
+    "size (width, height), and style (stroke, fill, stroke_width). "
+    "An arrow mark also has start and end, and its end should touch the element it points at. "
+    "A note also has text. Polaris sets kind and author. "
+    "target_element_id is the id of a learner element from the whiteboard's text description. "
+    "Do not change, move, or delete learner elements or learner comments. "
+    "Use a new id for the step and every mark."
+)
+SIMPLIFY_WHITEBOARD_DESCRIPTION = (
+    "Draw a simpler version of a whiteboard already in the session when the learner asks "
+    "for one. simplifies is the id of the original whiteboard. The new whiteboard shows the "
+    "same idea with fewer elements, and at least one. The original is not changed. "
+    + _DRAWING_FORMAT
+)
+_LIST_OR_JSON = ["array", "string"]
+_POINT_SCHEMA = {
+    "type": "object",
+    "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+}
+_SIZE_SCHEMA = {
+    "type": "object",
+    "properties": {"width": {"type": "number"}, "height": {"type": "number"}},
+}
+_STYLE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "stroke": {"type": "string"},
+        "fill": {"type": ["string", "null"]},
+        "stroke_width": {"type": "number"},
+    },
+}
+_ELEMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "kind": {"type": "string"},
+        "author": {"type": "string"},
+        "position": _POINT_SCHEMA,
+        "size": _SIZE_SCHEMA,
+        "style": _STYLE_SCHEMA,
+        "label": {"type": "string"},
+        "text": {"type": "string"},
+        "start": _POINT_SCHEMA,
+        "end": _POINT_SCHEMA,
+        "start_element_id": {"type": "string"},
+        "end_element_id": {"type": "string"},
+        "points": {"type": "array", "items": _POINT_SCHEMA},
+        "latex": {"type": "string"},
+        "language": {"type": "string"},
+        "code": {"type": "string"},
+    },
+}
+_LAYOUT_SCHEMA = {
+    "type": ["object", "string"],
+    "description": (
+        "A flow, sequence, cycle, tree, comparison, or parts structure. Polaris places it."
+    ),
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": ["flow", "sequence", "cycle", "tree", "comparison", "parts"],
+        },
+        "direction": {"type": "string", "enum": ["down", "right"]},
+        "nodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "label": {"type": "string"},
+                    "shape": {"type": "string", "enum": ["rectangle", "ellipse"]},
+                    "step": {"type": "string"},
+                    "parent": {"type": "string"},
+                },
+            },
+        },
+        "links": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"},
+                    "label": {"type": "string"},
+                    "step": {"type": "string"},
+                },
+            },
+        },
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "step": {"type": "string"},
+                    "items": {"type": "array"},
+                },
+            },
+        },
+        "whole": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}, "label": {"type": "string"}},
+        },
+    },
+}
+# Lists are typed so the model sends real lists, but JSON text is still
+# accepted and _decode_json_lists reads it. Nothing is required and extra
+# fields pass, so a drawing with mistakes still reaches check_drawing and
+# its fix limit, rather than stopping at the SDK's schema check
+# (custom-tools.md; the SDK runs jsonschema before the handler).
 DRAW_WHITEBOARD_SCHEMA = {
     "type": "object",
     "properties": {
+        "id": {"type": "string", "description": "A new id for the whiteboard."},
         "description": {
             "type": "string",
-            "description": (
-                "Required on a new whiteboard. Text for a person who cannot see the drawing."
-            ),
+            "description": "Text for a person who cannot see the drawing.",
         },
+        "steps": {
+            "type": _LIST_OR_JSON,
+            "description": "Steps in reply order. Each has id, reply_part, and elements.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "reply_part": {"type": "string"},
+                    "elements": {"type": "array", "items": _ELEMENT_SCHEMA},
+                },
+            },
+        },
+        "comments": {
+            "type": _LIST_OR_JSON,
+            "items": {"type": "object"},
+        },
+        "layout": _LAYOUT_SCHEMA,
+    },
+    "additionalProperties": True,
+}
+SIMPLIFY_WHITEBOARD_SCHEMA = {
+    **DRAW_WHITEBOARD_SCHEMA,
+    "properties": {
         "simplifies": {
             "type": "string",
-            "description": (
-                "Id of the original whiteboard when this drawing is a simpler version."
-            ),
+            "description": "Id of the original whiteboard this drawing simplifies.",
         },
+        **DRAW_WHITEBOARD_SCHEMA["properties"],
+    },
+    "required": ["simplifies"],
+}
+_MARK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "mark": {"type": "string", "enum": ["circle", "arrow", "note"]},
+        "target_element_id": {"type": "string"},
+        "position": _POINT_SCHEMA,
+        "size": _SIZE_SCHEMA,
+        "style": _STYLE_SCHEMA,
+        "text": {"type": "string"},
+        "start": _POINT_SCHEMA,
+        "end": _POINT_SCHEMA,
+    },
+}
+MARK_WHITEBOARD_SCHEMA = {
+    "type": "object",
+    "properties": {
         "whiteboard_id": {
             "type": "string",
             "description": "Id of the stored whiteboard to mark.",
@@ -159,11 +331,12 @@ DRAW_WHITEBOARD_SCHEMA = {
             "description": "[[step:<step_id>]]. Write the same marker in the reply.",
         },
         "marks": {
-            "type": "array",
+            "type": _LIST_OR_JSON,
             "description": "Circle, arrow, or note marks on learner elements.",
-            "items": {"type": "object"},
+            "items": _MARK_SCHEMA,
         },
     },
+    "required": ["whiteboard_id", "step_id", "reply_part", "marks"],
     "additionalProperties": True,
 }
 CREATE_QUIZ_SCHEMA = {
@@ -301,6 +474,7 @@ def teaching_prompt() -> str:
         f"{_MISSING_PROFILE}\n"
         "Do not call create_quiz.\n"
         "Do not call draw_whiteboard.\n"
+        "Do not call mark_whiteboard or simplify_whiteboard.\n"
         "Do not call start_animation_job.\n"
         "When the turn lists facts, teach the topic in the learner message using those facts.\n"
         "If a quiz would help check understanding, call create_quiz.\n"
@@ -315,22 +489,34 @@ def teaching_prompt() -> str:
         "Do not grade the learner's choices. Code grades them against the stored key.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
-        "A new whiteboard is version 4 and includes a description for a person "
-        "who cannot see the drawing.\n"
-        "When the drawing contains a formula or code, use a math or code element "
-        "and version 5. Do not draw a formula or code as shapes.\n"
-        "When the drawing contains a function or data, use a graph element "
-        "and version 6. Do not draw a function or data as a freehand curve.\n"
+        "A new whiteboard includes a description for a person "
+        "who cannot see the drawing. Polaris sets the version.\n"
+        "For boxes and arrows, send a layout (flow, sequence, cycle, tree, comparison, "
+        "or parts) and let Polaris place it, rather than writing coordinates.\n"
+        "When the drawing contains a formula or code, use a math or code element. "
+        "Do not draw a formula or code as shapes.\n"
+        "When the drawing contains a function or data, use a graph element. "
+        "Do not draw a function or data as a freehand curve.\n"
         "Do not call draw_whiteboard when the explanation is clear as text, "
         "and do not call it for a quiz.\n"
         "Set each step's reply_part to [[step:<that step's id>]] "
         "and write that same marker in the reply where the step should appear.\n"
-        "To mark a mistake on the learner's drawing, call draw_whiteboard with "
+        "When the turn includes a picture of a whiteboard the learner drew on, "
+        "read it with the text description of the same whiteboard. "
+        "Hand-drawn sketches are easy to misread: say what you think the learner drew "
+        "and ask them to confirm before you build on it or mark it as a mistake.\n"
+        "When the learner would learn more by first sketching their own idea, such as how "
+        "they think a process works or how parts connect, ask them to draw it before you "
+        "explain. Say exactly what to draw. You may call draw_whiteboard with a short "
+        "text prompt as the only element and a description, so they have a board to draw "
+        "on. Tell them to open it, draw, and send a message when they are done. "
+        "Then read their sketch and give feedback on it with marks.\n"
+        "To mark a mistake on the learner's drawing, call mark_whiteboard with "
         "whiteboard_id, step_id, reply_part [[step:<that step's id>]], and marks. "
         "A mark is a circle, an arrow, or a note on one learner element. "
         "Do not change, move, or delete what the learner drew.\n"
         "When the learner asks for a simpler version of a whiteboard, "
-        "call draw_whiteboard with fewer elements, a description, and simplifies "
+        "call simplify_whiteboard with fewer elements, a description, and simplifies "
         "set to that whiteboard's id. Do not change or delete the original whiteboard.\n"
         "When the learner asks for an animation, or motion over time would "
         "explain the idea better than a still drawing, call start_animation_job once.\n"
@@ -367,11 +553,32 @@ def _simpler_instruction(whiteboard: Whiteboard) -> str:
     return (
         f"The learner asked for a simpler version of whiteboard {whiteboard.id}. "
         f"That whiteboard has {count} {noun}. "
-        "Call draw_whiteboard with fewer elements, at least one element, "
+        "Call simplify_whiteboard with fewer elements, at least one element, "
         "a description, and simplifies set to "
         f"{whiteboard.id}. Do not send an image. "
         "Do not change or delete the original whiteboard."
     )
+
+
+def _detailed_whiteboard_ids(
+    whiteboards: Sequence[Whiteboard],
+    pointing: Pointing | None,
+    simplify: Whiteboard | None,
+    picture: BoardPicture | None,
+) -> set[str]:
+    """Boards this turn is about. The rest get one line each to keep the prompt short."""
+
+    ids: set[str] = set()
+    if whiteboards:
+        ids.add(whiteboards[-1].id)
+    if pointing is not None:
+        ids.add(pointing.whiteboard_id)
+    if picture is not None:
+        ids.add(picture.whiteboard_id)
+    if simplify is not None:
+        # Its full description follows the simpler instruction.
+        ids.discard(simplify.id)
+    return ids
 
 
 def _animation_step_text(
@@ -402,6 +609,7 @@ def turn_prompt(
     whiteboards: Sequence[Whiteboard] = (),
     pointing: Pointing | None = None,
     simplify: Whiteboard | None = None,
+    picture: BoardPicture | None = None,
     animations: Sequence[Animation] = (),
     animation_step: AnimationStep | None = None,
 ) -> str:
@@ -424,10 +632,22 @@ def turn_prompt(
                 lines.append(earlier_step)
             lines.append(f"Polaris: {turn.reply}")
     if whiteboards:
+        detailed = _detailed_whiteboard_ids(whiteboards, pointing, simplify, picture)
         lines.append("")
         lines.append("Whiteboards in this session:")
         for whiteboard in whiteboards:
-            lines.append(describe_whiteboard(whiteboard))
+            if whiteboard.id in detailed:
+                lines.append(describe_whiteboard(whiteboard))
+            else:
+                lines.append(summarize_whiteboard(whiteboard))
+    if picture is not None:
+        lines.append("")
+        lines.append(
+            f"A picture of whiteboard {picture.whiteboard_id}, as the learner sees it "
+            "after drawing on it, is attached to this message. Its parts are listed "
+            "above with their ids. Say what you think the learner drew and check "
+            "with them before you rely on it."
+        )
     if animations:
         lines.append("")
         lines.append("Animations in this session:")
@@ -449,6 +669,32 @@ def turn_prompt(
     lines.append("Learner message:")
     lines.append(learner_message)
     return "\n".join(lines)
+
+
+async def picture_message(prompt: str, picture: BoardPicture) -> AsyncIterator[dict[str, Any]]:
+    """One user message with the turn text and the board picture.
+
+    Streaming input is the mode that takes images (streaming-vs-single-mode.md).
+    """
+
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": picture.media_type,
+                        "data": picture.data,
+                    },
+                },
+            ],
+        },
+        "parent_tool_use_id": None,
+    }
 
 
 async def _unavailable_quiz(_args: dict[str, Any]) -> dict[str, Any]:
@@ -484,19 +730,20 @@ def _limit_message() -> str:
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     return (
         f"The drawing fix limit for this turn is {limit}. "
-        "This drawing was not shown. Do not call draw_whiteboard again this turn."
+        "This drawing was not shown. Do not draw, mark, or simplify a whiteboard "
+        "again this turn."
     )
 
 
-def _fix_message(detail: str, failures: int) -> str:
+def _fix_message(detail: str, failures: int, tool: str = "draw_whiteboard") -> str:
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if failures > limit:
         if detail:
             return f"{detail}\n{_limit_message()}"
         return _limit_message()
     if detail:
-        return f"{detail}\nFix the drawing and call draw_whiteboard again."
-    return "Fix the drawing and call draw_whiteboard again."
+        return f"{detail}\nFix the drawing and call {tool} again."
+    return f"Fix the drawing and call {tool} again."
 
 
 @dataclass(frozen=True)
@@ -506,6 +753,7 @@ class WhiteboardSubmission:
 
 
 WhiteboardStore = Callable[[str, dict[str, Any]], dict[str, Any]]
+MarkPreview = Callable[[str, dict[str, Any]], Whiteboard]
 
 
 def submit_whiteboard(
@@ -514,30 +762,50 @@ def submit_whiteboard(
     *,
     failures: int,
     store: WhiteboardStore | None,
+    tool: str = "draw_whiteboard",
 ) -> WhiteboardSubmission:
-    """Check a drawing, and store it only when the check passes and fixes remain."""
+    """Check a drawing, and store it only when the check passes and fixes remain.
+
+    tool names the tool the agent calls again to fix the drawing.
+    """
 
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if isinstance(data, dict):
-        incoming = {**_decode_json_lists(data), "session_id": session_id}
-        if _contains_graph(incoming):
-            incoming["version"] = GRAPH_DRAWING_VERSION
-        elif _contains_math_or_code(incoming):
-            incoming["version"] = MATH_CODE_DRAWING_VERSION
-        elif "description" in incoming or _names_a_simpler_original(incoming):
-            incoming["version"] = DESCRIBED_DRAWING_VERSION
+        # Every new drawing is the current version (decision 0006).
+        incoming = {
+            **_decode_json_lists(data),
+            "session_id": session_id,
+            "version": CURRENT_DRAWING_VERSION,
+        }
     else:
         incoming = data
-    checked = check_drawing(incoming)
     if failures > limit:
         return WhiteboardSubmission(
             tool_result=_tool_error(_limit_message()),
             failures=failures,
         )
+    expanded = expand_layout(incoming)
+    if expanded.errors:
+        updated = failures + 1
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message("\n".join(expanded.errors), updated, tool)),
+            failures=updated,
+        )
+    checked = check_drawing(expanded.drawing)
     if checked.errors or checked.whiteboard is None:
         updated = failures + 1
         return WhiteboardSubmission(
-            tool_result=_tool_error(_fix_message("\n".join(checked.errors), updated)),
+            tool_result=_tool_error(_fix_message("\n".join(checked.errors), updated, tool)),
+            failures=updated,
+        )
+    problems = layout_problems(checked.whiteboard)
+    # Layout problems are refused while a refusal still leaves a fix. After
+    # that the drawing is shown, since a crowded drawing beats none.
+    if problems and failures < limit:
+        updated = failures + 1
+        detail = _layout_detail(problems)
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message(detail, updated, tool)),
             failures=updated,
         )
     if store is None:
@@ -551,59 +819,33 @@ def submit_whiteboard(
         updated = failures + 1
         detail = "\n".join(exc.errors) if isinstance(exc, InvalidDrawing) else str(exc)
         return WhiteboardSubmission(
-            tool_result=_tool_error(_fix_message(detail, updated)),
+            tool_result=_tool_error(_fix_message(detail, updated, tool)),
             failures=updated,
         )
+    text = f"Whiteboard stored as id {payload['id']}. The learner can see the drawing."
+    if problems:
+        text = (
+            f"{text} It still has layout problems. Do not redraw it this turn.\n"
+            f"{_layout_detail(problems)}"
+        )
     return WhiteboardSubmission(
-        tool_result={
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Whiteboard stored as id {payload['id']}. "
-                        "The learner can see the drawing."
-                    ),
-                }
-            ]
-        },
+        tool_result={"content": [{"type": "text", "text": text}]},
         failures=failures,
     )
 
 
-def _contains_graph(data: dict[str, object]) -> bool:
-    return _contains_kind(data, "graph")
+def _layout_detail(problems: Sequence[LayoutProblem], noun: str = "drawing") -> str:
+    verb = "have" if noun == "marks" else "has"
+    lines = [f"The {noun} passed the format check but {verb} layout problems:"]
+    lines.extend(f"- {problem.message}" for problem in problems)
+    return "\n".join(lines)
 
 
-def _contains_math_or_code(data: dict[str, object]) -> bool:
-    return _contains_kind(data, "math", "code")
-
-
-def _contains_kind(data: dict[str, object], *kinds: str) -> bool:
-    steps = data.get("steps")
-    if not isinstance(steps, list):
-        return False
-    for step in steps:
-        if not isinstance(step, dict):
-            continue
-        elements = step.get("elements")
-        if not isinstance(elements, list):
-            continue
-        for element in elements:
-            if isinstance(element, dict) and element.get("kind") in kinds:
-                return True
-    return False
-
-
-def _names_a_simpler_original(data: dict[str, object]) -> bool:
-    simplifies = data.get("simplifies")
-    return isinstance(simplifies, str) and bool(simplifies.strip())
-
-
-_JSON_LIST_FIELDS = ("steps", "comments", "marks")
+_JSON_LIST_FIELDS = ("steps", "comments", "marks", "layout")
 
 
 def _decode_json_lists(data: dict[str, Any]) -> dict[str, Any]:
-    """Turn JSON text back into lists. The open tool schema leaves those fields untyped."""
+    """Turn JSON text back into lists and objects. The open tool schema leaves those fields untyped."""
 
     decoded = dict(data)
     for key in _JSON_LIST_FIELDS:
@@ -651,8 +893,14 @@ def submit_marks(
     failures: int,
     store: WhiteboardStore | None,
     create: WhiteboardStore | None = None,
+    tool: str = "mark_whiteboard",
+    preview: MarkPreview | None = None,
 ) -> WhiteboardSubmission:
-    """Check marks against the stored whiteboard, then store them when they pass."""
+    """Check marks against the stored whiteboard, then store them when they pass.
+
+    preview applies the marks without storing them, so misplaced marks are
+    refused like layout problems while a fix remains.
+    """
 
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     if failures > limit:
@@ -667,8 +915,19 @@ def submit_marks(
         )
     if isinstance(data, dict):
         data = _decode_json_lists(data)
+    action = data if isinstance(data, dict) else {}
+    problems: list[LayoutProblem] = []
     try:
-        payload = store(session_id, data if isinstance(data, dict) else {})
+        if preview is not None:
+            problems = mark_problems(preview(session_id, action), _sent_mark_ids(action))
+            if problems and failures < limit:
+                updated = failures + 1
+                detail = _layout_detail(problems, noun="marks")
+                return WhiteboardSubmission(
+                    tool_result=_tool_error(_fix_message(detail, updated, tool)),
+                    failures=updated,
+                )
+        payload = store(session_id, action)
     except MissingWhiteboard:
         if create is not None and _contains_mark(data) and not _is_compact_mark(data):
             return submit_whiteboard(
@@ -680,7 +939,7 @@ def submit_marks(
         updated = failures + 1
         return WhiteboardSubmission(
             tool_result=_tool_error(
-                _fix_message("No whiteboard with that id.", updated)
+                _fix_message("No whiteboard with that id.", updated, tool)
             ),
             failures=updated,
         )
@@ -688,23 +947,41 @@ def submit_marks(
         updated = failures + 1
         detail = "\n".join(exc.errors) if isinstance(exc, InvalidDrawing) else str(exc)
         return WhiteboardSubmission(
-            tool_result=_tool_error(_fix_message(detail, updated)),
+            tool_result=_tool_error(_fix_message(detail, updated, tool)),
             failures=updated,
         )
+    text = (
+        f"Marks stored on whiteboard {payload['id']}. "
+        "The learner's drawing was not changed."
+    )
+    if problems:
+        text = (
+            f"{text} The marks still have layout problems. Do not mark it again this turn.\n"
+            f"{_layout_detail(problems, noun='marks')}"
+        )
     return WhiteboardSubmission(
-        tool_result={
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Marks stored on whiteboard {payload['id']}. "
-                        "The learner's drawing was not changed."
-                    ),
-                }
-            ]
-        },
+        tool_result={"content": [{"type": "text", "text": text}]},
         failures=failures,
     )
+
+
+def _sent_mark_ids(action: dict[str, Any]) -> list[str]:
+    """Ids of the marks in a mark action, or in a full drawing's steps."""
+
+    items: list[object] = []
+    marks = action.get("marks")
+    if isinstance(marks, list):
+        items.extend(marks)
+    steps = action.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and isinstance(step.get("elements"), list):
+                items.extend(step["elements"])
+    return [
+        str(item["id"])
+        for item in items
+        if isinstance(item, dict) and item.get("kind") == "mark" and "id" in item
+    ]
 
 
 def polaris_mcp_server(
@@ -712,7 +989,12 @@ def polaris_mcp_server(
     create_quiz: QuizHandler,
     draw_whiteboard: WhiteboardHandler,
     start_animation_job: AnimationHandler,
+    mark_whiteboard: WhiteboardHandler | None = None,
+    simplify_whiteboard: WhiteboardHandler | None = None,
 ):
+    mark = mark_whiteboard or _unavailable_whiteboard
+    simplify = simplify_whiteboard or _unavailable_whiteboard
+
     @tool(
         "create_quiz",
         (
@@ -736,6 +1018,22 @@ def polaris_mcp_server(
         return await draw_whiteboard(args)
 
     @tool(
+        "mark_whiteboard",
+        MARK_WHITEBOARD_DESCRIPTION,
+        MARK_WHITEBOARD_SCHEMA,
+    )
+    async def mark_whiteboard_tool(args: dict[str, Any]) -> dict[str, Any]:
+        return await mark(args)
+
+    @tool(
+        "simplify_whiteboard",
+        SIMPLIFY_WHITEBOARD_DESCRIPTION,
+        SIMPLIFY_WHITEBOARD_SCHEMA,
+    )
+    async def simplify_whiteboard_tool(args: dict[str, Any]) -> dict[str, Any]:
+        return await simplify(args)
+
+    @tool(
         "start_animation_job",
         START_ANIMATION_JOB_DESCRIPTION,
         START_ANIMATION_JOB_SCHEMA,
@@ -746,7 +1044,13 @@ def polaris_mcp_server(
     return create_sdk_mcp_server(
         name=POLARIS_SERVER_NAME,
         version="1.0.0",
-        tools=[create_quiz_tool, draw_whiteboard_tool, start_animation_job_tool],
+        tools=[
+            create_quiz_tool,
+            draw_whiteboard_tool,
+            mark_whiteboard_tool,
+            simplify_whiteboard_tool,
+            start_animation_job_tool,
+        ],
     )
 
 
@@ -756,6 +1060,8 @@ def teaching_options(
     create_quiz: QuizHandler | None = None,
     draw_whiteboard: WhiteboardHandler | None = None,
     start_animation_job: AnimationHandler | None = None,
+    mark_whiteboard: WhiteboardHandler | None = None,
+    simplify_whiteboard: WhiteboardHandler | None = None,
 ) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=teaching_prompt(),
@@ -768,11 +1074,15 @@ def teaching_options(
                 create_quiz=create_quiz or _unavailable_quiz,
                 draw_whiteboard=draw_whiteboard or _unavailable_whiteboard,
                 start_animation_job=start_animation_job or _unavailable_animation,
+                mark_whiteboard=mark_whiteboard,
+                simplify_whiteboard=simplify_whiteboard,
             )
         },
         allowed_tools=[
             CREATE_QUIZ_TOOL,
             DRAW_WHITEBOARD_TOOL,
+            MARK_WHITEBOARD_TOOL,
+            SIMPLIFY_WHITEBOARD_TOOL,
             START_ANIMATION_JOB_TOOL,
         ],
         include_partial_messages=True,
@@ -883,7 +1193,7 @@ class _OffLoopClient:
         await self._call(self._client.connect())
 
     async def query(
-        self, prompt: str, session_id: str = "default"
+        self, prompt: str | AsyncIterable[dict[str, Any]], session_id: str = "default"
     ) -> None:
         await self._call(self._client.query(prompt, session_id=session_id))
 
@@ -940,6 +1250,7 @@ class ClaudeTeachingAgent:
         self._store_quiz = store_quiz
         self._store_whiteboard: WhiteboardStore | None = None
         self._mark_whiteboard: WhiteboardStore | None = None
+        self._preview_marks: MarkPreview | None = None
         self._start_animation_job: AnimationJobStore | None = None
         self._drawing_failures: dict[str, int] = {}
 
@@ -950,12 +1261,14 @@ class ClaudeTeachingAgent:
         *,
         mark_whiteboard: WhiteboardStore | None = None,
         start_animation_job: AnimationJobStore | None = None,
+        preview_marks: MarkPreview | None = None,
     ) -> None:
         """Chat calls this so tools can store an artifact. Does not write the profile."""
 
         self._store_quiz = store_quiz
         self._store_whiteboard = store_whiteboard
         self._mark_whiteboard = mark_whiteboard
+        self._preview_marks = preview_marks
         self._start_animation_job = start_animation_job
 
     def _handler_for(self, session_id: str) -> QuizHandler:
@@ -995,6 +1308,80 @@ class ClaudeTeachingAgent:
 
         return handle
 
+    def _mark_handler_for(self, session_id: str) -> WhiteboardHandler:
+        async def handle(args: dict[str, Any]) -> dict[str, Any]:
+            return await self.handle_mark_whiteboard(session_id, args)
+
+        return handle
+
+    def _simplify_handler_for(self, session_id: str) -> WhiteboardHandler:
+        async def handle(args: dict[str, Any]) -> dict[str, Any]:
+            return await self.handle_simplify_whiteboard(session_id, args)
+
+        return handle
+
+    async def _submit(
+        self,
+        session_id: str,
+        submit: Callable[..., WhiteboardSubmission],
+        args: object,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Run one whiteboard submission. All three tools share one fix count per turn."""
+
+        submission = await asyncio.to_thread(
+            partial(
+                submit,
+                session_id,
+                args,
+                failures=self._drawing_failures.get(session_id, 0),
+                **kwargs,
+            )
+        )
+        self._drawing_failures[session_id] = submission.failures
+        return submission.tool_result
+
+    async def handle_mark_whiteboard(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Marks on a stored whiteboard. Polaris sets each mark's kind and author."""
+
+        action = {
+            key: value for key, value in _decode_json_lists(args).items() if key != "steps"
+        }
+        marks = action.get("marks")
+        if isinstance(marks, list):
+            action["marks"] = [
+                {"kind": "mark", "author": "agent", **mark} if isinstance(mark, dict) else mark
+                for mark in marks
+            ]
+        return await self._submit(
+            session_id,
+            submit_marks,
+            action,
+            store=self._mark_whiteboard,
+            tool="mark_whiteboard",
+            preview=self._preview_marks,
+        )
+
+    async def handle_simplify_whiteboard(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """A simpler redraw. simplifies must name the original whiteboard."""
+
+        simplifies = args.get("simplifies") if isinstance(args, dict) else None
+        if not isinstance(simplifies, str) or not simplifies.strip():
+            return _tool_error(
+                "simplify_whiteboard needs simplifies, the id of the original whiteboard."
+            )
+        return await self._submit(
+            session_id,
+            submit_whiteboard,
+            args,
+            store=self._store_whiteboard,
+            tool="simplify_whiteboard",
+        )
+
     async def handle_draw_whiteboard(
         self, session_id: str, args: dict[str, Any]
     ) -> dict[str, Any]:
@@ -1006,6 +1393,7 @@ class ClaudeTeachingAgent:
         }
         if marking:
             kwargs["create"] = self._store_whiteboard
+            kwargs["preview"] = self._preview_marks
         submission = await asyncio.to_thread(
             partial(submit, session_id, args, **kwargs)
         )
@@ -1066,6 +1454,7 @@ class ClaudeTeachingAgent:
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
@@ -1082,10 +1471,14 @@ class ClaudeTeachingAgent:
             whiteboards,
             pointing,
             simplify,
+            picture,
             animations,
             animation_step,
         )
-        await client.query(prompt)
+        if picture is None:
+            await client.query(prompt)
+        else:
+            await client.query(picture_message(prompt, picture))
         watch = ReplyWatch()
         try:
             async for chunk in watch.text(client.receive_response()):
@@ -1095,6 +1488,11 @@ class ClaudeTeachingAgent:
                 await self.close_session(session_id)
         if watch.reached_result:
             yield ReplyResult(sdk_session_id=watch.sdk_session_id)
+
+    def drawing_fix_count(self, session_id: str) -> int:
+        """Refused drawings in the session's last reply. The drawing evals read this."""
+
+        return self._drawing_failures.get(session_id, 0)
 
     async def close_session(self, session_id: str) -> None:
         self._drawing_failures.pop(session_id, None)
@@ -1119,7 +1517,10 @@ class ClaudeTeachingAgent:
             cwd=self.work_dir,
             create_quiz=self._handler_for(session_id),
             draw_whiteboard=self._whiteboard_handler_for(session_id),
-            start_animation_job=self._animation_handler_for(session_id),        )
+            mark_whiteboard=self._mark_handler_for(session_id),
+            simplify_whiteboard=self._simplify_handler_for(session_id),
+            start_animation_job=self._animation_handler_for(session_id),
+        )
         include_transcript = False
         if sdk_session_id:
             options = replace(options, resume=sdk_session_id)
