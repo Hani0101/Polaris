@@ -175,11 +175,15 @@ export type WhiteboardArtifact = Whiteboard & {
   kind: 'whiteboard'
 }
 
+/** What a running job is doing (AN-19). A ready or failed job has no stage. */
+export type AnimationStage = 'writing' | 'checking' | 'fixing'
+
 export type AnimationArtifact = {
   id: string
   kind: 'animation'
   session_id: string
   status: string
+  stage?: AnimationStage | null
 }
 
 export type Artifact = Quiz | WhiteboardArtifact | AnimationArtifact
@@ -189,19 +193,34 @@ export type TurnPointing = {
   element_ids: string[]
 }
 
+/** The animation step a turn asks about (AN-17). */
+export type TurnAnimationStep = {
+  job_id: string
+  step_id: string
+}
+
 export type Turn = {
   learner_message: string
   reply: string
   artifacts: Artifact[]
   pointing?: TurnPointing
+  animation_step?: TurnAnimationStep
+}
+
+export type TurnBody = {
+  message: string
+  pointing?: TurnPointing
+  simplifies?: string
+  animation_step?: TurnAnimationStep
 }
 
 export function turnBody(
   message: string,
   pointing: { whiteboardId: string; parts: { id: string }[] } | null,
   simplifies?: string | null,
-): { message: string; pointing?: TurnPointing; simplifies?: string } {
-  const body: { message: string; pointing?: TurnPointing; simplifies?: string } = { message }
+  animationStep?: { jobId: string; stepId: string } | null,
+): TurnBody {
+  const body: TurnBody = { message }
   if (pointing && pointing.parts.length > 0) {
     body.pointing = {
       whiteboard_id: pointing.whiteboardId,
@@ -209,6 +228,9 @@ export function turnBody(
     }
   }
   if (simplifies) body.simplifies = simplifies
+  if (animationStep) {
+    body.animation_step = { job_id: animationStep.jobId, step_id: animationStep.stepId }
+  }
   return body
 }
 
@@ -360,6 +382,7 @@ export async function sendTurn(
     signal?: AbortSignal
     pointing?: { whiteboardId: string; parts: { id: string }[] } | null
     simplifies?: string | null
+    animationStep?: { jobId: string; stepId: string } | null
   },
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/turns`, {
@@ -368,7 +391,14 @@ export async function sendTurn(
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
-    body: JSON.stringify(turnBody(message, options?.pointing ?? null, options?.simplifies)),
+    body: JSON.stringify(
+      turnBody(
+        message,
+        options?.pointing ?? null,
+        options?.simplifies,
+        options?.animationStep,
+      ),
+    ),
     signal: options?.signal,
   })
   if (!response.ok) throw new ApiError(response.status, await readDetail(response))

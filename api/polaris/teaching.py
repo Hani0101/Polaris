@@ -9,8 +9,8 @@ whiteboard, or an animation job can be stored as an artifact; see
 custom-tools.md. start_animation_job takes only a plain-language brief.
 Its strict schema rejects any other argument, such as code, before the
 handler runs (custom-tools.md, jsonschema step). The job id is the artifact
-id from the store. The animation writer writes and runs the code outside
-the turn (AN-01), so the teaching agent never sends animation code.
+id from the store. The animation writer writes the animation data outside
+the turn (AN-01), so the teaching agent never sends animation data or code.
 draw_whiteboard takes the Polaris drawing format. Its schema is an open
 object so every call reaches check_drawing. A strict schema would be
 rejected by the SDK before that check (custom-tools.md, jsonschema step).
@@ -53,9 +53,10 @@ from claude_agent_sdk import (
 )
 
 from polaris.agent import ReplyResult
+from polaris.animation_format import Animation, describe_animation, describe_step
 from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
-from polaris.models import Pointing, Profile, Turn
+from polaris.models import AnimationStep, Pointing, Profile, Turn
 from polaris.quiz import InvalidQuiz
 from polaris.whiteboard import (
     DESCRIBED_DRAWING_VERSION,
@@ -243,7 +244,7 @@ START_ANIMATION_JOB_DESCRIPTION = (
     "Start an animation job for this session when a moving explanation "
     "helps the learner: motion, change over time, or a process with steps. "
     "Send a brief that says what the animation shows. Do not send code; "
-    "Polaris writes and runs the animation after this turn. The job id comes "
+    "Polaris writes and checks the animation after this turn. The job id comes "
     "back before the animation is ready, and the learner can keep talking. "
     "Polaris sets the session."
 )
@@ -338,6 +339,8 @@ def teaching_prompt() -> str:
         "The animation is not ready when the tool returns. Do not say it is ready "
         "and do not describe it as finished. Keep teaching in text meanwhile.\n"
         "Polaris tells the learner how long it may take and how they will be told.\n"
+        "Animations listed in the prompt are ready, and you can see each step. "
+        "When the learner asks about a step, answer about that step.\n"
         "Do not store, update, or delete profile facts.\n"
     )
 
@@ -371,6 +374,27 @@ def _simpler_instruction(whiteboard: Whiteboard) -> str:
     )
 
 
+def _animation_step_text(
+    animations: Sequence[Animation], asked: AnimationStep | None
+) -> str | None:
+    """Which animation step the learner asked about (AN-17)."""
+
+    if asked is None:
+        return None
+    animation = next((item for item in animations if item.id == asked.job_id), None)
+    if animation is None:
+        return None
+    for index, step in enumerate(animation.steps):
+        if step.id == asked.step_id:
+            return (
+                f"The learner is asking about step {index + 1} of "
+                f"{len(animation.steps)} of animation {animation.id} "
+                f"({animation.title.strip()}).\n"
+                + describe_step(animation, index)
+            )
+    return None
+
+
 def turn_prompt(
     profile: Profile,
     learner_message: str,
@@ -378,6 +402,8 @@ def turn_prompt(
     whiteboards: Sequence[Whiteboard] = (),
     pointing: Pointing | None = None,
     simplify: Whiteboard | None = None,
+    animations: Sequence[Animation] = (),
+    animation_step: AnimationStep | None = None,
 ) -> str:
     lines = [
         "Profile facts, read for this reply:",
@@ -393,16 +419,28 @@ def turn_prompt(
             earlier = _pointing_text(whiteboards, turn.pointing)
             if earlier is not None:
                 lines.append(earlier)
+            earlier_step = _animation_step_text(animations, turn.animation_step)
+            if earlier_step is not None:
+                lines.append(earlier_step)
             lines.append(f"Polaris: {turn.reply}")
     if whiteboards:
         lines.append("")
         lines.append("Whiteboards in this session:")
         for whiteboard in whiteboards:
             lines.append(describe_whiteboard(whiteboard))
+    if animations:
+        lines.append("")
+        lines.append("Animations in this session:")
+        for animation in animations:
+            lines.append(describe_animation(animation))
     current = _pointing_text(whiteboards, pointing)
     if current is not None:
         lines.append("")
         lines.append(current)
+    current_step = _animation_step_text(animations, animation_step)
+    if current_step is not None:
+        lines.append("")
+        lines.append(current_step)
     if simplify is not None:
         lines.append("")
         lines.append(_simpler_instruction(simplify))
@@ -1009,7 +1047,7 @@ class ClaudeTeachingAgent:
                     "type": "text",
                     "text": (
                         f"Animation job started as id {job_id}. "
-                        "The animation is not ready yet. Polaris writes and runs it "
+                        "The animation is not ready yet. Polaris writes and checks it "
                         "after this turn and tells the learner when it is ready. "
                         "The learner can keep talking."
                     ),
@@ -1028,6 +1066,8 @@ class ClaudeTeachingAgent:
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        animations: Sequence[Animation] = (),
+        animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
         client, include_transcript = await self._ensure_client(
@@ -1042,6 +1082,8 @@ class ClaudeTeachingAgent:
             whiteboards,
             pointing,
             simplify,
+            animations,
+            animation_step,
         )
         await client.query(prompt)
         watch = ReplyWatch()

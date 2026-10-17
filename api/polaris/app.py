@@ -15,6 +15,7 @@ from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
 from polaris.chat import (
     BlankMessage,
     Chat,
+    InvalidAnimationStep,
     InvalidDrawing,
     InvalidPointing,
     MissingSession,
@@ -34,24 +35,32 @@ class PointingBody(BaseModel):
     element_ids: list[str]
 
 
+class AnimationStepBody(BaseModel):
+    job_id: str
+    step_id: str
+
+
 class TurnBody(BaseModel):
     message: str
     pointing: PointingBody | None = None
     simplifies: str | None = None
+    animation_step: AnimationStepBody | None = None
 
 
 class GradeBody(BaseModel):
     choices: dict[str, str]
 
 
-# Agent-written HTML runs in its own opaque origin, even when opened
-# directly, so it cannot call this API. It cannot load anything from the
-# network either (AN-04).
+# HTML from a job that finished before decision 0006 runs in its own
+# opaque origin, even when opened directly, so it cannot call this API. It
+# cannot load anything from the network either. New jobs store JSON data,
+# which the browser does not run.
 PLAYBACK_HEADERS = {
     "Content-Security-Policy": (
         "sandbox allow-scripts; default-src 'none'; "
         "script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-        "img-src data: blob:; media-src 'self' data: blob:; font-src data:"
+        "img-src data: blob:; media-src 'self' data: blob:; font-src data:; "
+        "webrtc 'block'"
     ),
     "X-Content-Type-Options": "nosniff",
 }
@@ -159,6 +168,12 @@ def create_app(
     async def invalid_pointing(_request, exc: InvalidPointing) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(InvalidAnimationStep)
+    async def invalid_animation_step(
+        _request, exc: InvalidAnimationStep
+    ) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.exception_handler(AlreadyGraded)
     async def already_graded(_request, exc: AlreadyGraded) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
@@ -232,11 +247,21 @@ def create_app(
                 session_id,
                 body.simplifies,
             )
+        animation_step = None
+        if body.animation_step is not None:
+            animation_step = await asyncio.to_thread(
+                chat.resolve_animation_step,
+                session_id,
+                body.animation_step.job_id,
+                body.animation_step.step_id,
+            )
         chat.raise_if_busy(session_id)
 
         async def events() -> AsyncIterator[str]:
             try:
-                async for chunk in chat.stream_reply(session_id, text, pointing, simplify):
+                async for chunk in chat.stream_reply(
+                    session_id, text, pointing, simplify, animation_step
+                ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})
                     else:
