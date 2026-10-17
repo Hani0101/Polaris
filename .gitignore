@@ -37,3 +37,6 @@ playwright/.cache/
 
 # Live eval reports
 api/evals/reports/
+
+# Animation eval output
+api/evals/results/

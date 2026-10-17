@@ -1,41 +1,52 @@
 import { useEffect, useState } from 'react'
 import { animationMediaUrl } from './animationPath.ts'
+import { isAnimation } from './animation/format.ts'
+import type { Animation } from './animation/format.ts'
+import { ScenePlayer } from './animation/ScenePlayer.tsx'
+import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AlertBanner } from './chat/ui.tsx'
 import './animation.css'
 
 type AnimationPlayerProps = {
   sessionId: string
   jobId: string
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
-type LoadState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; mediaType: string }
-  | { kind: 'failed' }
+type Media = { mediaType: string; animation: Animation | null }
 
-async function probeMediaType(
-  sessionId: string,
-  jobId: string,
-  signal: AbortSignal,
-): Promise<string> {
+type LoadState = { kind: 'loading' } | ({ kind: 'ready' } & Media) | { kind: 'failed' }
+
+async function probeMedia(sessionId: string, jobId: string, signal: AbortSignal): Promise<Media> {
   const response = await fetch(animationMediaUrl(sessionId, jobId), { signal })
   if (!response.ok) {
     throw new Error("Couldn't load the animation.")
   }
-  // Body is discarded; the player loads the same URL again.
+  const mediaType = response.headers.get('content-type') ?? ''
+  if (mediaType.includes('json')) {
+    // A new animation is data that Polaris plays (AN-04).
+    const data: unknown = await response.json()
+    return { mediaType, animation: isAnimation(data) ? data : null }
+  }
+  // Older jobs: the body is discarded and the player loads the same URL again (AN-06).
   await response.arrayBuffer()
-  return response.headers.get('content-type') ?? ''
+  return { mediaType, animation: null }
 }
 
 function Playback({
   sessionId,
   jobId,
   mediaType,
+  animation,
+  onAskAboutStep,
 }: {
   sessionId: string
   jobId: string
-  mediaType: string
-}) {
+  onAskAboutStep?: (ask: AskAboutStep) => void
+} & Media) {
+  if (animation) {
+    return <ScenePlayer animation={animation} jobId={jobId} onAskAboutStep={onAskAboutStep} />
+  }
   const src = animationMediaUrl(sessionId, jobId)
   if (mediaType.startsWith('video/')) {
     return (
@@ -63,15 +74,15 @@ function Playback({
 }
 
 /** A finished animation in its stage (AN-06). Used by the page and the tools panel. */
-export function AnimationPlayer({ sessionId, jobId }: AnimationPlayerProps) {
+export function AnimationPlayer({ sessionId, jobId, onAskAboutStep }: AnimationPlayerProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
-    probeMediaType(sessionId, jobId, controller.signal)
-      .then((mediaType) => {
-        if (!controller.signal.aborted) setState({ kind: 'ready', mediaType })
+    probeMedia(sessionId, jobId, controller.signal)
+      .then((media) => {
+        if (!controller.signal.aborted) setState({ kind: 'ready', ...media })
       })
       .catch(() => {
         if (!controller.signal.aborted) setState({ kind: 'failed' })
@@ -107,7 +118,13 @@ export function AnimationPlayer({ sessionId, jobId }: AnimationPlayerProps) {
           <div className="skeleton an-skeleton-stage" aria-hidden="true" />
         </div>
       ) : (
-        <Playback sessionId={sessionId} jobId={jobId} mediaType={state.mediaType} />
+        <Playback
+          sessionId={sessionId}
+          jobId={jobId}
+          mediaType={state.mediaType}
+          animation={state.animation}
+          onAskAboutStep={onAskAboutStep}
+        />
       )}
     </div>
   )
