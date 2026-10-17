@@ -463,3 +463,72 @@ test('the composer shows an attached picture of the drawing and can remove it', 
   fireEvent.click(screen.getByRole('button', { name: 'Remove picture of your drawing' }))
   expect(onRemovePicture).toHaveBeenCalledTimes(1)
 })
+
+test('the composer shows the animation step being asked about and can remove it (AN-17)', () => {
+  const onRemoveAnimationStep = vi.fn()
+  render(
+    <Conversation
+      turns={[]}
+      draft="Why the left half?"
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+      animationStep={{
+        jobId: 'job-1',
+        stepId: 'discard',
+        stepNumber: 2,
+        caption: '23 is bigger than 17, so the left half cannot hold it.',
+      }}
+      onRemoveAnimationStep={onRemoveAnimationStep}
+    />,
+  )
+
+  expect(screen.getByRole('list', { name: 'Animation step' }).textContent).toContain(
+    'Asking about step 2: 23 is bigger than 17, so the left half cannot hold it.',
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Remove step 2' }))
+  expect(onRemoveAnimationStep).toHaveBeenCalled()
+})
+
+test('a sent turn shows the animation step it asked about', () => {
+  render(
+    <Conversation
+      turns={[
+        {
+          key: 'saved-0',
+          learner: 'Why the left half?',
+          reply: 'Every number there is smaller than 17.',
+          artifacts: [],
+          streaming: false,
+          failed: false,
+          animationStep: { jobId: 'job-1', stepId: 'discard' },
+        },
+      ]}
+      draft=""
+      sending={false}
+      sendError={null}
+      sessionOpen
+      onDraftChange={noop}
+      onSend={noop}
+      onStop={noop}
+      onCopy={noop}
+      onTryAgain={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onStart={noop}
+    />,
+  )
+
+  expect(screen.getByRole('list', { name: 'Animation step' }).textContent).toBe(
+    'Asking about a step of an animation',
+  )
+  expect(screen.queryByRole('button', { name: /Remove/ })).toBeNull()
+})

@@ -3,12 +3,14 @@ import type { ReactNode } from 'react'
 import { Clapperboard, Layers, ListChecks, Presentation } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
 import { AnimationPlayer } from '../AnimationPlayer.tsx'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { QuizCard } from '../QuizCard.tsx'
 import type { PointedPart } from '../whiteboard/pointing.ts'
 import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
+import { stageText, useAnimationJob } from './animationJob.ts'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
 import './tools.css'
 
@@ -30,6 +32,7 @@ type ToolsPanelProps = {
   onOpenAnimation: (sessionId: string, jobId: string) => void
   onQuizGraded: (quiz: Quiz) => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
 /** The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs. */
@@ -42,6 +45,7 @@ export function ToolsPanel({
   onOpenAnimation,
   onQuizGraded,
   onAsk,
+  onAskAboutStep,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
 
@@ -74,6 +78,7 @@ export function ToolsPanel({
           <AnimationTab
             animation={latest(artifacts, isAnimation)}
             onOpenAnimation={onOpenAnimation}
+            onAskAboutStep={onAskAboutStep}
           />
         ) : null}
         {tab === 'artifacts' ? (
@@ -200,9 +205,11 @@ function QuizTab({
 function AnimationTab({
   animation,
   onOpenAnimation,
+  onAskAboutStep,
 }: {
   animation: AnimationArtifact | null
   onOpenAnimation: (sessionId: string, jobId: string) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }) {
   if (!animation) {
     return (
@@ -231,6 +238,7 @@ function AnimationTab({
         key={animation.id}
         sessionId={animation.session_id}
         jobId={animation.id}
+        onAskAboutStep={onAskAboutStep}
       />
     </div>
   )
@@ -304,7 +312,8 @@ function AnimationCard({
   animation: AnimationArtifact
   onOpen: (sessionId: string, jobId: string) => void
 }) {
-  if (animation.status === 'ready') {
+  const { status, stage } = useAnimationJob(animation)
+  if (status === 'ready') {
     return (
       <ClickableCard
         title="Animation"
@@ -317,12 +326,17 @@ function AnimationCard({
     <div className="tools-card">
       <span className="tools-card-row">
         <span className="tools-card-title">Animation</span>
-        {animation.status === 'running' ? <Badge variant="neutral">In progress</Badge> : null}
+        {status === 'running' ? <Badge variant="neutral">In progress</Badge> : null}
       </span>
-      {animation.status === 'running' ? (
+      {status === 'running' && stageText(stage) ? (
+        <span className="tools-card-body" role="status">
+          {stageText(stage)}
+        </span>
+      ) : null}
+      {status === 'running' ? (
         <span className="tools-card-body">Still working. You can keep talking.</span>
       ) : null}
-      {animation.status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}
+      {status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}
     </div>
   )
 }

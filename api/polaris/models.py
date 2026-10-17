@@ -29,6 +29,17 @@ class Pointing:
 
 
 @dataclass(frozen=True)
+class AnimationStep:
+    """The animation step the learner asked about for a turn (AN-17).
+
+    This is turn metadata. It is not part of the animation format.
+    """
+
+    job_id: str
+    step_id: str
+
+
+@dataclass(frozen=True)
 class Turn:
     """One typed learner message and the reply that followed it."""
 
@@ -36,3 +47,4 @@ class Turn:
     reply: str
     artifacts: tuple[dict[str, object], ...] = ()
     pointing: Pointing | None = None
+    animation_step: AnimationStep | None = None

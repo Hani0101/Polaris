@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { getAnimationJob } from './api.ts'
 import { AnimationPlayer } from './AnimationPlayer.tsx'
+import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AlertBanner } from './chat/ui.tsx'
 import './animation.css'
 
@@ -9,6 +10,7 @@ type AnimationPageProps = {
   sessionId: string
   jobId: string
   onBack: () => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
 type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'failed' }
@@ -24,7 +26,7 @@ function AnimationSkeleton() {
   )
 }
 
-export function AnimationPage({ sessionId, jobId, onBack }: AnimationPageProps) {
+export function AnimationPage({ sessionId, jobId, onBack, onAskAboutStep }: AnimationPageProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
@@ -77,7 +79,11 @@ export function AnimationPage({ sessionId, jobId, onBack }: AnimationPageProps) 
           ) : null}
           {state.kind === 'ready' ? (
             <div className="an-page-column">
-              <AnimationPlayer sessionId={sessionId} jobId={jobId} />
+              <AnimationPlayer
+                sessionId={sessionId}
+                jobId={jobId}
+                onAskAboutStep={onAskAboutStep}
+              />
             </div>
           ) : null}
         </div>

@@ -2,8 +2,9 @@ from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from polaris.animation_format import Animation
 from polaris.board_picture import BoardPicture
-from polaris.models import Pointing, Profile, Turn
+from polaris.models import AnimationStep, Pointing, Profile, Turn
 from polaris.whiteboard import Whiteboard
 
 
@@ -29,6 +30,8 @@ class ReplyAgent(Protocol):
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
         picture: BoardPicture | None = None,
+        animations: Sequence[Animation] = (),
+        animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
 

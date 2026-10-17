@@ -54,6 +54,7 @@ class TeachingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         if profile.facts:
@@ -84,6 +85,7 @@ class GatedAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         yield "partial"
@@ -105,10 +107,12 @@ def parse_sse(buffer: str) -> tuple[list[dict], str]:
     return events, rest
 
 
-def post_turn(client: TestClient, session_id: str, message: str) -> list[dict]:
+def post_turn(
+    client: TestClient, session_id: str, message: str, **extra: object
+) -> list[dict]:
     response = client.post(
         f"/api/sessions/{session_id}/turns",
-        json={"message": message},
+        json={"message": message, **extra},
     )
     assert response.status_code == 200, response.text
     events, rest = parse_sse(response.text)
@@ -474,6 +478,7 @@ class SdkIdStub(TeachingStub):
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         async for chunk in super().reply(
             session_id=session_id,
@@ -577,6 +582,7 @@ class BoomAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         raise RuntimeError("Failed to start Claude Code")

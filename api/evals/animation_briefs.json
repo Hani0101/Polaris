@@ -1,0 +1,12 @@
+[
+  {"id": "pendulum", "brief": "Show a simple pendulum swinging. Step 1 shows the pivot, string and bob at rest. Step 2 pulls the bob to one side. Step 3 lets it swing back and forth along its arc. Step 4 labels the highest points as where it moves slowest."},
+  {"id": "binary-search", "brief": "Show binary search finding 23 in the sorted list 3, 8, 12, 17, 23, 31, 40. Each step checks the middle number and throws away the half that cannot hold 23, counting the checks."},
+  {"id": "derivative-slope", "brief": "Show the derivative as a slope. Draw y = x^2 from -3 to 3, put a point on the curve, and show the tangent line at that point. Move the point from x = -2 to x = 2 and show the slope number counting with it."},
+  {"id": "attention", "brief": "Show attention in a transformer for the sentence 'the cat sat'. Step 1 shows the three words. Step 2 picks 'sat' as the query. Step 3 draws arrows from 'sat' to each word with thicker emphasis on 'cat'. Step 4 shows the weighted mix as the new meaning of 'sat'."},
+  {"id": "bubble-sort", "brief": "Show one pass of bubble sort on the list 5, 1, 4, 2. Each step compares two neighbours and swaps them if they are out of order, until the largest number reaches the end."},
+  {"id": "photosynthesis", "brief": "Show photosynthesis in a leaf at a high level: light, water and carbon dioxide go in; glucose and oxygen come out. One step per input, then the outputs."},
+  {"id": "sine-unit-circle", "brief": "Show how a point moving around the unit circle traces the sine wave. The point goes once around the circle while its height is plotted against the angle on a graph beside it."},
+  {"id": "stack-push-pop", "brief": "Show a stack of plates as a data structure. Push 3, push 7, push 1, then pop twice, showing which value comes off each time."},
+  {"id": "fractions-pizza", "brief": "Show a pizza cut into halves, then quarters, then highlight two quarters to show that 2/4 equals 1/2."},
+  {"id": "compound-interest", "brief": "Show compound interest on 100 at 10 percent a year for 5 years. Each step adds one year, counts the balance up, and adds a bar to a growing chart."}
+]

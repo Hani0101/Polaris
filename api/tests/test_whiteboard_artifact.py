@@ -37,6 +37,7 @@ class OneDrawingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, pointing, simplify
         self.whiteboards = whiteboards
@@ -281,6 +282,7 @@ class PointingStub(OneDrawingStub):
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         if not self._drawn:
             async for chunk in super().reply(

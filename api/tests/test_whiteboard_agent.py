@@ -56,6 +56,7 @@ class DrawingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         if not profile.facts:
@@ -408,6 +409,7 @@ class MarkingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         self._replies += 1
@@ -616,6 +618,7 @@ def test_a_failed_reply_discards_its_unattached_whiteboard(make_client):
             whiteboards=(),
             pointing=None,
             simplify=None,
+            **_extra,
         ):
             async for chunk in super().reply(
                 session_id=session_id,
@@ -693,6 +696,7 @@ class SimplerStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del prior_turns, sdk_session_id, whiteboards, pointing
         self.calls += 1

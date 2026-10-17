@@ -55,3 +55,12 @@
   font-weight: var(--font-weight-bold);
   line-height: var(--font-line-height-normal);
 }
+
+/* A running job's stage (AN-19), as small status text under the title. */
+.animation-card-stage {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}

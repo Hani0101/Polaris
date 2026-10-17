@@ -18,6 +18,8 @@ import type {
   WhiteboardArtifact,
 } from './api.ts'
 import { animationPagePath, pathAnimation } from './animationPath.ts'
+import type { AskedStep } from './animation/askedStep.ts'
+import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AnimationPage } from './AnimationPage.tsx'
 import { watchRunningAnimations } from './chat/animationNotices.ts'
 import { ChatShell } from './chat/ChatShell.tsx'
@@ -46,6 +48,7 @@ type PendingTurn = {
   after: number
   failed?: boolean
   pointing: Pointing | null
+  animationStep: AskedStep | null
 }
 
 type KeptTurn = {
@@ -55,6 +58,7 @@ type KeptTurn = {
   reply: string
   artifacts: Artifact[]
   pointing: Pointing | null
+  animationStep: AskedStep | null
 }
 
 function errorText(error: unknown, fallback: string): string {
@@ -109,7 +113,28 @@ function withQuiz(artifacts: Artifact[], quiz: Quiz): Artifact[] {
   )
 }
 
-function savedView(turn: Turn, index: number, boards: WhiteboardArtifact[]): ViewTurn {
+function stepKey(jobId: string, stepId: string): string {
+  return `${jobId}/${stepId}`
+}
+
+/** A saved turn's asked step, with the number and caption when this visit knows them. */
+function savedStep(turn: Turn, known: ReadonlyMap<string, AskedStep>): AskedStep | null {
+  const asked = turn.animation_step
+  if (!asked) return null
+  return (
+    known.get(stepKey(asked.job_id, asked.step_id)) ?? {
+      jobId: asked.job_id,
+      stepId: asked.step_id,
+    }
+  )
+}
+
+function savedView(
+  turn: Turn,
+  index: number,
+  boards: WhiteboardArtifact[],
+  known: ReadonlyMap<string, AskedStep>,
+): ViewTurn {
   return {
     key: `saved-${index}`,
     learner: turn.learner_message,
@@ -118,10 +143,16 @@ function savedView(turn: Turn, index: number, boards: WhiteboardArtifact[]): Vie
     streaming: false,
     failed: false,
     pointing: pointingFromTurn(turn.pointing, boards),
+    animationStep: savedStep(turn, known),
   }
 }
 
-function mergeTurns(saved: Turn[], kept: KeptTurn[], pending: PendingTurn | null): ViewTurn[] {
+function mergeTurns(
+  saved: Turn[],
+  kept: KeptTurn[],
+  pending: PendingTurn | null,
+  known: ReadonlyMap<string, AskedStep>,
+): ViewTurn[] {
   const boards = boardsIn(saved)
   const extras: { id: string; after: number; view: ViewTurn }[] = kept.map((item) => ({
     id: item.id,
@@ -135,6 +166,7 @@ function mergeTurns(saved: Turn[], kept: KeptTurn[], pending: PendingTurn | null
       stopped: true,
       failed: false,
       pointing: item.pointing,
+      animationStep: item.animationStep,
     },
   }))
   if (pending) {
@@ -150,6 +182,7 @@ function mergeTurns(saved: Turn[], kept: KeptTurn[], pending: PendingTurn | null
         stopped: pending.status === 'stopped',
         failed: Boolean(pending.failed),
         pointing: pending.pointing,
+        animationStep: pending.animationStep,
       },
     })
   }
@@ -158,13 +191,13 @@ function mergeTurns(saved: Turn[], kept: KeptTurn[], pending: PendingTurn | null
   let index = 0
   for (const extra of extras) {
     while (index < extra.after && index < saved.length) {
-      items.push(savedView(saved[index], index, boards))
+      items.push(savedView(saved[index], index, boards, known))
       index += 1
     }
     items.push(extra.view)
   }
   while (index < saved.length) {
-    items.push(savedView(saved[index], index, boards))
+    items.push(savedView(saved[index], index, boards, known))
     index += 1
   }
   return items
@@ -178,6 +211,9 @@ function App() {
   const [pointing, setPointing] = useState<Pointing | null>(null)
   // The latest picture of a board the learner drew on, for their next message.
   const [picture, setPicture] = useState<BoardPicture | null>(null)
+  const [askedStep, setAskedStep] = useState<AskedStep | null>(null)
+  // Steps asked about in this visit, so a saved turn's chip can name them.
+  const [knownSteps, setKnownSteps] = useState<ReadonlyMap<string, AskedStep>>(() => new Map())
   const [pending, setPending] = useState<PendingTurn | null>(null)
   const [kept, setKept] = useState<KeptTurn[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -195,8 +231,8 @@ function App() {
   const toastTimer = useRef<number | null>(null)
 
   const turns = useMemo(
-    () => mergeTurns(open?.turns ?? [], kept, pending),
-    [open, kept, pending],
+    () => mergeTurns(open?.turns ?? [], kept, pending, knownSteps),
+    [open, kept, pending, knownSteps],
   )
 
   const artifacts = useMemo(
@@ -316,6 +352,7 @@ function App() {
     setDraft('')
     setPointing(null)
     setPicture(null)
+    setAskedStep(null)
     setSendError(null)
   }
 
@@ -429,10 +466,22 @@ function App() {
     })
   }
 
+  function askAboutStep(ask: AskAboutStep) {
+    const step: AskedStep = {
+      jobId: ask.jobId,
+      stepId: ask.stepId,
+      stepNumber: ask.stepNumber,
+      caption: ask.caption,
+    }
+    setAskedStep(step)
+    setKnownSteps((current) => new Map(current).set(stepKey(step.jobId, step.stepId), step))
+  }
+
   async function sendMessage(
     message: string,
     attached: Pointing | null = pointing,
     simplifies: string | null = null,
+    step: AskedStep | null = askedStep,
   ) {
     if (!open || sending.current) return
     if (pending?.status === 'streaming') return
@@ -443,6 +492,7 @@ function App() {
     setDraft('')
     setPointing(null)
     if (sentPicture) setPicture(null)
+    setAskedStep(null)
     const after =
       open.turns.length + kept.length + (pending?.status === 'stopped' ? 1 : 0)
     if (pending?.status === 'stopped') {
@@ -456,6 +506,7 @@ function App() {
           reply: stopped.reply,
           artifacts: stopped.artifacts,
           pointing: stopped.pointing,
+          animationStep: stopped.animationStep,
         },
       ])
     }
@@ -466,6 +517,7 @@ function App() {
       status: 'streaming',
       after,
       pointing: attached,
+      animationStep: step,
     })
     const controller = new AbortController()
     sendAbort.current = controller
@@ -487,7 +539,13 @@ function App() {
               : current,
           )
         },
-        { signal: controller.signal, pointing: attached, simplifies, picture: sentPicture },
+        {
+          signal: controller.signal,
+          pointing: attached,
+          simplifies,
+          picture: sentPicture,
+          animationStep: step,
+        },
       )
       if (controller.signal.aborted) return
       setPending((current) =>
@@ -510,6 +568,7 @@ function App() {
         setDraft(message)
         setPointing(attached)
         if (sentPicture) setPicture(sentPicture)
+        setAskedStep(step)
         setSendError(errorText(caught, fallback))
       }
     } finally {
@@ -526,12 +585,16 @@ function App() {
 
   async function askSimpler(whiteboardId: string) {
     if (pathWhiteboard(window.location.pathname)) goTo('/')
-    await sendMessage(SIMPLER_REQUEST, null, whiteboardId)
+    await sendMessage(SIMPLER_REQUEST, null, whiteboardId, null)
   }
 
-  async function onTryAgain(learnerMessage: string, again?: Pointing | null) {
+  async function onTryAgain(
+    learnerMessage: string,
+    again?: Pointing | null,
+    againStep?: AskedStep | null,
+  ) {
     if (!open || sending.current) return
-    await sendMessage(learnerMessage, again ?? null)
+    await sendMessage(learnerMessage, again ?? null, null, againStep ?? null)
   }
 
   if (import.meta.env.DEV && DevWhiteboardRoute && path === '/dev/whiteboard') {
@@ -592,6 +655,14 @@ function App() {
           sessionId={animationRoute.sessionId}
           jobId={animationRoute.jobId}
           onBack={() => void onBackFromCover()}
+          onAskAboutStep={
+            open?.id === animationRoute.sessionId
+              ? (ask) => {
+                  askAboutStep(ask)
+                  goTo('/')
+                }
+              : undefined
+          }
         />
       ) : null}
       <div
@@ -623,7 +694,7 @@ function App() {
           onSend={(event) => void onSend(event)}
           onStop={onStop}
           onCopy={(text) => void onCopy(text)}
-          onTryAgain={(message, again) => void onTryAgain(message, again)}
+          onTryAgain={(message, again, againStep) => void onTryAgain(message, again, againStep)}
           onOpenQuiz={(id) => goTo(quizPath(id))}
           onOpenWhiteboard={(id) => {
             if (!open) return
@@ -638,6 +709,9 @@ function App() {
           pictureAttached={picture !== null}
           onRemovePicture={() => setPicture(null)}
           onAsk={askAbout}
+          animationStep={askedStep}
+          onAskAboutStep={askAboutStep}
+          onRemoveAnimationStep={() => setAskedStep(null)}
           toast={toast}
           onCloseToast={() => setToast(null)}
           artifacts={artifacts}

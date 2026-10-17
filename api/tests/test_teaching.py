@@ -885,6 +885,7 @@ def test_bind_store_sends_start_animation_job_through_chat(tmp_path: Path):
         "kind": "animation",
         "session_id": session["id"],
         "status": "running",
+        "stage": "writing",
     }
     assert "code" not in stored
 

@@ -1,6 +1,8 @@
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
 import type { FormEvent } from 'react'
 import type { Artifact, Quiz, SessionSummary } from '../api.ts'
+import type { AskedStep } from '../animation/askedStep.ts'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { Conversation } from './Conversation.tsx'
@@ -44,7 +46,11 @@ type ChatShellProps = {
   onSend: (event: FormEvent<HTMLFormElement>) => void
   onStop: () => void
   onCopy: (text: string) => void
-  onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
+  onTryAgain: (
+    learnerMessage: string,
+    pointing?: Pointing | null,
+    animationStep?: AskedStep | null,
+  ) => void
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation: (sessionId: string, jobId: string) => void
@@ -54,6 +60,9 @@ type ChatShellProps = {
   pictureAttached?: boolean
   onRemovePicture?: () => void
   onAsk: (whiteboardId: string, parts: PointedPart[]) => void
+  animationStep?: AskedStep | null
+  onAskAboutStep?: (ask: AskAboutStep) => void
+  onRemoveAnimationStep?: () => void
   toast: string | null
   onCloseToast: () => void
   artifacts?: Artifact[]
@@ -96,6 +105,9 @@ export function ChatShell({
   pictureAttached,
   onRemovePicture,
   onAsk,
+  animationStep = null,
+  onAskAboutStep,
+  onRemoveAnimationStep,
   toast,
   onCloseToast,
   artifacts = [],
@@ -120,6 +132,7 @@ export function ChatShell({
     onOpenAnimation,
     onQuizGraded,
     onAsk,
+    onAskAboutStep,
   }
 
   return (
@@ -186,6 +199,8 @@ export function ChatShell({
           onRemovePoint={onRemovePoint}
           pictureAttached={pictureAttached}
           onRemovePicture={onRemovePicture}
+          animationStep={animationStep}
+          onRemoveAnimationStep={onRemoveAnimationStep}
           onAsk={onAsk}
           onOpenTools={phone ? () => setSheetOpen(true) : undefined}
           toolsButtonRef={toolsButton}
