@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
+from polaris.lottie_writer import LottieAnimationWriter
 from polaris.chat import (
     BlankMessage,
     Chat,
@@ -84,7 +86,11 @@ def create_app(
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
-        animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        # Experiment: Lottie videos unless POLARIS_ANIMATION_WRITER=format.
+        if os.environ.get("POLARIS_ANIMATION_WRITER") == "format":
+            animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        else:
+            animation_writer = LottieAnimationWriter(data_dir / "lottie-work")
     chat = Chat(
         data_dir,
         agent,

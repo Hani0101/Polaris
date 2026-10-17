@@ -53,7 +53,22 @@ from claude_agent_sdk import (
 )
 
 from polaris.agent import ReplyResult
-from polaris.animation_format import Animation, describe_animation, describe_step
+from polaris.animation import StoredAnimation as Animation
+from polaris.animation_format import describe_animation as _describe_format_animation
+from polaris.animation_format import describe_step as _describe_format_step
+from polaris.lottie_video import LottieVideo, describe_lottie_step, describe_lottie_video
+
+
+def describe_animation(animation: Animation) -> str:
+    if isinstance(animation, LottieVideo):
+        return describe_lottie_video(animation)
+    return _describe_format_animation(animation)
+
+
+def describe_step(animation: Animation, index: int) -> str:
+    if isinstance(animation, LottieVideo):
+        return describe_lottie_step(animation, index)
+    return _describe_format_step(animation, index)
 from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.models import AnimationStep, Pointing, Profile, Turn

@@ -19,6 +19,10 @@ from pathlib import Path
 from typing import Any
 
 from polaris.animation_format import Animation, check_animation
+from polaris.lottie_video import LottieVideo, check_lottie_video, is_lottie_video
+
+# Either format can be stored: Polaris's own animation data or a Lottie video.
+StoredAnimation = Animation | LottieVideo
 
 RUNNING = "running"
 READY = "ready"
@@ -94,7 +98,7 @@ def find_playback(work_dir: Path | str) -> PlaybackFile | None:
     return None
 
 
-def load_animation(work_dir: Path | str) -> Animation | None:
+def load_animation(work_dir: Path | str) -> StoredAnimation | None:
     """The stored animation of a ready job, or None for an older format."""
 
     path = Path(work_dir) / ANIMATION_FILE
@@ -104,6 +108,11 @@ def load_animation(work_dir: Path | str) -> Animation | None:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+    if is_lottie_video(data):
+        try:
+            return LottieVideo.model_validate(data)
+        except ValueError:
+            return None
     return check_animation(data).animation
 
 
@@ -185,17 +194,18 @@ def submit_animation(
         )
 
     runs = runs_before + 1
-    if isinstance(data, dict):
+    stored: StoredAnimation | None = None
+    if is_lottie_video(data):
+        checked_video = check_lottie_video({**data, "id": job_id})
+        stored, errors = checked_video.video, checked_video.errors
+    elif isinstance(data, dict):
         checked = check_animation({**data, "id": job_id})
-        errors = checked.errors
+        stored, errors = checked.animation, checked.errors
     else:
-        checked = None
         errors = [NOT_AN_OBJECT_ERROR]
-    if checked is not None and checked.animation is not None:
+    if stored is not None:
         path = Path(work_dir) / ANIMATION_FILE
-        path.write_text(
-            json.dumps(checked.animation.model_dump(mode="json")), encoding="utf-8"
-        )
+        path.write_text(json.dumps(stored.model_dump(mode="json")), encoding="utf-8")
         return AnimationAttempt(ok=True, status=READY, runs=runs)
     if runs >= MAX_RUNS:
         return AnimationAttempt(
