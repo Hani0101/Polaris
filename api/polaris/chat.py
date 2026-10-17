@@ -5,6 +5,7 @@ The teaching agent does not write the profile. The session-end pass does.
 
 import asyncio
 import json
+import re
 import sqlite3
 import threading
 import uuid
@@ -33,6 +34,11 @@ from polaris.animation import (
 )
 from polaris.animation_format import Animation
 from polaris.animation_writer import AnimationWriter, new_cli_loop
+from polaris.manim_job import (
+    ManimDraftData,
+    manifest_animation,
+    produce_manim,
+)
 from polaris.login import ApiKeyPresent
 from polaris.board_picture import BoardPicture, picture_errors
 from polaris.models import AnimationStep, Fact, Pointing, Profile, Turn
@@ -182,6 +188,15 @@ def quizzes_for_reply(turns: tuple[Turn, ...]) -> list[dict[str, object]]:
         for artifact in turn.artifacts
         if artifact.get("kind") == "quiz"
     ]
+
+
+# Files of a Manim job the browser may read. The scene code is not one.
+_MANIM_ASSETS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"manim\.json"), "application/json"),
+    (re.compile(r"captions\.vtt"), "text/vtt; charset=utf-8"),
+    (re.compile(r"steps/step-\d{2}\.mp4"), "video/mp4"),
+    (re.compile(r"posters/step-\d{2}\.png"), "image/png"),
+)
 
 
 class Chat:
@@ -583,6 +598,9 @@ class Chat:
         """
 
         loop = new_cli_loop()
+        if getattr(writer, "engine", None) == "manim":
+            self._run_manim_job(writer, loop, session_id, job_id, brief)
+            return
         last_data: dict[str, Any] | None = None
 
         def write_animation(errors: list[str] | None) -> dict[str, Any]:
@@ -600,6 +618,54 @@ class Chat:
             self.produce_animation_job(session_id, job_id, write_animation)
         except MissingJob:
             # The turn that started the job failed and was discarded.
+            pass
+        except Exception:
+            self._fail_animation_job(session_id, job_id)
+        finally:
+            loop.close()
+            with self._lock:
+                self._animation_threads.pop(job_id, None)
+
+    def _run_manim_job(
+        self,
+        writer: Any,
+        loop: asyncio.AbstractEventLoop,
+        session_id: str,
+        job_id: str,
+        brief: str,
+    ) -> None:
+        """Worker for the Manim experiment: draft, render, fix (AN-05, AN-19)."""
+
+        def write_draft(
+            failed_code: str | None, errors: list[str] | None
+        ) -> ManimDraftData:
+            draft = loop.run_until_complete(
+                writer.write(
+                    brief,
+                    failed_code=failed_code,
+                    errors=errors,
+                    preview_dir=self.animation_work_dir(job_id) / "previews",
+                )
+            )
+            return ManimDraftData(
+                title=draft.title, description=draft.description, code=draft.code
+            )
+
+        try:
+            self.get_animation_job(session_id, job_id)
+            result = produce_manim(
+                job_id=job_id,
+                work_dir=self.animation_work_dir(job_id),
+                write_draft=write_draft,
+                on_stage=lambda stage: self._set_animation_stage(job_id, stage),
+            )
+            self._set_animation_status(job_id, result.status)
+            if result.session_notice:
+                with self._lock:
+                    self._animation_notices.setdefault(session_id, []).append(
+                        result.session_notice
+                    )
+        except MissingJob:
             pass
         except Exception:
             self._fail_animation_job(session_id, job_id)
@@ -679,6 +745,19 @@ class Chat:
             raise MissingPlayback()
         return found
 
+    def get_animation_asset(self, session_id: str, job_id: str, name: str) -> PlaybackFile:
+        """A step clip, poster, captions, or manifest of a ready Manim job."""
+
+        job = self.get_animation_job(session_id, job_id)
+        if job["status"] != JOB_READY:
+            raise MissingPlayback()
+        for pattern, media_type in _MANIM_ASSETS:
+            if pattern.fullmatch(name):
+                path = self.animation_work_dir(job_id) / name
+                if path.is_file():
+                    return PlaybackFile(path=path.resolve(), media_type=media_type)
+        raise MissingPlayback()
+
     def animation_for_reply(self, session_id: str, job_id: str) -> Animation | None:
         """The stored animation of a ready job in this session, if it is in the format."""
 
@@ -688,7 +767,8 @@ class Chat:
             return None
         if job["status"] != JOB_READY:
             return None
-        return load_animation(self.animation_work_dir(job_id))
+        work_dir = self.animation_work_dir(job_id)
+        return load_animation(work_dir) or manifest_animation(work_dir)
 
     def animations_for_reply(self, session_id: str) -> list[Animation]:
         """Ready animations a later turn can see, oldest first (AN-16)."""
@@ -708,7 +788,8 @@ class Chat:
 
         animations: list[Animation] = []
         for job_id in self._with_db(read):
-            found = load_animation(self.data_dir / "animation" / job_id)
+            work_dir = self.data_dir / "animation" / job_id
+            found = load_animation(work_dir) or manifest_animation(work_dir)
             if found is not None:
                 animations.append(found)
         return animations

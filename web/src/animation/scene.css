@@ -239,3 +239,11 @@
   outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
   outline-offset: var(--component-focus-ring-offset);
 }
+
+/* A Manim step clip or its last frame (feat/manim-experiment). 4:3, like the canvas. */
+.an-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+}

@@ -67,3 +67,38 @@ test('JSON that is not an animation is not drawn', async () => {
   ).toBeTruthy()
   expect(screen.queryByRole('img')).toBeNull()
 })
+
+test('a Manim video plays one step at a time with its captions (experiment)', async () => {
+  const manifest = {
+    engine: 'manim',
+    id: 'job-1',
+    title: 'Slope',
+    description: 'A tangent line moves along a curve.',
+    steps: [
+      { id: 'step-1', caption: 'Here is the curve.', start_s: 0, duration_s: 2 },
+      { id: 'step-2', caption: 'The tangent moves.', start_s: 2, duration_s: 3 },
+    ],
+  }
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (url: string) =>
+      url.endsWith('/manim.json')
+        ? new Response(JSON.stringify(manifest), { headers: { 'Content-Type': 'application/json' } })
+        : new Response(null, { headers: { 'Content-Type': 'video/mp4' } }),
+    ),
+  )
+  const onAskAboutStep = vi.fn()
+
+  render(<AnimationPlayer sessionId="s-1" jobId="job-1" onAskAboutStep={onAskAboutStep} />)
+
+  expect(await screen.findByText('Here is the curve.')).toBeTruthy()
+  expect(document.querySelector('video')?.getAttribute('src')).toBe(
+    '/api/sessions/s-1/jobs/job-1/manim/steps/step-01.mp4',
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+  expect(screen.getByText('The tangent moves.')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Ask about this step' }))
+  expect(onAskAboutStep).toHaveBeenCalledWith(
+    expect.objectContaining({ jobId: 'job-1', stepId: 'step-2', stepNumber: 2 }),
+  )
+})

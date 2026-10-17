@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react'
-import { animationMediaUrl } from './animationPath.ts'
+import { animationManimUrl, animationMediaUrl } from './animationPath.ts'
 import { isAnimation } from './animation/format.ts'
 import type { Animation } from './animation/format.ts'
 import { ScenePlayer } from './animation/ScenePlayer.tsx'
 import type { AskAboutStep } from './animation/ScenePlayer.tsx'
+import { isManimManifest } from './animation/manim.ts'
+import type { ManimManifest } from './animation/manim.ts'
+import { VideoStepPlayer } from './animation/VideoStepPlayer.tsx'
 import { AlertBanner } from './chat/ui.tsx'
 import './animation.css'
 
@@ -13,7 +16,7 @@ type AnimationPlayerProps = {
   onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
-type Media = { mediaType: string; animation: Animation | null }
+type Media = { mediaType: string; animation: Animation | null; manim?: ManimManifest | null }
 
 type LoadState = { kind: 'loading' } | ({ kind: 'ready' } & Media) | { kind: 'failed' }
 
@@ -30,6 +33,18 @@ async function probeMedia(sessionId: string, jobId: string, signal: AbortSignal)
   }
   // Older jobs: the body is discarded and the player loads the same URL again (AN-06).
   await response.arrayBuffer()
+  if (mediaType.startsWith('video/')) {
+    // A Manim job keeps a manifest of its steps beside the video (experiment).
+    try {
+      const manifest = await fetch(animationManimUrl(sessionId, jobId, 'manim.json'), { signal })
+      if (manifest.ok) {
+        const data: unknown = await manifest.json()
+        if (isManimManifest(data)) return { mediaType, animation: null, manim: data }
+      }
+    } catch {
+      // No manifest: an older video plays in the browser's player.
+    }
+  }
   return { mediaType, animation: null }
 }
 
@@ -38,12 +53,23 @@ function Playback({
   jobId,
   mediaType,
   animation,
+  manim,
   onAskAboutStep,
 }: {
   sessionId: string
   jobId: string
   onAskAboutStep?: (ask: AskAboutStep) => void
 } & Media) {
+  if (manim) {
+    return (
+      <VideoStepPlayer
+        manifest={manim}
+        sessionId={sessionId}
+        jobId={jobId}
+        onAskAboutStep={onAskAboutStep}
+      />
+    )
+  }
   if (animation) {
     return <ScenePlayer animation={animation} jobId={jobId} onAskAboutStep={onAskAboutStep} />
   }
@@ -123,6 +149,7 @@ export function AnimationPlayer({ sessionId, jobId, onAskAboutStep }: AnimationP
           jobId={jobId}
           mediaType={state.mediaType}
           animation={state.animation}
+          manim={state.manim}
           onAskAboutStep={onAskAboutStep}
         />
       )}
