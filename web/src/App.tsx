@@ -4,6 +4,8 @@ import {
   getSession,
   leaveSession,
   listSessions,
+  renameSession,
+  sessionLabel,
   openSession,
   sendTurn,
   startSession,
@@ -308,6 +310,15 @@ function App() {
     const nextSessions = await listSessions(signal)
     if (signal?.aborted) return
     setSessions(nextSessions)
+  }
+
+  async function onRename(sessionId: string, name: string) {
+    const saved = await renameSession(sessionId, name)
+    setSessions((current) =>
+      current.map((session) =>
+        session.id === sessionId ? { ...session, name: saved.name } : session,
+      ),
+    )
   }
 
   async function loadSessions() {
@@ -641,7 +652,7 @@ function App() {
   }
 
   const sessionTitle = open
-    ? sessions.find((session) => session.id === open.id)?.preview || 'New session'
+    ? sessionLabel(sessions.find((session) => session.id === open.id))
     : null
 
   return (
@@ -698,6 +709,7 @@ function App() {
           onCloseSessions={() => setSessionListOpen(false)}
           onStart={() => void onStart()}
           onOpen={(sessionId) => void onOpen(sessionId)}
+          onRename={onRename}
           onLeave={() => void onLeave()}
           turns={turns}
           draft={draft}

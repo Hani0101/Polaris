@@ -12,6 +12,10 @@ _Avoid_: user, student, account
 One conversation between the learner and the agent.
 _Avoid_: thread, sign-in
 
+**Session name**:
+The label the learner gives a session. A session without one is labelled with its first message.
+_Avoid_: title, chat name, topic
+
 **Sign-in**:
 The local page where the learner enters a username and a password so that Polaris keeps and uses their profile. It is optional.
 _Avoid_: account, OAuth, Claude login, passphrase

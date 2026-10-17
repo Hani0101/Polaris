@@ -24,6 +24,7 @@ from polaris.chat import (
     InvalidPicture,
     InvalidPointing,
     MissingSession,
+    NameTooLong,
     ReplyInProgress,
     SessionEnded,
 )
@@ -49,6 +50,10 @@ class PictureBody(BaseModel):
 class AnimationStepBody(BaseModel):
     job_id: str
     step_id: str
+
+
+class NameBody(BaseModel):
+    name: str
 
 
 class TurnBody(BaseModel):
@@ -153,6 +158,10 @@ def create_app(
     async def missing_session(_request, exc: MissingSession) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
+    @app.exception_handler(NameTooLong)
+    async def name_too_long(_request, exc: NameTooLong) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.exception_handler(BlankMessage)
     async def blank_message(_request, exc: BlankMessage) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
@@ -244,6 +253,10 @@ def create_app(
     @app.get("/api/sessions/{session_id}")
     def read_session(session_id: str) -> dict[str, object]:
         return chat.get(session_id)
+
+    @app.patch("/api/sessions/{session_id}")
+    def rename_session(session_id: str, body: NameBody) -> dict[str, object]:
+        return chat.rename(session_id, body.name)
 
     @app.post("/api/sessions/{session_id}/open")
     async def open_session(session_id: str) -> dict[str, object]:

@@ -37,6 +37,7 @@ type ChatShellProps = {
   onCloseSessions: () => void
   onStart: () => void
   onOpen: (sessionId: string) => void
+  onRename: (sessionId: string, name: string) => Promise<void>
   onLeave: () => void
   turns: ViewTurn[]
   draft: string
@@ -86,6 +87,7 @@ export function ChatShell({
   onCloseSessions,
   onStart,
   onOpen,
+  onRename,
   onLeave,
   turns,
   draft,
@@ -169,6 +171,7 @@ export function ChatShell({
           onClose={onCloseSessions}
           onStart={onStart}
           onOpen={onOpen}
+          onRename={onRename}
         />
         {sessionListOpen ? (
           <button

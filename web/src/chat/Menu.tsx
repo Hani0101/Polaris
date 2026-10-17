@@ -27,6 +27,8 @@ type DropdownMenuProps = {
   children: ReactNode
   items: MenuItem[]
   triggerClassName?: string
+  /** The menu opens from inside the drawer, so it must sit above it. */
+  overDrawer?: boolean
   /** Shows the button as the selected tool. */
   pressed?: boolean
   disabled?: boolean
@@ -67,6 +69,7 @@ export function DropdownMenu({
   children,
   items,
   triggerClassName,
+  overDrawer,
   pressed,
   disabled,
 }: DropdownMenuProps) {
@@ -188,7 +191,13 @@ export function DropdownMenu({
               id={menuId}
               role="menu"
               aria-label={label}
-              className={place.above ? 'dropdown-menu is-above' : 'dropdown-menu'}
+              className={[
+                'dropdown-menu',
+                place.above ? 'is-above' : '',
+                overDrawer ? 'is-over-drawer' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               data-state={open ? 'open' : 'closing'}
               style={{ left: place.left, top: place.top }}
               onKeyDown={onMenuKeyDown}

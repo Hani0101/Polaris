@@ -92,6 +92,10 @@ button.destructive:disabled {
   padding-top: var(--space-xs);
 }
 
+.modal-alert {
+  margin-top: var(--space-md);
+}
+
 .modal-body {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-regular);
@@ -122,6 +126,13 @@ button.destructive:disabled {
 }
 
 /* Dropdown menu */
+
+/* Opened from inside the drawer, which sits above the usual menu layer.
+   DS-GAP: no layer is defined for a menu in a drawer; used zIndex.modal. */
+.dropdown-menu.is-over-drawer {
+  z-index: var(--z-index-modal);
+}
+
 
 .dropdown-menu {
   position: fixed;

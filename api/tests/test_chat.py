@@ -688,3 +688,65 @@ def test_unexpected_teaching_failure_yields_an_sse_error(make_client):
     assert "Failed to start Claude Code" in errors[0]
     assert not any(event.get("done") for event in events)
     assert client.get(f"/api/sessions/{session['id']}").json()["turns"] == []
+
+
+def test_a_session_can_be_named(make_client):  # CH-06
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+
+    renamed = client.patch(f"/api/sessions/{session['id']}", json={"name": "  Fractions "})
+
+    assert renamed.status_code == 200
+    assert renamed.json() == {"id": session["id"], "name": "Fractions"}
+    listed = client.get("/api/sessions").json()["sessions"][0]
+    assert listed["name"] == "Fractions"
+    assert listed["preview"] == "What is a fraction?"
+
+
+def test_an_unnamed_session_has_no_name(make_client):  # CH-06
+    client, _agent = make_client()
+    client.post("/api/sessions")
+
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == ""
+
+
+def test_a_blank_name_removes_the_name(make_client):  # CH-07
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Fractions"})
+
+    cleared = client.patch(f"/api/sessions/{session['id']}", json={"name": "   "})
+
+    assert cleared.status_code == 200
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == ""
+
+
+def test_a_name_over_the_limit_is_refused(make_client):  # CH-07
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+
+    assert client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 80}).status_code == 200
+    refused = client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 81})
+
+    assert refused.status_code == 422
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == "a" * 80
+
+
+def test_naming_an_unknown_session_is_not_found(make_client):
+    client, _agent = make_client()
+
+    assert client.patch("/api/sessions/nope", json={"name": "x"}).status_code == 404
+
+
+def test_naming_leaves_an_ended_session_as_it_was(make_client):  # CH-08
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Remember this")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    before = client.get(f"/api/sessions/{session['id']}").json()
+
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Kept"})
+
+    assert client.get(f"/api/sessions/{session['id']}").json() == before
+    assert before["ended"] is True

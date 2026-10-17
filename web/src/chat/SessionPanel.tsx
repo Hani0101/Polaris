@@ -1,4 +1,9 @@
+import { useState } from 'react'
+import { Ellipsis, Pencil } from 'lucide-react'
+import { ApiError, sessionLabel } from '../api.ts'
 import type { SessionSummary } from '../api.ts'
+import { DropdownMenu } from './Menu.tsx'
+import { RenameDialog } from './RenameDialog.tsx'
 import { CloseIcon, EmptyState, IconButton } from './ui.tsx'
 
 type SessionPanelProps = {
@@ -9,6 +14,7 @@ type SessionPanelProps = {
   onClose: () => void
   onStart: () => void
   onOpen: (sessionId: string) => void
+  onRename: (sessionId: string, name: string) => Promise<void>
 }
 
 export function SessionPanel({
@@ -19,7 +25,35 @@ export function SessionPanel({
   onClose,
   onStart,
   onOpen,
+  onRename,
 }: SessionPanelProps) {
+  // The session being renamed stays set while the dialog fades out.
+  const [target, setTarget] = useState<SessionSummary | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [value, setValue] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
+
+  function startRename(session: SessionSummary) {
+    setTarget(session)
+    setValue(session.name)
+    setRenameError(null)
+    setRenaming(true)
+  }
+
+  async function saveRename() {
+    if (!target) return
+    try {
+      await onRename(target.id, value)
+      setRenaming(false)
+    } catch (caught) {
+      setRenameError(
+        caught instanceof ApiError
+          ? caught.message
+          : "Couldn't rename the session. Check your connection and try again.",
+      )
+    }
+  }
+
   return (
     <nav
       id="session-panel"
@@ -51,24 +85,51 @@ export function SessionPanel({
       {!loading && sessions.length > 0 ? (
         <ul className="session-list">
           {sessions.map((session) => (
-            <li key={session.id}>
+            <li
+              key={session.id}
+              className={openId === session.id ? 'session-row is-current' : 'session-row'}
+            >
               <button
                 type="button"
                 className="session-item"
                 aria-current={openId === session.id ? 'page' : undefined}
                 onClick={() => onOpen(session.id)}
               >
-                <span className="session-item-title">
-                  {session.preview || 'New session'}
-                </span>
+                <span className="session-item-title">{sessionLabel(session)}</span>
                 {session.ended ? (
                   <span className="session-item-meta">Ended</span>
                 ) : null}
               </button>
+              <DropdownMenu
+                label={`Actions for ${sessionLabel(session)}`}
+                triggerClassName="icon-btn icon-btn--ghost icon-btn--sm"
+                overDrawer
+                items={[
+                  {
+                    id: 'rename',
+                    label: 'Rename',
+                    icon: <Pencil size={20} strokeWidth={2} aria-hidden="true" />,
+                    onSelect: () => startRename(session),
+                  },
+                ]}
+              >
+                <Ellipsis size={20} strokeWidth={2} aria-hidden="true" />
+              </DropdownMenu>
             </li>
           ))}
         </ul>
       ) : null}
+      <RenameDialog
+        open={renaming}
+        value={value}
+        error={renameError}
+        onChange={(next) => {
+          setValue(next)
+          setRenameError(null)
+        }}
+        onSave={() => void saveRename()}
+        onCancel={() => setRenaming(false)}
+      />
     </nav>
   )
 }

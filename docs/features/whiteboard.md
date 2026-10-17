@@ -27,6 +27,11 @@ A version 4 whiteboard includes a `description`, and so do versions 5, 6, and 7.
 
 A simpler version is a new whiteboard with a description. Its optional `simplifies` field is the id of the earlier whiteboard, or the field is absent. The format version is not increased. The earlier whiteboard is not changed or deleted. The new drawing is refused unless it has fewer elements than the earlier one, and at least one. Elements include marks. Comments do not count. The learner asks with the Simpler action, which sends the turn. That turn attaches `describe_whiteboard` of the earlier whiteboard and does not send an image.
 
+WB-18  The learner can create a new whiteboard from the Whiteboard tab, as many as they like. Each is an empty board stored as an artifact of the session (WB-04).
+WB-19  A whiteboard the learner creates or opens is pinned above the conversation, with the composer below it. One board is pinned at a time. While a board is pinned, every turn is about it. The learner can expand it, draw and comment on it as usual (WB-02), collapse it, and close it. Closing it unpins it, and later turns are no longer about it.
+WB-20  The agent can add its own parts to the pinned board, as a new step, next to what the learner drew. It never changes or deletes the learner's parts or comments. The learner can tell the agent's parts from their own, as with marks (WB-09).
+WB-21  A save of the learner's drawing never removes a part the agent added, including one added after the learner's browser last loaded the board.
+
 WB-07, WB-14, and WB-15 are kept for later rules: replay step by step, the learner finishing a drawing, and undo history.
 
 A drawing that contains a math or code element is version 5 and includes a description, under the same rules as version 4. `check_drawing` still accepts versions 2, 3, 4, and 5. A version 5 drawing with no math or code is allowed when the description is valid. Marks and a simpler redraw keep working on version 5. Version 2, 3, and 4 drawings with no math or code still open.
@@ -39,7 +44,21 @@ On version 7, a rectangle or ellipse may have a `label`, drawn inside it and cen
 
 ### The whiteboard tools
 
-The agent has three whiteboard tools. `draw_whiteboard` draws a new whiteboard. `mark_whiteboard` adds marks to a stored whiteboard (WB-09); it takes the whiteboard id, a new step id, its `reply_part`, and the marks, and Polaris sets each mark's kind and author. `simplify_whiteboard` draws a simpler redraw (WB-11) and needs `simplifies`. Each schema types its fields, but list fields still accept JSON text and little is required, so a drawing with mistakes reaches `check_drawing` and its fix limit. The three tools share one fix count per turn.
+The agent has four whiteboard tools; the fourth, `extend_whiteboard`, is described under "The agent draws on the pinned board". `draw_whiteboard` draws a new whiteboard. `mark_whiteboard` adds marks to a stored whiteboard (WB-09); it takes the whiteboard id, a new step id, its `reply_part`, and the marks, and Polaris sets each mark's kind and author. `simplify_whiteboard` draws a simpler redraw (WB-11) and needs `simplifies`. Each schema types its fields, but list fields still accept JSON text and little is required, so a drawing with mistakes reaches `check_drawing` and its fix limit. The four tools share one fix count per turn.
+
+### The pinned whiteboard
+
+A new whiteboard is version 7 with no parts and the description "Blank whiteboard". `readable_description` rebuilds the text a screen reader reads from the learner's shapes and comments as they draw (WB-10). Creating a board pins it. Opening a board from the Whiteboard tab or from an artifact card in the chat pins it in place of the one pinned before. Closing the pinned board leaves the other boards as artifacts.
+
+While a board is pinned, the turn attaches the full text description of that board, and the picture of the learner's drawing under the rules in "A picture of the learner's drawing". Pointing at a part (WB-08) narrows the turn to that part. With no board pinned, those two attachments are not sent, and the prompt follows "Whiteboards in the prompt".
+
+The pinned board is about a third of the screen height on a phone, with controls to expand it to the full screen and to collapse it back (WB-16). A new board the agent draws as its own artifact does not replace the pinned board. It appears as an artifact card in the chat.
+
+### The agent draws on the pinned board
+
+The fourth whiteboard tool, `extend_whiteboard`, takes the whiteboard id, a new step id, its `reply_part`, and the agent's parts, and Polaris sets each part's author. The step appears as its `reply_part` arrives (WB-06). The parts are placed in free space next to the learner's drawing and are checked like any new drawing: `check_drawing` and `layout_problems` apply to the agent's parts, and the learner's parts are never at fault. The tool shares the one fix count per turn with the other whiteboard tools. This adds a field to version 7 and does not add a version ([decision 0006](../decisions/0006-one-drawing-format-version.md)).
+
+A learner save replaces only the learner's parts and comments. The backend keeps every agent part already stored, so a stale save loses nothing. The browser shows a new agent step on the pinned board as it arrives.
 
 ### Layout checks
 
@@ -173,6 +192,40 @@ Scenario: the whiteboard works on a phone  [WB-16]
   When they zoom and move around the drawing
   Then the whole drawing can be reached
   And they do not lose their place
+
+Scenario: the learner creates several boards  [WB-18]
+  Given a session
+  When the learner presses New whiteboard twice in the Whiteboard tab
+  Then the session has two empty whiteboards
+  And each can be opened again from the session
+
+Scenario: a created board is pinned above the chat  [WB-19, WB-16]
+  Given the learner created a whiteboard
+  When they look at the chat
+  Then the board is above the conversation and the composer is below it
+  And they can expand it, draw on it, and collapse it
+
+Scenario: a message is about the pinned board  [WB-19, WB-03]
+  Given a whiteboard is pinned and the learner drew on it
+  When they send a message
+  Then the agent receives the description of that board and a picture of the learner's drawing
+
+Scenario: a closed board is not attached  [WB-19]
+  Given the learner closed the pinned board
+  When they send a message
+  Then the turn has no picture and no pinned-board description
+
+Scenario: the agent draws next to the learner's work  [WB-20, WB-06]
+  Given a pinned board with the learner's drawing
+  When the agent explains with its own parts
+  Then the parts appear next to the learner's drawing as the text reaches them
+  And the learner's parts and comments are unchanged
+  And the agent's parts look different from the learner's
+
+Scenario: a stale save keeps the agent's parts  [WB-21]
+  Given the agent added a step after the learner's browser loaded the board
+  When the learner's browser saves its older copy
+  Then the agent's step is still on the board
 
 ## Open questions
 

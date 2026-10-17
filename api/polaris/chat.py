@@ -65,9 +65,17 @@ from polaris.whiteboard import (
 )
 
 
+MAX_NAME_LENGTH = 80
+
+
 class MissingSession(Exception):
     def __init__(self) -> None:
         super().__init__("No session with that id.")
+
+
+class NameTooLong(Exception):
+    def __init__(self) -> None:
+        super().__init__(f"A session name can be at most {MAX_NAME_LENGTH} characters.")
 
 
 class BlankMessage(Exception):
@@ -242,7 +250,7 @@ class Chat:
         def read(conn: sqlite3.Connection) -> list[dict[str, object]]:
             rows = conn.execute(
                 """
-                SELECT s.id, s.ended_at,
+                SELECT s.id, s.ended_at, s.name,
                     (
                         SELECT t.learner_message
                         FROM turns t
@@ -258,6 +266,7 @@ class Chat:
                 {
                     "id": row["id"],
                     "ended": row["ended_at"] is not None,
+                    "name": row["name"] or "",
                     "preview": row["preview"] or "",
                 }
                 for row in rows
@@ -371,6 +380,23 @@ class Chat:
 
         self._with_db(write)
         return True
+
+    def rename(self, session_id: str, name: str) -> dict[str, object]:
+        """Set the learner's label for a session. A blank name removes it (CH-07)."""
+
+        self._require(session_id)
+        text = name.strip()
+        if len(text) > MAX_NAME_LENGTH:
+            raise NameTooLong()
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE sessions SET name = ? WHERE id = ?",
+                (text or None, session_id),
+            )
+
+        self._with_db(write)
+        return {"id": session_id, "name": text}
 
     def get(self, session_id: str) -> dict[str, object]:
         self._require(session_id)
@@ -1440,6 +1466,12 @@ class Chat:
                 conn.execute("ALTER TABLE turns ADD COLUMN pointing_json TEXT")
             if "animation_step_json" not in columns:
                 conn.execute("ALTER TABLE turns ADD COLUMN animation_step_json TEXT")
+            session_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(sessions)").fetchall()
+            }
+            if "name" not in session_columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT")
             # Startup create, so a database from before this index still gets it.
             conn.execute(
                 """

@@ -1,9 +1,10 @@
 ### This md file is for when ideas come up, I can park them here to add them.
 
- - chat supports markdown so it can explain things in a more structured way. (and it can support coloring, highlighting, mono font with code highlights etc.)
- - renaming a chat
- - in whiteboard panel user should be able to create a white board and chat directly from their with the AI.
+ - chat supports markdown so it can explain things in a more structured way. (and it can support coloring, highlighting, mono font with code highlights etc.) // in progress
+ - renaming a chat // in progress
+ - in whiteboard panel user should be able to create a white board and chat directly from their with the AI. //in progress
  - quiz page should be managed better thru the Ui, right now it is set to the left side and the page feels so empty.
+ - delete chat
  - when users answers the quiz question they are immediatly given the answer and they are told why the answer they picked is correct (below their choice, meaning in the same div) or why the answer is incorrect(below their choice, meaning in the same div) and what is the correct answer with why the answer is correct too.
  - default name of chat is the topic being discussed and not the first user message
  - deleting a chat

@@ -265,7 +265,14 @@ export type Session = {
 export type SessionSummary = {
   id: string
   ended: boolean
+  /** The learner's name for the session, or an empty string. */
+  name: string
   preview: string
+}
+
+/** CH-06: the learner's name, else the first message, else a placeholder. */
+export function sessionLabel(session: SessionSummary | undefined): string {
+  return session?.name || session?.preview || 'New session'
 }
 
 export class ApiError extends Error {
@@ -303,6 +310,14 @@ export function listSessions(signal?: AbortSignal): Promise<SessionSummary[]> {
   return request<{ sessions: SessionSummary[] }>('/api/sessions', { signal }).then(
     (body) => body.sessions,
   )
+}
+
+export function renameSession(sessionId: string, name: string): Promise<{ name: string }> {
+  return request<{ name: string }>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
 }
 
 export function readProfile(signal?: AbortSignal): Promise<string[]> {
