@@ -91,7 +91,9 @@ class Explainer(PolarisScene):
 ```
 
 - Exactly one subclass of PolarisScene. Only import manim, polaris_manim, math,
-  numpy, random, itertools, functools. No files, no network, no eval or getattr.
+  numpy, random, itertools, functools; import math yourself if you use it
+  (manim's star import gives you np but not math). No files, no network, no
+  eval or getattr.
 - self.step(caption) starts each step; call it before the first animation. Polaris
   shows the caption under the video and reads it aloud, so never draw the caption
   or a title in the scene. A caption is one sentence under 120 characters that
@@ -126,12 +128,14 @@ class Explainer(PolarisScene):
   NEGATIVE (wrong, removed), HIGHLIGHT (a result or a key formula), SURFACE and
   BORDER (filled boxes and their edges). Use no other colours.
 - Give each idea one colour and keep it for the whole animation. Only one thing
-  is ACCENT at a time. Dim what is no longer the focus (set_opacity(0.35) or
-  MUTED) instead of leaving everything bright.
+  is ACCENT at a time. Dim what is no longer the focus instead of leaving
+  everything bright: shapes to set_opacity(0.35), text to MUTED or
+  set_opacity(0.6) (fainter text cannot be read), or fade it out.
 - Text: Text(..., font_size=...) uses the design-system font already. Sizes:
-  TITLE_SIZE 52, BODY_SIZE 40, LABEL_SIZE 34; never below MIN_TEXT_SIZE 32, and do
-  not .scale() text below that. Fewer than 12 words on screen at once. Short
-  labels, not sentences: the caption carries the sentence.
+  TITLE_SIZE 56, BODY_SIZE 48, LABEL_SIZE 40; never below MIN_TEXT_SIZE 40, and do
+  not .scale() text below that. On a phone the whole frame is about 254 pixels
+  wide, so size 40 is already small. Fewer than 10 words on screen at once.
+  Short labels, not sentences: the caption carries the sentence.
 - Strokes 4 to 6 wide for main shapes, 2 to 3 for axes and guides. Dots radius
   0.08 to 0.12.
 
@@ -139,7 +143,7 @@ class Explainer(PolarisScene):
 
 LaTeX is not installed: MathTex, Tex, Title, BulletedList, and anything that
 builds MathTex (axes.get_axis_labels() and get_graph_label() with a string)
-fail. Write maths with MathTypst("...", font_size=44, color=INK), which uses
+fail. Write maths with MathTypst("...", font_size=48, color=INK), which uses
 Typst math syntax:
 - x^2, x_1, x_(i+1), a/b or frac(a, b), sqrt(x), root(3, x), abs(x)
 - sum_(i=1)^n i, integral_0^1 f(x) dif x, lim_(h -> 0), dot, times, div
@@ -152,7 +156,9 @@ Typst math syntax:
   numbers, words, and simple comparisons such as "17 < 23" are Text, so they
   match the rest of the picture.
 Numbers: DecimalNumber and Integer work (Polaris renders them as Text). Axes
-with include_numbers=True work; pass axis_config={"font_size": 32} or larger.
+with include_numbers=True work; pass axis_config={"font_size": 40}, and label
+only a few ticks (x_axis_config={"numbers_to_include": [-2, 2]}) so they do not
+crowd.
 Axis labels: make them yourself with Text or MathTypst and next_to() the axis end.
 
 # Motion that teaches
@@ -248,6 +254,10 @@ def preview_tool_result(result: RenderResult, *, previews_left: int) -> dict[str
     else:
         lines.append("The preview found problems. Fix every one:")
         lines += [f"- {error}" for error in result.errors]
+    if result.warnings:
+        lines.append("")
+        lines.append("Layout advice (not errors, but fix them if you can):")
+        lines += [f"- {warning}" for warning in result.warnings]
     if result.steps:
         lines.append("")
         lines.append(f"Steps ({result.duration_s:.1f} s in total):")

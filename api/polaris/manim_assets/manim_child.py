@@ -39,11 +39,16 @@ FRAME_WIDTH = FRAME_HEIGHT * 4 / 3
 EDGE_TOLERANCE = 0.02
 # Overlap of two text boxes, as a share of the smaller box, that counts.
 OVERLAP_SHARE = 0.04
-MIN_FONT_SIZE = 32
+MIN_FONT_SIZE = 40
 MAX_STEPS = 10
 MAX_CAPTION = 140
 MAX_SECONDS = 150.0
 MAX_ISSUES = 25
+# Text fainter than this on the dark background cannot be read.
+MIN_TEXT_OPACITY = 0.5
+# At the end of a step the picture should span at least this share of the
+# frame's width or of its height.
+MIN_PICTURE_SHARE = 0.6
 
 TEXT_CLASSES = frozenset(
     {
@@ -79,6 +84,7 @@ def main() -> int:
         "steps": [],
         "frames": [],
         "keyframes": [],
+        "warnings": [],
         "timings": {},
     }
     started = time.monotonic()
@@ -96,6 +102,25 @@ def main() -> int:
 
 class _SceneError(Exception):
     pass
+
+
+# Typst glyphs come out about 0.7 times the height of Text at the same
+# font_size. Scaling them up makes equal sizes look equal, so the size check
+# measures what the learner sees.
+TYPST_TO_TEXT = 1.4
+
+
+def _match_typst_to_text() -> None:
+    from manim import Typst
+
+    original = Typst.__init__
+
+    def __init__(self, *args, **kwargs):
+        original(self, *args, **kwargs)
+        if kwargs.get("height") is None:
+            self.scale(TYPST_TO_TEXT)
+
+    Typst.__init__ = __init__
 
 
 def _no_latex(*args, **kwargs):
@@ -150,12 +175,13 @@ def _run(request: dict, out_dir: Path, report: dict) -> None:
     config.write_to_movie = True
     for text_class in (Text, MarkupText, Paragraph):
         text_class.set_default(font=polaris_manim.BODY_FONT)
-    Code.set_default(paragraph_config={"font": polaris_manim.MONO_FONT, "font_size": 32})
+    Code.set_default(paragraph_config={"font": polaris_manim.MONO_FONT, "font_size": 40})
     # No LaTeX on the learner's machine: numbers and axis labels use Text,
     # and maths uses MathTypst.
     DecimalNumber.set_default(mob_class=Text)
     NumberLine.set_default(label_constructor=Text)
     tex_mobject.tex_to_svg_file = _no_latex
+    _match_typst_to_text()
     report["timings"]["import_s"] = round(time.monotonic() - import_started, 2)
 
     scene_path = Path(request["scene_path"]).resolve()
@@ -194,8 +220,10 @@ def _run(request: dict, out_dir: Path, report: dict) -> None:
                     f"Step {len(self.captions) + 1} caption is {len(caption)} characters; "
                     f"keep it under {MAX_CAPTION}."
                 )
-            if self.captions and preview:
-                _save_frame(self, Image, frames_dir, len(self.captions), report)
+            if self.captions:
+                probe.composition(self, len(self.captions), report)
+                if preview:
+                    _save_frame(self, Image, frames_dir, len(self.captions), report)
             self._polaris_step_time = self.time
 
         def _before_animation(self) -> None:
@@ -224,6 +252,7 @@ def _run(request: dict, out_dir: Path, report: dict) -> None:
         issues.append(
             f"The scene runs {scene.time:.0f} seconds; keep it under {MAX_SECONDS:.0f}."
         )
+    probe.composition(scene, len(captions), report)
     if preview:
         _save_frame(scene, Image, frames_dir, len(captions), report)
 
@@ -399,6 +428,13 @@ class _Probe:
             return
         if _is_text(mobject):
             texts.append((self._name(mobject), box))
+            opacity = _text_opacity(mobject, self.np)
+            if opacity < MIN_TEXT_OPACITY:
+                self._add(
+                    f"In {where}: {self._name(mobject)} is too faint to read "
+                    f"(opacity {opacity:.2f}); dim text to at least {MIN_TEXT_OPACITY} "
+                    "or use MUTED, or fade it out."
+                )
             size = _font_size(mobject)
             if size is not None and size < MIN_FONT_SIZE - 0.5:
                 self._add(
@@ -408,6 +444,31 @@ class _Probe:
             return
         for child in mobject.submobjects:
             self._walk(child, texts, center, half_w, half_h, where)
+
+    def composition(self, scene, step_number: int, report: dict) -> None:
+        """Warn when the end of a step uses only a small part of the frame."""
+
+        boxes = [self._visible_box(m) for m in scene.mobjects]
+        boxes = [box for box in boxes if box is not None]
+        if not boxes:
+            report["warnings"].append(f"Step {step_number} ends on an empty frame.")
+            return
+        width = max(b[2] for b in boxes) - min(b[0] for b in boxes)
+        height = max(b[3] for b in boxes) - min(b[1] for b in boxes)
+        share_w = width / FRAME_WIDTH
+        share_h = height / FRAME_HEIGHT
+        if share_w < MIN_PICTURE_SHARE and share_h < MIN_PICTURE_SHARE:
+            report["warnings"].append(
+                f"Step {step_number} ends with the picture using {share_w:.0%} of the "
+                f"width and {share_h:.0%} of the height; make the main picture bigger."
+            )
+        middle = (max(b[3] for b in boxes) + min(b[1] for b in boxes)) / 2
+        if abs(middle) > FRAME_HEIGHT * 0.2:
+            side = "top" if middle > 0 else "bottom"
+            report["warnings"].append(
+                f"Step {step_number} ends with the picture crowded toward the {side}; "
+                "centre it in the frame."
+            )
 
     def _visible_box(self, mobject):
         np = self.np
@@ -476,6 +537,20 @@ def _member_visible(member, np) -> bool:
     stroke_max = float(np.max(stroke)) if len(stroke) else 0.0
     stroke_width = getattr(member, "stroke_width", 1) or 0
     return fill_max > 0.05 or (stroke_max > 0.05 and stroke_width > 0)
+
+
+def _text_opacity(mobject, np) -> float:
+    highest = 0.0
+    for member in mobject.get_family():
+        if getattr(member, "points", None) is None or len(member.points) == 0:
+            continue
+        try:
+            fill = member.get_fill_opacities()
+        except Exception:  # noqa: BLE001
+            return 1.0
+        if len(fill):
+            highest = max(highest, float(np.max(fill)))
+    return highest if highest > 0.05 else 1.0  # an invisible text is not "faint"
 
 
 def _is_text(mobject) -> bool:

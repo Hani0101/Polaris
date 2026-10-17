@@ -30,11 +30,12 @@ INFO = "#9cc3ff"  # color.state.info
 BODY_FONT = "Atkinson Hyperlegible Next"
 MONO_FONT = "Atkinson Hyperlegible Mono"
 
-# Text sizes that stay readable on a 320px phone screen.
-TITLE_SIZE = 52
-BODY_SIZE = 40
-LABEL_SIZE = 34
-MIN_TEXT_SIZE = 32
+# Text sizes that stay readable on a 320px phone screen, where the frame is
+# about 254px wide: size 40 is about 14px there, the Polaris minimum.
+TITLE_SIZE = 56
+BODY_SIZE = 48
+LABEL_SIZE = 40
+MIN_TEXT_SIZE = 40
 
 # Keep everything this far inside the frame edges.
 SAFE_MARGIN = 0.4

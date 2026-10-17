@@ -67,6 +67,7 @@ class RenderedStep:
 class RenderResult:
     ok: bool
     errors: tuple[str, ...]
+    warnings: tuple[str, ...] = ()
     steps: tuple[RenderedStep, ...] = ()
     video: Path | None = None
     frames: tuple[Path, ...] = ()
@@ -171,6 +172,7 @@ def render(code: str, out_dir: Path, *, quality: str = PREVIEW) -> RenderResult:
         ok=bool(report.get("ok")),
         keyframes={step: tuple(paths) for step, paths in keyframes.items()},
         errors=tuple(report.get("errors", [])),
+        warnings=tuple(report.get("warnings", [])),
         steps=steps,
         video=Path(report["video"]) if report.get("video") else None,
         frames=tuple(Path(frame["path"]) for frame in report.get("frames", [])),
