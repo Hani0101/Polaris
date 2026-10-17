@@ -3,6 +3,7 @@ import { DefaultColorStyle, Tldraw, useValue, type Editor, type TLShape } from '
 import 'katex/dist/katex.min.css'
 import 'tldraw/tldraw.css'
 import type { Comment, Whiteboard as WhiteboardData } from '../api.ts'
+import { moveCamera } from './camera.ts'
 import { CommentPins } from './CommentPins.tsx'
 import { readableDescription } from './description.ts'
 import {
@@ -23,7 +24,7 @@ import {
 } from './fromTldraw.ts'
 import { graphShapeUtils } from './graphShapes.tsx'
 import { mathCodeShapeUtils } from './mathCodeShapes.tsx'
-import { whiteboardToShapes } from './toTldraw.ts'
+import { whiteboardToShapes, type WhiteboardShapes } from './toTldraw.ts'
 
 const penTools = new Set<ToolId>(learnerDrawingTools.map((item) => item.id))
 
@@ -32,6 +33,8 @@ type WhiteboardProps = {
   mode?: 'view' | 'draw'
   onChange?: (whiteboard: WhiteboardData) => void
   onAsk?: (parts: PointedPart[]) => void
+  // The page uses the editor to take a picture of the board for the next turn.
+  onEditor?: (editor: Editor | null) => void
 }
 
 type AskAt = {
@@ -138,7 +141,18 @@ function nextCommentId(comments: Comment[]): string {
   return id
 }
 
-export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: WhiteboardProps) {
+function drawShapes(editor: Editor, converted: WhiteboardShapes) {
+  if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+  if (converted.bindings.length > 0) editor.createBindings(converted.bindings)
+}
+
+export function Whiteboard({
+  whiteboard,
+  mode = 'view',
+  onChange,
+  onAsk,
+  onEditor,
+}: WhiteboardProps) {
   const converted = useMemo(() => whiteboardToShapes(whiteboard), [whiteboard])
   const region = useRef<HTMLElement>(null)
   const [editor, setEditor] = useState<Editor | null>(null)
@@ -154,6 +168,8 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   const onAskRef = useRef(onAsk)
   const convertedRef = useRef(converted)
   const seeding = useRef(false)
+  // The steps last drawn in view mode, so a newly revealed step can be followed.
+  const shownSteps = useRef<{ boardId: string; stepIds: string[] } | null>(null)
   const geoKind = useRef<'rectangle' | 'ellipse'>('rectangle')
   const commentFieldId = useId()
   const captionId = useId()
@@ -175,6 +191,12 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   useEffect(() => {
     setDrawn(whiteboard)
   }, [whiteboard])
+
+  useEffect(() => {
+    if (!onEditor) return
+    onEditor(editor)
+    return () => onEditor(null)
+  }, [editor, onEditor])
 
   useEffect(() => {
     whiteboardRef.current = whiteboard
@@ -199,9 +221,19 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       editor.updateInstanceState({ isReadonly: false })
       const existing = [...editor.getCurrentPageShapeIds()]
       if (existing.length > 0) editor.deleteShapes(existing)
-      if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+      drawShapes(editor, converted)
       editor.setSelectedShapes([])
-      editor.zoomToFit({ animation: { duration: 0 } })
+      const board = whiteboardRef.current
+      const stepIds = board.steps.map((step) => step.id)
+      const previous = shownSteps.current
+      shownSteps.current = { boardId: board.id, stepIds }
+      if (!previous || previous.boardId !== board.id || previous.stepIds.length === 0) {
+        editor.zoomToFit({ animation: { duration: 0 } })
+      } else {
+        // A redraw with no new step leaves the camera where the learner put it.
+        const added = stepIds.filter((stepId) => !previous.stepIds.includes(stepId))
+        if (added.length > 0) moveCamera(editor, added)
+      }
       node.dataset.ready = 'true'
     } catch {
       node.dataset.ready = 'false'
@@ -232,8 +264,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       if (editor.getCurrentPageShapeIds().size === 0) {
         seeding.current = true
         try {
-          const shapes = convertedRef.current.shapes
-          if (shapes.length > 0) editor.createShapes(shapes)
+          drawShapes(editor, convertedRef.current)
           editor.zoomToFit({ animation: { duration: 0 } })
         } finally {
           seeding.current = false

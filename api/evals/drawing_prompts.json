@@ -1,0 +1,17 @@
+{
+  "profile": [
+    "Learns best from pictures and short explanations.",
+    "Knows basic algebra.",
+    "Struggles with long paragraphs of text."
+  ],
+  "cases": [
+    {"id": "water-cycle", "message": "Draw the water cycle for me."},
+    {"id": "photosynthesis-flow", "message": "Show me how photosynthesis turns light into sugar, step by step, with a drawing."},
+    {"id": "mitosis-vs-meiosis", "message": "Draw a comparison of mitosis and meiosis."},
+    {"id": "animal-tree", "message": "Draw a tree of how animals are classified: mammals, birds, fish, and a couple of examples of each."},
+    {"id": "cell-parts", "message": "Draw an animal cell and label its main parts."},
+    {"id": "http-request", "message": "Draw what happens when my browser loads a web page, from typing the address to seeing the page."},
+    {"id": "quadratic-graph", "message": "Draw the graph of y = x^2 - 4 and show where it crosses the x axis."},
+    {"id": "fractions-half", "message": "Use a drawing to show why 2/4 is the same as 1/2."}
+  ]
+}

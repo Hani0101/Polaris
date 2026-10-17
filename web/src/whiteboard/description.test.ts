@@ -62,3 +62,31 @@ test('each graph adds a readable line', () => {
   }
   expect(readableDescription(mixed)).toBe('A straight line.\ngraph with 2 series from 0 to 2')
 })
+
+test('a labeled box is read with its label', () => {
+  const whiteboard: Whiteboard = {
+    version: 7,
+    id: 'wb-label',
+    session_id: 'session-1',
+    steps: [
+      {
+        id: 'step-1',
+        reply_part: '[[step:step-1]]',
+        elements: [
+          {
+            id: 'box',
+            kind: 'rectangle',
+            author: 'agent',
+            position: { x: 0, y: 0 },
+            size: { width: 100, height: 60 },
+            style: { stroke: '#1d1d1d', fill: null, stroke_width: 2 },
+            label: 'Heat',
+          },
+        ],
+      },
+    ],
+    comments: [],
+  }
+
+  expect(readableDescription(whiteboard)).toBe('A rectangle labeled "Heat".')
+})

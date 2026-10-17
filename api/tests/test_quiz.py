@@ -70,6 +70,7 @@ class QuizCreatingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         self.reply_count += 1
@@ -375,6 +376,7 @@ class FailingAfterQuizStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         if not profile.facts:

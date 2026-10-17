@@ -71,6 +71,9 @@ export const whiteboardMarks = {
   font: 'sans',
   textAlign: 'start',
   textAutoSize: false,
+  // A label inside a box is centered, as the backend layout check assumes.
+  labelAlign: 'middle',
+  labelVerticalAlign: 'middle',
   arrowKind: 'arc',
   arrowBend: 0,
   arrowheadStart: 'none',
