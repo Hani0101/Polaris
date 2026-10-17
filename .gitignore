@@ -40,3 +40,6 @@ api/evals/reports/
 
 # Animation eval output
 api/evals/results/
+
+# Understand-Anything output
+.ua/
