@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
+from polaris.lottie_writer import LottieAnimationWriter
 from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
     BlankMessage,
@@ -94,10 +95,12 @@ def create_app(
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
-        # feat/manim-experiment: Manim is the default writer on this branch.
-        # POLARIS_ANIMATION_ENGINE=data brings back the animation-data writer.
-        if os.environ.get("POLARIS_ANIMATION_ENGINE", "manim") == "data":
+        # POLARIS_ANIMATION_ENGINE picks the writer: manim (default), lottie, or data.
+        engine = os.environ.get("POLARIS_ANIMATION_ENGINE", "manim")
+        if engine == "data":
             animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        elif engine == "lottie":
+            animation_writer = LottieAnimationWriter(data_dir / "lottie-work")
         else:
             animation_writer = ClaudeManimWriter(data_dir / "claude-work")
     chat = Chat(

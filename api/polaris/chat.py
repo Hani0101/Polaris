@@ -32,7 +32,7 @@ from polaris.animation import (
     produce as produce_animation,
     waiting_notice_chunk,
 )
-from polaris.animation_format import Animation
+from polaris.animation import StoredAnimation as Animation
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.manim_job import (
     ManimDraftData,
@@ -610,6 +610,7 @@ class Chat:
                     brief,
                     failed_data=last_data if errors is not None else None,
                     errors=errors,
+                    job_id=job_id,
                 )
             )
             return last_data
