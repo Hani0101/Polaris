@@ -24,7 +24,7 @@ from polaris.chat import (
     SessionEnded,
 )
 from polaris.login import ApiKeyPresent, assert_claude_login
-from polaris.profile import ProfilePass, ProfileUnreadable, load_profile
+from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import AlreadyGraded, InvalidSubmission, MissingQuiz
 from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
@@ -205,8 +205,7 @@ def create_app(
 
     @app.get("/api/profile")
     def read_profile() -> dict[str, list[str]]:
-        profile = load_profile(chat.profile_path)
-        return {"facts": list(profile.facts)}
+        return {"facts": list(chat.read_profile().facts)}
 
     @app.get("/api/sessions")
     def list_sessions() -> dict[str, list[dict[str, object]]]:

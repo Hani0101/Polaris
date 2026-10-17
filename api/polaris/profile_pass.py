@@ -26,7 +26,8 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
-from polaris.models import FactChange, Profile, Turn
+from polaris.models import Fact, FactChange, Turn
+from polaris.profile import FACT_BASES, FACT_KINDS, ProfilePassFailed
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -42,10 +43,14 @@ CHANGE_SCHEMA = {
                         "type": "string",
                         "enum": ["ADD", "UPDATE", "DELETE", "IGNORE"],
                     },
-                    "fact": {"type": "string"},
-                    "replaces": {"type": "string"},
+                    "id": {"type": "string"},
+                    "kind": {"type": "string", "enum": list(FACT_KINDS)},
+                    "text": {"type": "string"},
+                    "basis": {"type": "string", "enum": list(FACT_BASES)},
+                    "evidence": {"type": "array", "items": {"type": "string"}},
+                    "reason": {"type": "string"},
                 },
-                "required": ["action", "fact"],
+                "required": ["action", "reason"],
                 "additionalProperties": False,
             },
         }
@@ -58,18 +63,64 @@ CHANGE_SCHEMA = {
 def profile_pass_prompt() -> str:
     return (
         "You read one Polaris session and the current profile facts.\n"
-        "Decide which facts are true now.\n"
-        "A milestone is the fact that the learner understood a concept.\n"
-        "Send fact changes as ADD, UPDATE, DELETE, or IGNORE.\n"
-        "A fact already stored is not added again. A repeat is UPDATE or IGNORE.\n"
+        "Return the fact changes that make the profile true now.\n"
         "Do not teach. Do not draw. Do not create a quiz.\n"
+        "\n"
+        "A fact is one short claim about the learner, in the third person, "
+        "under 20 words, that helps teach them later.\n"
+        "Each fact has one kind:\n"
+        "- goal: the subject, course, exam, or deadline they are working toward\n"
+        "- taught: how they want to be taught (pace, examples, drawings, step by step)\n"
+        "- struggle: where they struggle; name the idea and the mistake\n"
+        "- can_do: what they showed they can already do\n"
+        "- milestone: they understood a concept; only when the session shows it, "
+        "such as a correct quiz answer or explaining it back in their own words\n"
+        "Each fact has one basis: stated (the learner said it), observed (their "
+        "answers or drawings show it), or inferred (you read it between the lines).\n"
+        "\n"
+        "Never store:\n"
+        "- a passing mood or state, such as tired today or bored\n"
+        "- health, religion, politics, sexuality, money, or details about other "
+        "people, unless the learner states it and asks Polaris to teach with it in mind\n"
+        "- anything the learner asked Polaris not to remember\n"
+        "- what a reply taught, unless the learner showed they understood it\n"
+        "- a guess from one slip; one wrong answer is a struggle only when "
+        "their own words or a second mistake back it\n"
+        "\n"
+        "Send fact changes as ADD, UPDATE, DELETE, or IGNORE.\n"
+        "UPDATE, DELETE, and IGNORE name a stored fact by its id, such as F2. "
+        "Use only ids from the list. A change that names no stored fact is refused.\n"
+        "A fact already stored is not added again. A repeat is UPDATE or IGNORE, "
+        "even when the learner words it differently.\n"
+        "UPDATE a stored fact when the session corrects or sharpens it.\n"
+        "DELETE a stored fact when the session shows it is no longer true, "
+        "such as a struggle they now handle correctly.\n"
+        "An unsorted fact has no kind yet. When the session makes its kind clear, "
+        "UPDATE it with that kind.\n"
+        "Every change cites the turns it rests on, such as T3, in evidence, "
+        "and says why in reason.\n"
+        "When nothing in the session is worth storing, return no changes.\n"
     )
 
 
-def session_prompt(profile: Profile, turns: Sequence[Turn]) -> str:
+def label_facts(facts: Sequence[Fact]) -> dict[str, Fact]:
+    """Short ids the pass names facts by. Code maps them back to stored ids."""
+
+    return {f"F{index}": fact for index, fact in enumerate(facts, start=1)}
+
+
+def label_turns(turns: Sequence[Turn]) -> dict[str, Turn]:
+    return {f"T{index}": turn for index, turn in enumerate(turns, start=1)}
+
+
+def session_prompt(facts: Sequence[Fact], turns: Sequence[Turn]) -> str:
     lines = ["Current profile facts:"]
-    if profile.facts:
-        lines.extend(f"- {fact}" for fact in profile.facts)
+    if facts:
+        lines.extend(
+            f"- {label} [{fact.kind}, {fact.basis}, updated {fact.updated_at[:10]}] "
+            f"{fact.text}"
+            for label, fact in label_facts(facts).items()
+        )
     else:
         lines.append("- (no facts yet)")
     lines.append("")
@@ -77,11 +128,10 @@ def session_prompt(profile: Profile, turns: Sequence[Turn]) -> str:
     if not turns:
         lines.append("(none)")
     else:
-        for turn in turns:
-            lines.append(f"Learner: {turn.learner_message}")
-            lines.append(f"Polaris: {turn.reply}")
+        for label, turn in label_turns(turns).items():
+            lines.append(f"{label} Learner: {turn.learner_message}")
+            lines.append(f"{label} Polaris: {turn.reply}")
     return "\n".join(lines)
-
 
 def profile_pass_options(*, cwd: Path) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
@@ -100,25 +150,53 @@ def profile_pass_options(*, cwd: Path) -> ClaudeAgentOptions:
     )
 
 
-def parse_changes(data: object) -> tuple[FactChange, ...]:
+def parse_changes(
+    data: object,
+    facts: dict[str, Fact] | None = None,
+    turns: dict[str, Turn] | None = None,
+) -> tuple[FactChange, ...]:
+    """Read the pass output. Short ids become stored ids; an unknown id is kept
+    as given so code refuses it instead of guessing."""
+
     if not isinstance(data, dict):
         return ()
     raw = data.get("changes")
     if not isinstance(raw, list):
         return ()
+    facts = facts or {}
+    turns = turns or {}
     parsed: list[FactChange] = []
     for item in raw:
         if not isinstance(item, dict):
             continue
         action = item.get("action")
-        fact = item.get("fact")
-        if not isinstance(action, str) or not isinstance(fact, str):
+        if not isinstance(action, str):
             continue
-        replaces = item.get("replaces")
-        if replaces is not None and not isinstance(replaces, str):
-            replaces = None
-        parsed.append(FactChange(action.strip().upper(), fact, replaces))
+        label = _optional_str(item.get("id"))
+        fact = facts.get(label) if label is not None else None
+        evidence = item.get("evidence")
+        turn_ids: list[str] = []
+        if isinstance(evidence, list):
+            for name in evidence:
+                turn = turns.get(name) if isinstance(name, str) else None
+                if turn is not None and turn.id is not None:
+                    turn_ids.append(turn.id)
+        parsed.append(
+            FactChange(
+                action=action.strip().upper(),
+                text=_optional_str(item.get("text")) or "",
+                id=fact.id if fact is not None else label,
+                kind=_optional_str(item.get("kind")),
+                basis=_optional_str(item.get("basis")),
+                evidence=tuple(turn_ids),
+                reason=_optional_str(item.get("reason")) or "",
+            )
+        )
     return tuple(parsed)
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _off_loop_required() -> bool:
@@ -147,23 +225,29 @@ class ClaudeProfilePass:
         self._query_fn = query_fn
 
     async def run(
-        self, *, turns: Sequence[Turn], profile: Profile
+        self, *, turns: Sequence[Turn], facts: Sequence[Fact]
     ) -> tuple[FactChange, ...]:
         options = profile_pass_options(cwd=self.work_dir)
-        prompt = session_prompt(profile, turns)
+        prompt = session_prompt(facts, turns)
         try:
             messages = await self._collect(prompt, options)
-        except Exception:
-            return ()
+        except Exception as exc:
+            raise ProfilePassFailed("The profile pass could not run.") from exc
+        result: ResultMessage | None = None
         for message in messages:
             if isinstance(message, SystemMessage) and message.subtype == "init":
                 source = message.data.get("apiKeySource")
                 if isinstance(source, str) and source:
                     reject_api_key_credential(source)
             if isinstance(message, ResultMessage):
-                if message.subtype == "success" and message.structured_output:
-                    return parse_changes(message.structured_output)
-        return ()
+                result = message
+        if result is None or result.subtype != "success":
+            raise ProfilePassFailed("The profile pass returned no result.")
+        if not isinstance(result.structured_output, dict):
+            raise ProfilePassFailed("The profile pass returned no changes object.")
+        return parse_changes(
+            result.structured_output, label_facts(facts), label_turns(turns)
+        )
 
     async def _collect(
         self, prompt: str, options: ClaudeAgentOptions

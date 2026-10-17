@@ -15,5 +15,6 @@ These docs are the language and the rules for Polaris. Read them before changing
 - [Quiz](features/quiz.md)
 - [Animation](features/animation.md). A new animation is data that Polaris plays, not code ([decision 0006](decisions/0006-animation-is-data-not-code.md)).
 - [Auth](features/auth.md)
+- [Research: profile design](research/0001-profile-design.md). Proposed, not in force. Compares profile designs and drafts [decision 0006](decisions/0006-typed-profile-with-evidence.md) and new PR rules.
 
 When a feature page and the glossary disagree, the glossary wins on meaning and the feature page wins on behavior.

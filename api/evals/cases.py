@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from polaris.animation_format import check_animation
 from polaris.animation_writer import ClaudeAnimationWriter
-from polaris.models import FactChange, Profile, Turn
-from polaris.profile import apply_changes, load_profile
+from polaris.models import FactChange, Turn
+from polaris.profile import active_facts, apply_changes, create_profile_tables
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import InvalidQuiz, normalize_spec
 from polaris.teaching import (
@@ -174,7 +175,7 @@ async def pr02_again(data_dir: Path, sample: Sample) -> None:
         _check_asks_and_does_not_teach(sample, turn)
         sample.check(
             "PR-04 profile is still empty",
-            not load_profile(data_dir / "profile.json").facts,
+            not run.chat.read_profile().facts,
         )
     finally:
         await run.close(sample)
@@ -403,6 +404,8 @@ async def animation_writer(data_dir: Path, sample: Sample) -> None:
 # --- PR-08 ---------------------------------------------------------------------
 
 STORED_MATH_FACT = "I suck at math"
+_PR08_STORED_AT = "2026-01-01T00:00:00+00:00"
+_PR08_PASS_AT = "2026-01-02T00:00:00+00:00"
 _MATH_WEAK = re.compile(
     r"\bmath\w*\b.*\b(suck\w*|bad|terrible|awful|weak|struggl\w*|hard|difficult|poor|"
     r"not (good|great|strong)|never been|not my thing|anxi\w*|hate\w*)|"
@@ -416,6 +419,7 @@ def _pr08_turns(statement: str) -> tuple[Turn, ...]:
         Turn(
             learner_message=f"{statement} Can you go slowly?",
             reply="Of course. We will take it one step at a time. What would you like to work on?",
+            id="turn-1",
         ),
         Turn(
             learner_message="What is 3/4 + 1/8?",
@@ -423,20 +427,39 @@ def _pr08_turns(statement: str) -> tuple[Turn, ...]:
                 "First give both fractions the same bottom number. 3/4 is the same as 6/8. "
                 "Then 6/8 + 1/8 = 7/8."
             ),
+            id="turn-2",
         ),
         Turn(
             learner_message="Oh, 7/8. That makes sense now.",
             reply="Exactly. You matched the bottoms, then added the tops.",
+            id="turn-3",
         ),
     )
 
 
 async def _pr08(data_dir: Path, sample: Sample, statement: str) -> None:
-    profile = Profile((STORED_MATH_FACT, "Wants short explanations with one example."))
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    create_profile_tables(conn)
+    apply_changes(
+        conn,
+        (
+            FactChange("ADD", STORED_MATH_FACT, kind="struggle", basis="stated"),
+            FactChange(
+                "ADD", "Wants short explanations with one example.", kind="taught", basis="stated"
+            ),
+        ),
+        session_id="earlier",
+        turn_ids=(),
+        now=_PR08_STORED_AT,
+    )
+    facts = active_facts(conn)
+    math_id = next(fact.id for fact in facts if fact.text == STORED_MATH_FACT)
+    turns = _pr08_turns(statement)
     log = CallLog()
     pass_ = ClaudeProfilePass(data_dir / "claude-work", query_fn=recording_query(log))
     try:
-        changes = await pass_.run(turns=_pr08_turns(statement), profile=profile)
+        changes = await pass_.run(turns=turns, facts=facts)
     finally:
         sample.cost_usd += log.cost_usd
         sample.models |= log.models
@@ -444,12 +467,12 @@ async def _pr08(data_dir: Path, sample: Sample, statement: str) -> None:
     sample.note("changes", "\n".join(_format_change(change) for change in changes) or "(none)")
     sample.check("pass returned changes", bool(changes), f"{len(changes)} change(s)")
     second_adds = [
-        change.fact
+        change.text
         for change in changes
         if change.action == "ADD"
         and (
-            change.fact.strip().casefold() == STORED_MATH_FACT.casefold()
-            or _MATH_WEAK.search(change.fact)
+            change.text.strip().casefold() == STORED_MATH_FACT.casefold()
+            or _MATH_WEAK.search(change.text)
         )
     ]
     sample.check(
@@ -460,15 +483,21 @@ async def _pr08(data_dir: Path, sample: Sample, statement: str) -> None:
     on_fact = [
         change.action
         for change in changes
-        if _MATH_WEAK.search(change.fact) or _MATH_WEAK.search(change.replaces or "")
+        if change.id == math_id or _MATH_WEAK.search(change.text)
     ]
     sample.check(
         "PR-08 repeat is sent as UPDATE or IGNORE",
         bool(on_fact) and all(action in {"UPDATE", "IGNORE"} for action in on_fact),
         ", ".join(on_fact) or "no change names the math fact",
     )
-    after = apply_changes(profile, changes)
-    math_facts = [fact for fact in after.facts if _MATH_WEAK.search(fact)]
+    apply_changes(
+        conn,
+        changes,
+        session_id="pr08",
+        turn_ids={turn.id for turn in turns if turn.id is not None},
+        now=_PR08_PASS_AT,
+    )
+    math_facts = [fact.text for fact in active_facts(conn) if _MATH_WEAK.search(fact.text)]
     sample.check(
         "PR-08 profile holds the math fact once",
         len(math_facts) == 1,
@@ -477,8 +506,8 @@ async def _pr08(data_dir: Path, sample: Sample, statement: str) -> None:
 
 
 def _format_change(change: FactChange) -> str:
-    replaces = f" (replaces {change.replaces!r})" if change.replaces else ""
-    return f"{change.action} {change.fact!r}{replaces}"
+    names = f" (names {change.id})" if change.id else ""
+    return f"{change.action} {change.text!r}{names}"
 
 
 async def pr08_exact(data_dir: Path, sample: Sample) -> None:
