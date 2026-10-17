@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
+from polaris.animation_router import AnimationRouter
 from polaris.lottie_writer import LottieAnimationWriter
 from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
@@ -95,14 +96,22 @@ def create_app(
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
-        # POLARIS_ANIMATION_ENGINE picks the writer: manim (default), lottie, or data.
-        engine = os.environ.get("POLARIS_ANIMATION_ENGINE", "manim")
+        # A router sends maths and heavy graphs to Manim and the rest to
+        # Lottie (AN-21). POLARIS_ANIMATION_ENGINE=manim, lottie, or data
+        # forces one writer for every job.
+        engine = os.environ.get("POLARIS_ANIMATION_ENGINE", "auto")
         if engine == "data":
             animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        elif engine == "manim":
+            animation_writer = ClaudeManimWriter(data_dir / "claude-work")
         elif engine == "lottie":
             animation_writer = LottieAnimationWriter(data_dir / "lottie-work")
         else:
-            animation_writer = ClaudeManimWriter(data_dir / "claude-work")
+            animation_writer = AnimationRouter(
+                manim=ClaudeManimWriter(data_dir / "claude-work"),
+                lottie=LottieAnimationWriter(data_dir / "lottie-work"),
+                work_dir=data_dir / "claude-work",
+            )
     chat = Chat(
         data_dir,
         agent,

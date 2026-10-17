@@ -3,7 +3,7 @@
 This branch makes animations with Manim instead of Polaris animation data. It
 runs agent-written code, which AN-04 and decision 0006 forbid, so it stays on
 this branch until that is decided. The findings are in
-`docs/research/0002-manim-experiment.md`.
+`docs/research/0003-manim-experiment.md`.
 
 ## Install
 
@@ -14,8 +14,9 @@ no FFmpeg install is needed: maths uses Typst and video uses PyAV.
 
 ## Run the app with Manim
 
-Manim is the default writer on this branch. `POLARIS_ANIMATION_ENGINE=data`
-brings back the animation-data writer.
+On `feat/animation` the router sends maths and heavy graphs to Manim (AN-21).
+`POLARIS_ANIMATION_ENGINE=manim` sends every job to Manim, and
+`POLARIS_ANIMATION_ENGINE=data` brings back the animation-data writer.
 
 ## Run the briefs
 

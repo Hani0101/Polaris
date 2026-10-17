@@ -69,10 +69,12 @@ TOOL_NAMES = (
     "edit_scene",
     "delete_scene",
     "preview_scene",
+    "set_background",
     "set_video",
     "check_video",
 )
 SCENE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 # A known-good lottie-web scene the prompt starts the writer from.
 STARTER_SCENE = {
@@ -290,9 +292,21 @@ player shows under the picture (and can read aloud). Usually 3 to 6 scenes.
 
 # Colours and type
 
-The player background is Polaris paper. Use only these colours (Lottie
-colours are 0..1 floats):
+Lottie colours are 0..1 floats. Polaris's own palette is a good default
+for diagrams, text, and abstract ideas:
 {PALETTE}
+You are not limited to it. When the subject is better shown in other
+colours, use them: real-world colours (blood red and vein blue, leaf green,
+a night sky, flame orange), a clear colour per category, or a mood that
+fits the story. Choose a few colours that work together, give each idea one
+colour and keep it for the whole video, and keep one thing as the focus at
+a time.
+- The background defaults to Polaris paper. For a different one, call
+  set_background(color) with a #rrggbb colour before your first preview; the
+  player and the previews paint it. Still no full-frame background layer.
+- Text and thin lines need strong contrast with what is behind them, at
+  least 4.5:1 (WCAG AA): dark text on a light background, light text on a
+  dark one. Check it in every preview.
 Fonts: only "Atkinson Hyperlegible Next" (Regular or Bold) and
 "Atkinson Hyperlegible Mono" (for code and numbers in tables). Declare each in
 fonts.list with fName, fFamily, fStyle, ascent 75, and no fPath. Text layers
@@ -320,7 +334,8 @@ Here is a scene that renders correctly in Polaris. Start from its structure:
 # How you work (tools)
 
 1. Plan first, briefly, in text: the idea of each scene, its final picture,
-   and how each scene hands over to the next.
+   how each scene hands over to the next, and the colours and background
+   that suit this subject. Call set_background now if it is not paper.
 2. write_scene(id, caption, lottie) for each scene. lottie is the whole
    Lottie document as a JSON string. Fix any errors it returns.
 3. preview_scene(id) draws frames across the scene in the real renderer and
@@ -362,6 +377,23 @@ class SceneStore:
         self.scenes_dir.mkdir(parents=True, exist_ok=True)
         self.previews_dir = work_dir / "previews"
         self.plan_path = work_dir / "video.json"
+        self.background_path = work_dir / "background.txt"
+
+    @property
+    def background(self) -> str:
+        """The background the writer chose, or Polaris paper."""
+
+        if self.background_path.is_file():
+            chosen = self.background_path.read_text(encoding="utf-8").strip()
+            if HEX_COLOUR.match(chosen):
+                return chosen
+        return BACKGROUND
+
+    def set_background(self, colour: str) -> bool:
+        if not HEX_COLOUR.match(colour):
+            return False
+        self.background_path.write_text(colour.lower(), encoding="utf-8")
+        return True
 
     def _scene_path(self, scene_id: str) -> Path:
         return self.scenes_dir / f"{scene_id}.json"
@@ -436,7 +468,7 @@ class SceneStore:
             "version": 1,
             "title": plan["title"],
             "description": plan["description"],
-            "background": BACKGROUND,
+            "background": self.background,
             "scenes": scenes,
         }
 
@@ -547,6 +579,7 @@ def build_tools(store: SceneStore) -> list[Any]:
                 render_scenes,
                 [(scene_id, lottie, frames)],
                 out_dir=store.previews_dir,
+                background=store.background,
                 cell_width=400,
             )
         except Exception as error:  # noqa: BLE001 - report any renderer failure to the writer
@@ -568,6 +601,18 @@ def build_tools(store: SceneStore) -> list[Any]:
                 }
             )
         return {"content": content}
+
+    @tool(
+        "set_background",
+        "Set the colour the player paints behind every scene, as #rrggbb. "
+        "Defaults to Polaris paper. Previews use it too.",
+        {"color": str},
+    )
+    async def set_background(args: dict[str, Any]) -> dict[str, Any]:
+        colour = str(args.get("color", "")).strip()
+        if not store.set_background(colour):
+            return _text(f"'{colour}' is not a #rrggbb colour.", error=True)
+        return _text(f"Background set to {colour}. Check text contrast in the next preview.")
 
     @tool(
         "set_video",
@@ -603,7 +648,16 @@ def build_tools(store: SceneStore) -> list[Any]:
             return _text("Not ready:\n- " + "\n- ".join(checked.errors[:20]), error=True)
         return _text("The video is ready. Stop now.")
 
-    return [write_scene, read_scene, edit_scene, delete_scene, preview_scene, set_video, check_video]
+    return [
+        write_scene,
+        read_scene,
+        edit_scene,
+        delete_scene,
+        preview_scene,
+        set_background,
+        set_video,
+        check_video,
+    ]
 
 
 def lottie_writer_options(store: SceneStore) -> ClaudeAgentOptions:

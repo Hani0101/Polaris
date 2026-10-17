@@ -57,7 +57,8 @@ class LottieVideo(BaseModel):
     id: str = ""
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    background: str = BACKGROUND
+    # The writer may pick any background; the player paints it behind every scene.
+    background: str = Field(default=BACKGROUND, pattern=r"^#[0-9a-fA-F]{6}$")
     scenes: list[LottieScene] = Field(min_length=1)
 
     @property

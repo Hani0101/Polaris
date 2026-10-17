@@ -118,3 +118,25 @@ def test_writer_prompt_carries_the_guides_and_the_starter():
     prompt = lottie_writer_prompt()
     assert "Motion Taste" in prompt
     assert '"nm": "starter"' in prompt
+
+
+def test_the_writer_may_choose_a_background(tmp_path):
+    store = SceneStore(tmp_path)
+    assert store.background == "#faf8f4"
+    assert not store.set_background("navy; color: red")
+    assert store.set_background("#0B1D3A")
+    store.write("intro", "A line draws on.", json.dumps(STARTER_SCENE))
+    store.set_plan("A line", "A line draws on.", ["intro"])
+
+    data = store.assemble()
+
+    assert data["background"] == "#0b1d3a"
+    assert check_lottie_video(data).errors == []
+    assert check_lottie_video({**data, "background": "url(x)"}).video is None
+
+
+def test_the_prompt_allows_colours_beyond_the_palette():
+    prompt = lottie_writer_prompt()
+    assert "You are not limited to it" in prompt
+    assert "set_background" in prompt
+    assert "Use only these colours" not in prompt

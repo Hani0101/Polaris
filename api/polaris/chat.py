@@ -33,6 +33,7 @@ from polaris.animation import (
     waiting_notice_chunk,
 )
 from polaris.animation import StoredAnimation as Animation
+from polaris.animation_router import AnimationRouter, save_route
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.manim_job import (
     ManimDraftData,
@@ -215,6 +216,9 @@ class Chat:
         self.profile_path = data_dir / "profile.json"
         self._lock = threading.Lock()
         self._busy: set[str] = set()
+        # session id -> the learner's message of the turn now running, so an
+        # animation job started in that turn can route on what was asked.
+        self._turn_messages: dict[str, str] = {}
         self._pending: dict[str, list[dict[str, object]]] = {}
         self._mark_rollbacks: dict[str, list[tuple[str, str]]] = {}
         self._animation_notices: dict[str, list[str]] = {}
@@ -440,6 +444,7 @@ class Chat:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
         self._busy.add(session_id)
+        self._turn_messages[session_id] = text
         parts: list[str] = []
         created: list[dict[str, object]] = []
         completed = False
@@ -491,6 +496,7 @@ class Chat:
             completed = True
         finally:
             self._busy.discard(session_id)
+            self._turn_messages.pop(session_id, None)
             if completed:
                 await asyncio.to_thread(
                     self._save_turn,
@@ -572,16 +578,24 @@ class Chat:
         self._with_db(write)
         with self._lock:
             self._pending.setdefault(session_id, []).append(payload)
-        self._launch_animation(session_id, job_id, brief)
+        self._launch_animation(
+            session_id, job_id, brief, self._turn_messages.get(session_id)
+        )
         return payload
 
-    def _launch_animation(self, session_id: str, job_id: str, brief: str) -> None:
+    def _launch_animation(
+        self,
+        session_id: str,
+        job_id: str,
+        brief: str,
+        learner_message: str | None = None,
+    ) -> None:
         writer = self._animation_writer
         if writer is None:
             return
         thread = threading.Thread(
             target=self._run_animation_job,
-            args=(writer, session_id, job_id, brief),
+            args=(writer, session_id, job_id, brief, learner_message),
             name=f"polaris-animation-{job_id[:8]}",
             daemon=True,
         )
@@ -590,14 +604,24 @@ class Chat:
         thread.start()
 
     def _run_animation_job(
-        self, writer: AnimationWriter, session_id: str, job_id: str, brief: str
+        self,
+        writer: AnimationWriter,
+        session_id: str,
+        job_id: str,
+        brief: str,
+        learner_message: str | None = None,
     ) -> None:
         """Worker: write, check, and fix one animation (AN-05, AN-09, AN-10).
 
-        Runs on its own loop, one that can spawn the Claude CLI.
+        Runs on its own loop, one that can spawn the Claude CLI. With a
+        router, a small evaluation first picks Manim or Lottie (AN-21).
         """
 
         loop = new_cli_loop()
+        if isinstance(writer, AnimationRouter):
+            route = loop.run_until_complete(writer.route(brief, learner_message))
+            save_route(self.animation_work_dir(job_id), route)
+            writer = writer.writer_for(route)
         if getattr(writer, "engine", None) == "manim":
             self._run_manim_job(writer, loop, session_id, job_id, brief)
             return

@@ -108,7 +108,9 @@ class Explainer(PolarisScene):
   object inside x -4.9..4.9 and y -3.6..3.6 (polaris_manim has safe_left(),
   safe_right(), safe_top(), safe_bottom()). Things must stay inside at every
   moment, including the end of every move.
-- The background is already dark (BACKGROUND). Do not add a background.
+- The background is dark by default (BACKGROUND). To change it, set
+  self.camera.background_color = "#rrggbb" as the first line of construct.
+  Do not draw a full-frame rectangle as a background.
 - Plan the layout before writing code: decide which zone each thing lives in
   (for example: diagram on the left two thirds, a readout on the right; or a
   formula band at the top, a graph below). Keep zones apart by 0.4 units or more.
@@ -120,13 +122,20 @@ class Explainer(PolarisScene):
   centre, not crowded into the top half with the bottom left empty. A phone shows
   this frame about 320 pixels wide, so small drawings disappear.
 
-# Colour and type (the Polaris design system)
+# Colour and type
 
-- Colours from polaris_manim: INK (main text and shapes), MUTED (secondary
-  text, context), FAINT (axes, grids, guides), ACCENT (the one thing in focus),
-  INFO (a second series or a neutral object), POSITIVE (correct, kept, output),
-  NEGATIVE (wrong, removed), HIGHLIGHT (a result or a key formula), SURFACE and
-  BORDER (filled boxes and their edges). Use no other colours.
+- Colours from polaris_manim are a good default: INK (main text and shapes),
+  MUTED (secondary text, context), FAINT (axes, grids, guides), ACCENT (the
+  one thing in focus), INFO (a second series or a neutral object), POSITIVE
+  (correct, kept, output), NEGATIVE (wrong, removed), HIGHLIGHT (a result or
+  a key formula), SURFACE and BORDER (filled boxes and their edges).
+- You are not limited to them. When the subject is better shown in other
+  colours, use Manim's colours (BLUE_C, TEAL, GOLD, ...) or "#rrggbb": a
+  colour per curve or per vector component, a heat-map gradient, a classic
+  colour for a known object, or a background that suits the topic. Choose a
+  few colours that work together.
+- Text and thin lines need strong contrast with the background, at least
+  4.5:1 (WCAG AA). On a light background, use dark text instead of INK.
 - Give each idea one colour and keep it for the whole animation. Only one thing
   is ACCENT at a time. Dim what is no longer the focus instead of leaving
   everything bright: shapes to set_opacity(0.35), text to MUTED or

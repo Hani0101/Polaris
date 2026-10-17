@@ -44,7 +44,7 @@ MAX_STEPS = 10
 MAX_CAPTION = 140
 MAX_SECONDS = 150.0
 MAX_ISSUES = 25
-# Text fainter than this on the dark background cannot be read.
+# Text fainter than this on the background cannot be read.
 MIN_TEXT_OPACITY = 0.5
 # At the end of a step the picture should span at least this share of the
 # frame's width or of its height.

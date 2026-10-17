@@ -5,8 +5,9 @@ then one subclass of ``PolarisScene``. Each ``self.step(caption)`` starts
 one step of the animation; the caption is shown under the video and read
 by a screen reader, so the scene does not draw it.
 
-The colours are the Polaris design system's dark mode (tokens.json), so a
-video looks the same in either app theme. The fonts are the design
+The colours are the Polaris design system's dark mode (tokens.json). They
+are the default, not a limit: a scene may use other colours and set its own
+background with ``self.camera.background_color``. The fonts are the design
 system's, registered by the runner.
 """
 

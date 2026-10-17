@@ -29,8 +29,10 @@ when the writer can see its own frames.
 
 ## Running it
 
-- The app uses the Lottie writer by default on this branch. `POLARIS_ANIMATION_WRITER=format`
-  switches back to the old writer. `POLARIS_ANIMATION_MODEL` picks the writer's model.
+- On `feat/animation` the router sends every request that is not maths or a heavy graph to
+  this writer (AN-21). `POLARIS_ANIMATION_ENGINE=lottie` sends every job here, and
+  `POLARIS_ANIMATION_ENGINE=data` switches back to the old writer. `POLARIS_ANIMATION_MODEL`
+  picks the writer's model.
 - To run one eval brief: `api/.venv/Scripts/python.exe api/evals/run_lottie_one.py pendulum`.
   It writes `api/evals/results/lottie/<brief>/animation.json`, and the writer's scenes, previews
   and `transcript.log` go under `api/evals/results/lottie/lottie-work/<brief>/`.
@@ -39,7 +41,9 @@ when the writer can see its own frames.
 
 ## What this gives up
 
-- Colours are fixed in the Lottie data, so the video keeps a paper background in dark mode.
+- Colours are fixed in the Lottie data, so the video does not follow the app theme. The writer
+  starts from Polaris's palette and paper background, and may choose other colours and a
+  background (`set_background`) when the subject is better shown with them (AN-14).
 - Polaris checks structure and renders frames, but it cannot check overlap or the canvas edge
   the way the format check could. The writer's own visual review covers that.
 - A job takes several minutes and costs more than the old one-shot writer.
