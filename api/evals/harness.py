@@ -11,6 +11,7 @@ Haiku-class model one yes/no question about one reply, with a fixed schema.
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -32,8 +33,6 @@ from claude_agent_sdk import (
 
 from polaris.chat import Chat
 from polaris.login import reject_api_key_credential
-from polaris.models import Profile
-from polaris.profile import save_profile
 from polaris.teaching import ClaudeTeachingAgent
 
 API_DIR = Path(__file__).resolve().parent.parent
@@ -207,7 +206,10 @@ class TeachingRun:
         self.data_dir = data_dir
         self.log = CallLog()
         if facts:
-            save_profile(data_dir / "profile.json", Profile(facts))
+            # Chat moves profile.json into the database on its first read.
+            (data_dir / "profile.json").write_text(
+                json.dumps({"facts": list(facts)}), encoding="utf-8"
+            )
         self.agent = ClaudeTeachingAgent(
             data_dir / "claude-work",
             client_factory=lambda options: RecordingClient(options, self.log),
