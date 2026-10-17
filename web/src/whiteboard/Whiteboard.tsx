@@ -34,6 +34,7 @@ import {
 } from './fromTldraw.ts'
 import { graphShapeUtils } from './graphShapes.tsx'
 import { mathCodeShapeUtils } from './mathCodeShapes.tsx'
+import { boardTone } from './boardTone.ts'
 import { whiteboardToShapes, type WhiteboardShapes } from './toTldraw.ts'
 
 const TOOLS_KEY = 'polaris.whiteboard.tools'
@@ -164,6 +165,8 @@ export function Whiteboard({
 }: WhiteboardProps) {
   const converted = useMemo(() => whiteboardToShapes(whiteboard), [whiteboard])
   const region = useRef<HTMLElement>(null)
+  // The board keeps the colors it first opened with, whatever the app mode becomes (WB-22).
+  const tone = useMemo(() => boardTone(whiteboard.id), [whiteboard.id])
   const [editor, setEditor] = useState<Editor | null>(null)
   const [toolsShown, setToolsShown] = useState(() => {
     try {
@@ -192,7 +195,7 @@ export function Whiteboard({
   const [drawn, setDrawn] = useState(whiteboard)
   const tldrawTool = useValue('tool', () => editor?.getCurrentToolId() ?? 'select', [editor])
   const active = toolFromTldraw(tldrawTool, geo, commenting)
-  // Pens follow the board (DESIGN.md 2.3). The board follows the app mode.
+  // Pens follow the board (DESIGN.md 2.3). A new board follows the app mode (WB-22).
   const penSet = useValue(
     'pen set',
     () => (editor?.getColorMode() === 'dark' ? 'onDark' : 'onLight'),
@@ -482,6 +485,7 @@ export function Whiteboard({
       className="whiteboard"
       aria-labelledby={captionId}
       data-mode={mode}
+      data-board={tone}
       onKeyDown={onKeyDown}
     >
       {converted.skipped.length > 0 ? (
@@ -493,7 +497,7 @@ export function Whiteboard({
         <Tldraw
           hideUi
           autoFocus={false}
-          colorScheme="system"
+          colorScheme={tone}
           onMount={(mounted) => {
             // The wheel and a touchpad zoom the board; pinch zooms on a phone.
             // tldraw's saved input mode would override the wheel setting below.

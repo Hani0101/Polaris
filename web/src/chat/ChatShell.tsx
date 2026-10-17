@@ -44,6 +44,7 @@ type ChatShellProps = {
   onStart: () => void
   onOpen: (sessionId: string) => void
   onRename: (sessionId: string, name: string) => Promise<void>
+  onOpenSettings: () => void
   onLeave: () => void
   turns: ViewTurn[]
   draft: string
@@ -103,6 +104,7 @@ export function ChatShell({
   onStart,
   onOpen,
   onRename,
+  onOpenSettings,
   onLeave,
   turns,
   draft,
@@ -218,6 +220,7 @@ export function ChatShell({
           onStart={onStart}
           onOpen={onOpen}
           onRename={onRename}
+          onOpenSettings={onOpenSettings}
         />
         {sessionListOpen ? (
           <ResizeHandle

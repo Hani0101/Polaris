@@ -7,6 +7,15 @@
   isolation: isolate;
 }
 
+/* A board keeps the color it opened with, whatever the app mode becomes (WB-22). */
+.whiteboard[data-board='light'] .whiteboard-surface > .tl-container {
+  --tl-color-background: var(--color-whiteboard-board-white);
+}
+
+.whiteboard[data-board='dark'] .whiteboard-surface > .tl-container {
+  --tl-color-background: var(--color-whiteboard-board-night);
+}
+
 /* Toolbar and pen colors. Phone: at the bottom of the board, pen colors above. */
 .wb-dock {
   position: absolute;

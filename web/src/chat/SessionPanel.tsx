@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Ellipsis, Pencil } from 'lucide-react'
+import { Ellipsis, Pencil, Settings } from 'lucide-react'
 import { ApiError, sessionLabel } from '../api.ts'
 import type { SessionSummary } from '../api.ts'
 import { DropdownMenu } from './Menu.tsx'
@@ -15,6 +15,7 @@ type SessionPanelProps = {
   onStart: () => void
   onOpen: (sessionId: string) => void
   onRename: (sessionId: string, name: string) => Promise<void>
+  onOpenSettings: () => void
 }
 
 export function SessionPanel({
@@ -26,6 +27,7 @@ export function SessionPanel({
   onStart,
   onOpen,
   onRename,
+  onOpenSettings,
 }: SessionPanelProps) {
   // The session being renamed stays set while the dialog fades out.
   const [target, setTarget] = useState<SessionSummary | null>(null)
@@ -119,6 +121,12 @@ export function SessionPanel({
           ))}
         </ul>
       ) : null}
+      <div className="session-panel-footer">
+        <button type="button" className="ghost" onClick={onOpenSettings}>
+          <Settings size={20} strokeWidth={2} aria-hidden="true" />
+          Settings
+        </button>
+      </div>
       <RenameDialog
         open={renaming}
         value={value}

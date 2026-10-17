@@ -22,6 +22,7 @@ function panel(onRename: (id: string, name: string) => Promise<void>, sessions =
       onStart={() => {}}
       onOpen={() => {}}
       onRename={onRename}
+      onOpenSettings={() => {}}
     />,
   )
 }

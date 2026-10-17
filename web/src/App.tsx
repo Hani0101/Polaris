@@ -32,6 +32,8 @@ import type { PinnedTurn } from './chat/PinnedWhiteboard.tsx'
 import { pointingFromTurn, type PointedPart, type Pointing } from './whiteboard/pointing.ts'
 import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
 import { QuizPage } from './QuizPage.tsx'
+import { SettingsPage } from './SettingsPage.tsx'
+import { SETTINGS_PATH, isSettingsPath } from './settingsPath.ts'
 import { WhiteboardPage } from './WhiteboardPage.tsx'
 
 const DevWhiteboardRoute = import.meta.env.DEV
@@ -690,7 +692,8 @@ function App() {
   const quizId = pathQuizId(path)
   const whiteboardRoute = pathWhiteboard(path)
   const animationRoute = pathAnimation(path)
-  const covering = Boolean(quizId || whiteboardRoute || animationRoute)
+  const settingsRoute = isSettingsPath(path)
+  const covering = Boolean(quizId || whiteboardRoute || animationRoute || settingsRoute)
 
   async function onBackFromCover() {
     goTo('/')
@@ -727,6 +730,7 @@ function App() {
 
   return (
     <>
+      {settingsRoute ? <SettingsPage onBack={() => void onBackFromCover()} /> : null}
       {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromCover()} /> : null}
       {whiteboardRoute ? (
         <WhiteboardPage
@@ -780,6 +784,10 @@ function App() {
           onStart={() => void onStart()}
           onOpen={(sessionId) => void onOpen(sessionId)}
           onRename={onRename}
+          onOpenSettings={() => {
+            goTo(SETTINGS_PATH)
+            if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
+          }}
           onLeave={() => void onLeave()}
           turns={turns}
           draft={draft}

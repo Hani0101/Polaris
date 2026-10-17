@@ -5,6 +5,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Polaris</title>
+    <script>
+      // Set the learner's appearance mode before the first paint (ST-06). Keep the key in step with src/theme.ts.
+      try {
+        var mode = window.localStorage.getItem('polaris.appearance')
+        if (mode === 'light' || mode === 'dark') document.documentElement.setAttribute('data-theme', mode)
+      } catch (error) {}
+    </script>
   </head>
   <body>
     <div id="root"></div>

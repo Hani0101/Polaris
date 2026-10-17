@@ -159,8 +159,14 @@
   background: var(--color-bg-page);
 }
 
+/* The learner's mode (ST-02): data-theme="light" or "dark" wins; with no attribute (System)
+   the operating system decides. The dark values below appear twice, once per selector. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --color-bg-page: #0c0701;
     --color-bg-subtle: #130e08;
     --color-surface-default: #19130c;
@@ -203,6 +209,51 @@
     --color-code-comment: #9a8f82;
     --color-whiteboard-board-default: var(--color-whiteboard-board-night);
   }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+    --color-bg-page: #0c0701;
+    --color-bg-subtle: #130e08;
+    --color-surface-default: #19130c;
+    --color-surface-raised: #211910;
+    --color-surface-overlay: #000000b3;
+    --color-text-primary: #faf8f4;
+    --color-text-secondary: #c9bfb2;
+    --color-text-muted: #9a8f82;
+    --color-text-disabled: #5e554b;
+    --color-text-inverse: #0c0701;
+    --color-text-on-action: #0c0701;
+    --color-text-on-accent: #0c0701;
+    --color-text-link: #faf8f4;
+    --color-border-subtle: #2c241a;
+    --color-border-default: #3a3026;
+    --color-border-strong: #7a6f62;
+    --color-action-primary-default: #faf8f4;
+    --color-action-primary-hover: #ede6da;
+    --color-action-primary-active: #d9d2c6;
+    --color-action-secondary-default: #2c241a;
+    --color-action-secondary-hover: #3a3026;
+    --color-action-secondary-active: #463a2e;
+    --color-action-destructive-default: #2a1512;
+    --color-action-destructive-hover: #3a1c17;
+    --color-action-destructive-active: #4a231d;
+    --color-accent: #f08a4b;
+    --color-state-error: #f19a8e;
+    --color-state-error-bg: #2a1512;
+    --color-state-success: #8fd19e;
+    --color-state-success-bg: #11241a;
+    --color-state-warning: #f0c674;
+    --color-state-warning-bg: #2a1f0a;
+    --color-state-info: #9cc3ff;
+    --color-state-info-bg: #0f1c2e;
+    --color-focus-ring: #f08a4b;
+    --color-code-keyword: #c9a2ef;
+    --color-code-string: #a8d48a;
+    --color-code-number: #8cc4ec;
+    --color-code-function: #f2a3c0;
+    --color-code-comment: #9a8f82;
+    --color-whiteboard-board-default: var(--color-whiteboard-board-night);
 }
 
 @media (min-width: 640px) {
