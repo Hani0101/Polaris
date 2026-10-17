@@ -29,6 +29,14 @@ const DevWhiteboardRoute = import.meta.env.DEV
     )
   : null
 
+const DevLottieRoute = import.meta.env.DEV
+  ? lazy(() =>
+      import('./LottieDevPage.tsx').then((module) => ({
+        default: module.LottieDevPage,
+      })),
+    )
+  : null
+
 const DESKTOP_QUERY = '(min-width: 1024px)'
 const TOAST_MS = 5000
 
@@ -214,7 +222,7 @@ function App() {
   )
   const [toolsOpen, setToolsOpen] = useState(() => window.matchMedia(DESKTOP_QUERY).matches)
   const [loading, setLoading] = useState(
-    () => !(import.meta.env.DEV && window.location.pathname === '/dev/whiteboard'),
+    () => !(import.meta.env.DEV && window.location.pathname.startsWith('/dev/')),
   )
   const sendAbort = useRef<AbortController | null>(null)
   const sending = useRef(false)
@@ -310,7 +318,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (import.meta.env.DEV && window.location.pathname === '/dev/whiteboard') return
+    if (import.meta.env.DEV && window.location.pathname.startsWith('/dev/')) return
     const controller = new AbortController()
     async function load() {
       try {
@@ -580,6 +588,14 @@ function App() {
     return (
       <Suspense fallback={<p className="notice">Loading the dev whiteboard.</p>}>
         <DevWhiteboardRoute />
+      </Suspense>
+    )
+  }
+
+  if (import.meta.env.DEV && DevLottieRoute && path === '/dev/lottie') {
+    return (
+      <Suspense fallback={<p className="notice">Loading the dev Lottie player.</p>}>
+        <DevLottieRoute />
       </Suspense>
     )
   }

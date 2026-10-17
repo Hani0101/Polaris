@@ -3,6 +3,9 @@ import { animationMediaUrl } from './animationPath.ts'
 import { isAnimation } from './animation/format.ts'
 import type { Animation } from './animation/format.ts'
 import { ScenePlayer } from './animation/ScenePlayer.tsx'
+import { LottiePlayer } from './animation/LottiePlayer.tsx'
+import { isLottieVideo } from './animation/lottieVideo.ts'
+import type { LottieVideo } from './animation/lottieVideo.ts'
 import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AlertBanner } from './chat/ui.tsx'
 import './animation.css'
@@ -13,7 +16,7 @@ type AnimationPlayerProps = {
   onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
-type Media = { mediaType: string; animation: Animation | null }
+type Media = { mediaType: string; animation: Animation | null; video?: LottieVideo | null }
 
 type LoadState = { kind: 'loading' } | ({ kind: 'ready' } & Media) | { kind: 'failed' }
 
@@ -26,6 +29,7 @@ async function probeMedia(sessionId: string, jobId: string, signal: AbortSignal)
   if (mediaType.includes('json')) {
     // A new animation is data that Polaris plays (AN-04).
     const data: unknown = await response.json()
+    if (isLottieVideo(data)) return { mediaType, animation: null, video: data }
     return { mediaType, animation: isAnimation(data) ? data : null }
   }
   // Older jobs: the body is discarded and the player loads the same URL again (AN-06).
@@ -38,12 +42,16 @@ function Playback({
   jobId,
   mediaType,
   animation,
+  video,
   onAskAboutStep,
 }: {
   sessionId: string
   jobId: string
   onAskAboutStep?: (ask: AskAboutStep) => void
 } & Media) {
+  if (video) {
+    return <LottiePlayer video={video} jobId={jobId} onAskAboutStep={onAskAboutStep} />
+  }
   if (animation) {
     return <ScenePlayer animation={animation} jobId={jobId} onAskAboutStep={onAskAboutStep} />
   }
@@ -123,6 +131,7 @@ export function AnimationPlayer({ sessionId, jobId, onAskAboutStep }: AnimationP
           jobId={jobId}
           mediaType={state.mediaType}
           animation={state.animation}
+          video={state.video}
           onAskAboutStep={onAskAboutStep}
         />
       )}

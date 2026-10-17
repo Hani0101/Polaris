@@ -15,6 +15,7 @@
     "@fontsource/atkinson-hyperlegible-next": "5.3.0",
     "@tldraw/tlschema": "5.5.2",
     "katex": "0.19.0",
+    "lottie-web": "5.12.2",
     "lucide-react": "1.57.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
