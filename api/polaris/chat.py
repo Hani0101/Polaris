@@ -173,6 +173,17 @@ def _turn_payload(turn: Turn) -> dict[str, object]:
     return payload
 
 
+def quizzes_for_reply(turns: tuple[Turn, ...]) -> list[dict[str, object]]:
+    """Learner-visible quizzes of earlier turns, so the next reply sees each score."""
+
+    return [
+        artifact
+        for turn in turns
+        for artifact in turn.artifacts
+        if artifact.get("kind") == "quiz"
+    ]
+
+
 class Chat:
     def __init__(
         self,
@@ -444,6 +455,7 @@ class Chat:
                 whiteboards=whiteboards,
                 pointing=pointing,
                 simplify=simplify,
+                quizzes=quizzes_for_reply(prior),
                 **extra,
                 animations=animations,
                 animation_step=animation_step,

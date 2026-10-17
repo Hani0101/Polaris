@@ -1,6 +1,6 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import type { Quiz } from './api.ts'
+import type { Quiz, QuizFeedback } from './api.ts'
 import { QuizCard } from './QuizCard.tsx'
 
 const { gradeQuiz } = vi.hoisted(() => ({
@@ -50,6 +50,36 @@ function sampleQuiz(): Quiz {
   }
 }
 
+const RIGHT_Q1: QuizFeedback = {
+  question_id: 'q1',
+  right: true,
+  correct_choice_id: 'a',
+  explanation: 'A triangle is a shape with three straight sides.',
+}
+
+const WRONG_Q2: QuizFeedback = {
+  question_id: 'q2',
+  right: false,
+  correct_choice_id: 'b',
+  explanation: 'The three angles always add up to 180 degrees.',
+  why_wrong: '90 degrees is one right angle, not the sum of all three.',
+}
+
+/** The quiz as the server sends it after grading: q1 right, q2 missed. */
+function gradedQuiz(feedback: QuizFeedback[] = [RIGHT_Q1, WRONG_Q2]): Quiz {
+  return {
+    ...sampleQuiz(),
+    score: { earned: 1, total: 2 },
+    submitted: { q1: 'a', q2: 'a' },
+    feedback,
+  }
+}
+
+/** The answer row a radio sits in, where the review marks are. */
+function optionRow(name: RegExp): HTMLElement {
+  return screen.getByRole('radio', { name }).closest('label') as HTMLElement
+}
+
 beforeEach(() => {
   gradeQuiz.mockReset()
 })
@@ -79,16 +109,11 @@ test('shows one question at a time and Next question waits for a pick', () => {
   expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull()
 })
 
-test('Check answers grades the whole quiz once, then review explains the mistake', async () => {
+test('Check answers grades the whole quiz once, then review explains each answer', async () => {
   const reads: string[] = []
   const quiz = watchKeyReads(sampleQuiz(), reads)
   const onGraded = vi.fn()
-  gradeQuiz.mockResolvedValue({
-    ...sampleQuiz(),
-    score: { earned: 1, total: 2 },
-    submitted: { q1: 'a', q2: 'a' },
-    mistakes: [{ question_id: 'q2', explanation: 'The three angles always add up to 180 degrees.' }],
-  })
+  gradeQuiz.mockResolvedValue(gradedQuiz())
 
   render(<QuizCard quiz={quiz} onGraded={onGraded} />)
   fireEvent.click(screen.getByRole('radio', { name: 'Three' }))
@@ -98,6 +123,9 @@ test('Check answers grades the whole quiz once, then review explains the mistake
   expect(check.disabled).toBe(true)
   fireEvent.click(screen.getByRole('radio', { name: '90 degrees' }))
   expect(check.disabled).toBe(false)
+  // QZ-03: before grading nothing is marked right or wrong.
+  expect(screen.queryByText('Correct answer')).toBeNull()
+  expect(screen.queryByText('Your answer')).toBeNull()
 
   await act(async () => {
     fireEvent.click(check)
@@ -110,18 +138,63 @@ test('Check answers grades the whole quiz once, then review explains the mistake
   // Review starts at the first question, which the learner got right.
   expect(screen.getByText('You got 1 of 2 right.')).toBeTruthy()
   expect(screen.getByText('Question 1 of 2')).toBeTruthy()
-  expect(screen.getAllByText('Correct').length).toBeGreaterThan(0)
+  expect(screen.getByText('Correct')).toBeTruthy()
+  expect(screen.getByText(RIGHT_Q1.explanation)).toBeTruthy()
   expect(screen.queryByText("Not quite, here's why")).toBeNull()
 
   fireEvent.click(screen.getByRole('button', { name: 'Next question' }))
   expect(screen.getByText("Not quite, here's why")).toBeTruthy()
-  expect(screen.getByText('The three angles always add up to 180 degrees.')).toBeTruthy()
-  expect(screen.getByText('Your answer')).toBeTruthy()
-  // QZ-03: the right choice of a missed question is never revealed.
-  expect(screen.queryByText('Correct')).toBeNull()
+  expect(screen.getByText(WRONG_Q2.explanation)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Check answers' })).toBeNull()
 
+  // QZ-03: the ungraded quiz never had an answer-key field to read.
   expect(reads).toEqual([])
+})
+
+test('a right answer shows Correct and why it is right', () => {
+  render(<QuizCard quiz={gradedQuiz()} onGraded={() => {}} />)
+
+  const feedback = screen.getByText('Correct').parentElement as HTMLElement
+  expect(within(feedback).getByText(RIGHT_Q1.explanation)).toBeTruthy()
+  expect(screen.queryByText('You picked the right answer.')).toBeNull()
+
+  const pick = optionRow(/Three/)
+  expect(pick.classList.contains('is-correct')).toBe(true)
+  expect(within(pick).getByText('Correct answer')).toBeTruthy()
+  expect(screen.queryByText('Your answer')).toBeNull()
+  expect(optionRow(/Four/).classList.contains('is-incorrect')).toBe(false)
+})
+
+test('a wrong answer marks the correct choice and explains the pick, then the answer', () => {
+  render(<QuizCard quiz={gradedQuiz()} onGraded={() => {}} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Next question' }))
+
+  const pick = optionRow(/90 degrees/)
+  expect(pick.classList.contains('is-incorrect')).toBe(true)
+  expect(within(pick).getByText('Your answer')).toBeTruthy()
+  expect((screen.getByRole('radio', { name: /90 degrees/ }) as HTMLInputElement).checked).toBe(true)
+
+  // QZ-06: the key is revealed once the quiz is graded.
+  const answer = optionRow(/180 degrees/)
+  expect(answer.classList.contains('is-correct')).toBe(true)
+  expect(within(answer).getByText('Correct answer')).toBeTruthy()
+  expect((screen.getByRole('radio', { name: /180 degrees/ }) as HTMLInputElement).checked).toBe(false)
+
+  const feedback = screen.getByText("Not quite, here's why").parentElement as HTMLElement
+  const lines = Array.from(feedback.querySelectorAll('.qz-feedback-text'), (line) => line.textContent)
+  expect(lines).toEqual([WRONG_Q2.why_wrong, WRONG_Q2.explanation])
+})
+
+test('an older graded quiz without a note still explains the missed question', () => {
+  const withoutNote: QuizFeedback = { ...WRONG_Q2 }
+  delete withoutNote.why_wrong
+  render(<QuizCard quiz={gradedQuiz([RIGHT_Q1, withoutNote])} onGraded={() => {}} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Next question' }))
+
+  const feedback = screen.getByText("Not quite, here's why").parentElement as HTMLElement
+  const lines = Array.from(feedback.querySelectorAll('.qz-feedback-text'), (line) => line.textContent)
+  expect(lines).toEqual([WRONG_Q2.explanation])
+  expect(within(optionRow(/180 degrees/)).getByText('Correct answer')).toBeTruthy()
 })
 
 test('a quiz that arrives graded opens in review', () => {
@@ -131,7 +204,10 @@ test('a quiz that arrives graded opens in review', () => {
         ...sampleQuiz(),
         score: { earned: 2, total: 2 },
         submitted: { q1: 'a', q2: 'b' },
-        mistakes: [],
+        feedback: [
+          RIGHT_Q1,
+          { question_id: 'q2', right: true, correct_choice_id: 'b', explanation: WRONG_Q2.explanation },
+        ],
       }}
       onGraded={() => {}}
     />,

@@ -29,12 +29,14 @@ class ReplyAgent(Protocol):
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        quizzes: Sequence[dict[str, object]] = (),
         picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
 
+        quizzes are the learner-visible payloads of this session's quizzes.
         Chat passes picture only when the learner's turn carries one.
         """
 

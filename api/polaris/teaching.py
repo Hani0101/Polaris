@@ -59,7 +59,14 @@ from polaris.animation_format import Animation, describe_animation, describe_ste
 from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.models import AnimationStep, Pointing, Profile, Turn
-from polaris.quiz import InvalidQuiz
+from polaris.key_check import ClaudeKeyCheck, KeyCheck, KeyCheckFailed
+from polaris.quiz import (
+    InvalidQuiz,
+    check_view,
+    describe_result,
+    disagreements,
+    normalize_spec,
+)
 from polaris.auto_layout import expand_layout
 from polaris.board_picture import BoardPicture
 from polaris.layout_check import LayoutProblem, layout_problems, mark_problems
@@ -85,13 +92,17 @@ _MISSING_PROFILE = (
 POLARIS_SERVER_NAME = "polaris"
 CREATE_QUIZ_TOOL = "mcp__polaris__create_quiz"
 DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
+# A quiz the key check refuses may be sent once more in the same reply (QZ-12).
+QUIZ_CHECK_ATTEMPTS = 2
 MARK_WHITEBOARD_TOOL = "mcp__polaris__mark_whiteboard"
 SIMPLIFY_WHITEBOARD_TOOL = "mcp__polaris__simplify_whiteboard"
 START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
-# each fix attempt, one animation job, one quiz, one quiz fix attempt after a
-# QZ-10 refusal, and one spare tool turn.
-TEACHING_MAX_TURNS = 1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 4
+# each fix attempt, one animation job, the quiz and its key-check retry
+# (QZ-12), one quiz fix after a QZ-10 refusal, and one spare tool turn.
+TEACHING_MAX_TURNS = (
+    1 + WHITEBOARD_TOOL_LIMITS.max_fix_attempts + 1 + QUIZ_CHECK_ATTEMPTS + 1 + 1
+)
 _DRAWING_FORMAT = (
     "The input is one Polaris drawing: id, description, steps, comments, and optionally layout. "
     "Polaris sets the version and session_id. "
@@ -360,6 +371,15 @@ CREATE_QUIZ_SCHEMA = {
                             "properties": {
                                 "id": {"type": "string"},
                                 "text": {"type": "string"},
+                                "why_wrong": {
+                                    "type": "string",
+                                    "description": (
+                                        "Required on every wrong choice, left out on the "
+                                        "correct one. One short sentence naming the "
+                                        "misconception that leads a learner to pick it. "
+                                        "Shown after grading to a learner who picked it."
+                                    ),
+                                },
                             },
                             "required": ["id", "text"],
                             "additionalProperties": False,
@@ -369,14 +389,14 @@ CREATE_QUIZ_SCHEMA = {
                         "type": "string",
                         "description": (
                             "Id of the one correct choice. Stored in the database. "
-                            "Never shown to the learner."
+                            "Shown to the learner only after grading."
                         ),
                     },
                     "explanation": {
                         "type": "string",
                         "description": (
                             "Why the correct choice is right. Shown after grading "
-                            "only for questions the learner got wrong."
+                            "for every question."
                         ),
                     },
                 },
@@ -485,8 +505,16 @@ def teaching_prompt() -> str:
         "Do not write all of the above or none of the above, and do not repeat a choice.\n"
         "Polaris shuffles the choices. Do not label them with letters, and in an explanation "
         "name a choice by its text, not by its letter or position.\n"
-        "Never put the correct choices in the reply text.\n"
+        "Every wrong choice needs a why_wrong note: one short sentence naming the "
+        "misconception that leads a learner to pick it.\n"
+        "Before a quiz is stored, a second model answers it without the key. "
+        "If it disagrees, the quiz is refused. Then fix the question or its key "
+        "and send it once more, or leave the quiz out.\n"
+        "Never put the correct choices of a quiz the learner has not submitted "
+        "in the reply text.\n"
         "Do not grade the learner's choices. Code grades them against the stored key.\n"
+        "When the turn lists a graded quiz, use its score and the questions "
+        "the learner missed to choose what to teach next.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
         "A new whiteboard includes a description for a person "
@@ -609,6 +637,7 @@ def turn_prompt(
     whiteboards: Sequence[Whiteboard] = (),
     pointing: Pointing | None = None,
     simplify: Whiteboard | None = None,
+    quizzes: Sequence[dict[str, object]] = (),
     picture: BoardPicture | None = None,
     animations: Sequence[Animation] = (),
     animation_step: AnimationStep | None = None,
@@ -653,6 +682,11 @@ def turn_prompt(
         lines.append("Animations in this session:")
         for animation in animations:
             lines.append(describe_animation(animation))
+    if quizzes:
+        lines.append("")
+        lines.append("Quizzes in this session. Code grades them against the stored key:")
+        for quiz in quizzes:
+            lines.append(describe_result(quiz))
     current = _pointing_text(whiteboards, pointing)
     if current is not None:
         lines.append("")
@@ -1000,9 +1034,12 @@ def polaris_mcp_server(
         (
             "Store a quiz as an artifact of this session. "
             "Each question must have exactly one correct choice. "
+            "Every wrong choice needs a why_wrong note. "
             "Wrong choices are plausible mistakes of about the same length as the "
             "correct one. Polaris shuffles the choices, so do not label them. "
-            "The learner never sees the answer key."
+            "A second model answers the quiz without the key first, and the quiz "
+            "is refused if it disagrees. "
+            "The learner sees the answer key only after grading."
         ),
         CREATE_QUIZ_SCHEMA,
     )
@@ -1242,17 +1279,20 @@ class ClaudeTeachingAgent:
         work_dir: Path,
         client_factory: ClientFactory = _default_client,
         store_quiz: QuizStore | None = None,
+        key_check: KeyCheck | None = None,
     ) -> None:
         self.work_dir = work_dir
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._client_factory = client_factory
         self._clients: dict[str, Any] = {}
         self._store_quiz = store_quiz
+        self._key_check = key_check or ClaudeKeyCheck(work_dir)
         self._store_whiteboard: WhiteboardStore | None = None
         self._mark_whiteboard: WhiteboardStore | None = None
         self._preview_marks: MarkPreview | None = None
         self._start_animation_job: AnimationJobStore | None = None
         self._drawing_failures: dict[str, int] = {}
+        self._quiz_refusals: dict[str, int] = {}
 
     def bind_store(
         self,
@@ -1283,6 +1323,7 @@ class ClaudeTeachingAgent:
         if self._store_quiz is None:
             return await _unavailable_quiz(args)
         try:
+            await self._check_key(session_id, normalize_spec(args))
             payload = await asyncio.to_thread(self._store_quiz, session_id, args)
         except InvalidQuiz as exc:
             return {
@@ -1301,6 +1342,44 @@ class ClaudeTeachingAgent:
                 }
             ]
         }
+
+    async def _check_key(self, session_id: str, stored: dict[str, Any]) -> None:
+        """QZ-12: a second model answers without the key, and must match it.
+        After QUIZ_CHECK_ATTEMPTS refusals in one reply, no quiz is checked or stored."""
+
+        refusals = self._quiz_refusals.get(session_id, 0)
+        if refusals >= QUIZ_CHECK_ATTEMPTS:
+            raise InvalidQuiz(
+                "The answer key was refused too many times in this reply. "
+                "Leave the quiz out of this reply."
+            )
+        self._quiz_refusals[session_id] = refusals + 1
+        try:
+            answers = await self._key_check.answer(check_view(stored))
+        except KeyCheckFailed as exc:
+            raise InvalidQuiz(
+                "The answer key could not be checked, so the quiz was not stored. "
+                "Leave the quiz out of this reply."
+            ) from exc
+        wrong = disagreements(stored, answers)
+        if not wrong:
+            self._quiz_refusals[session_id] = refusals
+            return
+        lines = ["A second model answered this quiz without the key and disagreed:"]
+        for question in stored["questions"]:
+            if question["id"] not in wrong:
+                continue
+            texts = {choice["id"]: choice["text"] for choice in question["choices"]}
+            picked = answers.get(question["id"], "")
+            lines.append(
+                f'- {question["id"]}: it chose {picked} ("{texts.get(picked, "")}"), '
+                f'the key says {question["correct_choice_id"]}.'
+            )
+        lines.append(
+            "The quiz was not stored. Fix those questions or their keys, "
+            "or leave the quiz out."
+        )
+        raise InvalidQuiz("\n".join(lines))
 
     def _whiteboard_handler_for(self, session_id: str) -> WhiteboardHandler:
         async def handle(args: dict[str, Any]) -> dict[str, Any]:
@@ -1454,11 +1533,13 @@ class ClaudeTeachingAgent:
         whiteboards: Sequence[Whiteboard] = (),
         pointing: Pointing | None = None,
         simplify: Whiteboard | None = None,
+        quizzes: Sequence[dict[str, object]] = (),
         picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
+        self._quiz_refusals[session_id] = 0
         client, include_transcript = await self._ensure_client(
             session_id,
             sdk_session_id,
@@ -1471,6 +1552,7 @@ class ClaudeTeachingAgent:
             whiteboards,
             pointing,
             simplify,
+            quizzes,
             picture,
             animations,
             animation_step,
@@ -1496,6 +1578,7 @@ class ClaudeTeachingAgent:
 
     async def close_session(self, session_id: str) -> None:
         self._drawing_failures.pop(session_id, None)
+        self._quiz_refusals.pop(session_id, None)
         client = self._clients.pop(session_id, None)
         if client is not None:
             await client.disconnect()

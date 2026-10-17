@@ -44,7 +44,7 @@ Success for this scope is a correct explanation, an animation that plays, a quiz
 
 ## Security
 
-v1 security is three rules already written: the browser never receives the answer key (QZ-03), grading is done in code (QZ-04), and no agent-written animation code runs (AN-04). See [An animation is data, not code](decisions/0006-animation-is-data-not-code.md).
+v1 security is three rules already written: the browser never receives the answer key before the quiz is graded (QZ-03), grading is done in code (QZ-04), and no agent-written animation code runs (AN-04). See [An animation is data, not code](decisions/0006-animation-is-data-not-code.md).
 
 ## Limits
 

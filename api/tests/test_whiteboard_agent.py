@@ -56,9 +56,10 @@ class DrawingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
         **_extra,
     ):
-        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if not profile.facts:
             yield (
                 "What should I know before I teach? "
@@ -409,9 +410,10 @@ class MarkingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
         **_extra,
     ):
-        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         self._replies += 1
         if not profile.facts:
             yield (
@@ -618,6 +620,7 @@ def test_a_failed_reply_discards_its_unattached_whiteboard(make_client):
             whiteboards=(),
             pointing=None,
             simplify=None,
+            quizzes=(),
             **_extra,
         ):
             async for chunk in super().reply(
@@ -629,6 +632,7 @@ def test_a_failed_reply_discards_its_unattached_whiteboard(make_client):
                 whiteboards=whiteboards,
                 pointing=pointing,
                 simplify=simplify,
+                quizzes=quizzes,
             ):
                 yield chunk
             raise TeachingFailed("the reply failed")
@@ -696,9 +700,10 @@ class SimplerStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
         **_extra,
     ):
-        del prior_turns, sdk_session_id, whiteboards, pointing
+        del prior_turns, sdk_session_id, whiteboards, pointing, quizzes
         self.calls += 1
         self.failures = 0
         if not profile.facts:
