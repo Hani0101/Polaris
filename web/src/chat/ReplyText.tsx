@@ -1,34 +1,74 @@
 import type { ReactNode } from 'react'
-import { ExternalLink } from 'lucide-react'
+import katex from 'katex'
+import 'katex/dist/katex.min.css'
+import { ExternalLink, Info, Lightbulb, TriangleAlert } from 'lucide-react'
 import './reply.css'
-import { parseReply } from './replyBlocks.ts'
+import { highlightCode } from './highlightCode.tsx'
+import { parseReply, type CalloutTone, type ReplyBlock } from './replyBlocks.ts'
 
 /**
  * Renders a tutor reply as structured text: headings, numbered steps, lists,
- * short paragraphs, bold, code, and links. Only this small subset of Markdown
- * is read; anything else stays plain text. No raw HTML is ever rendered.
+ * short paragraphs, quotes, callouts, tables, maths, bold, key terms, struck
+ * text, code with syntax colors, and links. Only this subset of Markdown is
+ * read; anything else stays plain text. No raw HTML from the reply is ever
+ * rendered. The only HTML inserted is KaTeX's own output for maths.
  */
 
 const INLINE =
-  /(`[^`\n]+`)|(\*\*(?=\S)[^\n]*?\S\*\*|__(?=\S)[^\n]*?\S__)|(\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\))|((?<![\w*])\*(?=[^\s*])[^*\n]*?[^\s*]\*(?![\w*]))/
+  /(?<code>`[^`\n]+`)|(?<bold>\*\*(?=\S)[^\n]*?\S\*\*|__(?=\S)[^\n]*?\S__)|(?<key>==(?=\S)[^\n]*?\S==)|(?<strike>~~(?=\S)[^\n]*?\S~~)|(?<link>\[(?<label>[^\]\n]+)\]\((?<href>https?:\/\/[^\s)]+)\))|(?<math>(?<![\\\w])\$(?=[^\s$])(?:[^$\n]*?[^\s$\\])?\$(?!\d)|\\\((?<parenMath>[^\n]+?)\\\))|(?<plain>(?<![\w*])\*(?=[^\s*])[^*\n]*?[^\s*]\*(?![\w*]))/
 
-function renderInline(text: string, key = 'i'): ReactNode[] {
+const CALLOUT: Record<CalloutTone, { label: string; Icon: typeof Info }> = {
+  note: { label: 'Note', Icon: Info },
+  tip: { label: 'Tip', Icon: Lightbulb },
+  warning: { label: 'Warning', Icon: TriangleAlert },
+}
+
+const NUMBER_CELL = /^[-+−]?[\d.,\s]*\d[\d.,\s]*%?$/
+
+/** A backslash before a dollar sign keeps it a dollar sign, not maths. */
+function text(value: string): string {
+  return value.replace(/\\\$/g, '$')
+}
+
+function Maths({ tex, display, source }: { tex: string; display: boolean; source: string }) {
+  let html: string
+  try {
+    // Display maths is set in inline mode with \displaystyle so a long line can
+    // wrap at its operators on a phone (DESIGN.md 6.5: nothing scrolls sideways).
+    html = katex.renderToString(display ? `\\displaystyle ${tex}` : tex, { throwOnError: true })
+  } catch {
+    return display ? <pre className="reply-math-source"><code>{source}</code></pre> : <code>{source}</code>
+  }
+  const Tag = display ? 'div' : 'span'
+  return <Tag className={display ? 'reply-math-block' : 'reply-math'} dangerouslySetInnerHTML={{ __html: html }} />
+}
+
+function renderInline(value: string, key = 'i'): ReactNode[] {
   const nodes: ReactNode[] = []
-  let rest = text
+  let rest = value
   let count = 0
   while (rest) {
     const match = rest.match(INLINE)
-    if (!match || match.index === undefined) {
-      nodes.push(rest)
+    if (!match || match.index === undefined || !match.groups) {
+      nodes.push(text(rest))
       break
     }
-    if (match.index > 0) nodes.push(rest.slice(0, match.index))
+    if (match.index > 0) nodes.push(text(rest.slice(0, match.index)))
     const id = `${key}-${count}`
-    const [whole, code, bold, link, label, href, plain] = match
+    const whole = match[0]
+    const { code, bold, key: term, strike, link, label, href, math, parenMath, plain } = match.groups
     if (code) {
       nodes.push(<code key={id}>{code.slice(1, -1)}</code>)
     } else if (bold) {
       nodes.push(<strong key={id}>{renderInline(bold.slice(2, -2), id)}</strong>)
+    } else if (term) {
+      nodes.push(
+        <strong key={id} className="reply-key">
+          {renderInline(term.slice(2, -2), id)}
+        </strong>,
+      )
+    } else if (strike) {
+      nodes.push(<s key={id}>{renderInline(strike.slice(2, -2), id)}</s>)
     } else if (link && label && href) {
       nodes.push(
         <a key={id} href={href} target="_blank" rel="noreferrer noopener">
@@ -43,6 +83,8 @@ function renderInline(text: string, key = 'i'): ReactNode[] {
           <span className="visually-hidden"> (opens in a new tab)</span>
         </a>,
       )
+    } else if (math) {
+      nodes.push(<Maths key={id} tex={parenMath ?? math.slice(1, -1)} display={false} source={math} />)
     } else if (plain) {
       // Italic is never used (DESIGN.md 3.4), so single-star emphasis reads as plain text.
       nodes.push(...renderInline(plain.slice(1, -1), id))
@@ -55,45 +97,100 @@ function renderInline(text: string, key = 'i'): ReactNode[] {
   return nodes
 }
 
-export function ReplyText({ text, live = false }: { text: string; live?: boolean }) {
-  const blocks = parseReply(text)
+function renderBlock(block: ReplyBlock, key: string): ReactNode {
+  if (block.kind === 'heading') {
+    return <h3 key={key}>{renderInline(block.text, key)}</h3>
+  }
+  if (block.kind === 'code') {
+    return (
+      <pre key={key}>
+        <code data-language={block.language || undefined}>
+          {highlightCode(block.code, block.language) ?? block.code}
+        </code>
+      </pre>
+    )
+  }
+  if (block.kind === 'math') {
+    return <Maths key={key} tex={block.tex} display source={block.tex} />
+  }
+  if (block.kind === 'quote') {
+    return <blockquote key={key}>{renderBlocks(block.blocks, key)}</blockquote>
+  }
+  if (block.kind === 'callout') {
+    const { label, Icon } = CALLOUT[block.tone]
+    return (
+      <div key={key} className={`reply-callout reply-callout--${block.tone}`}>
+        <p className="reply-callout-label">
+          <Icon size={16} strokeWidth={2} aria-hidden="true" />
+          {label}
+        </p>
+        {renderBlocks(block.blocks, key)}
+      </div>
+    )
+  }
+  if (block.kind === 'table') {
+    const cellClass = (cell: string) => (NUMBER_CELL.test(cell) ? 'reply-number' : undefined)
+    return (
+      <table key={key}>
+        <thead>
+          <tr>
+            {block.header.map((cell, column) => (
+              <th key={column} scope="col" style={{ textAlign: block.align[column] ?? undefined }}>
+                {renderInline(cell, `${key}-h${column}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {block.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>
+              {row.map((cell, column) => (
+                <td
+                  key={column}
+                  className={cellClass(cell)}
+                  style={{ textAlign: block.align[column] ?? undefined }}
+                >
+                  {renderInline(cell, `${key}-${rowIndex}-${column}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )
+  }
+  if (block.kind === 'list') {
+    const items = block.items.map((item, itemIndex) => (
+      <li key={`${key}-${itemIndex}`}>{renderInline(item, `${key}-${itemIndex}`)}</li>
+    ))
+    return block.ordered ? (
+      <ol key={key} start={block.start === 1 ? undefined : block.start}>
+        {items}
+      </ol>
+    ) : (
+      <ul key={key}>{items}</ul>
+    )
+  }
+  return (
+    <p key={key}>
+      {block.lines.map((line, lineIndex) => (
+        <span key={`${key}-${lineIndex}`}>
+          {lineIndex > 0 ? <br /> : null}
+          {renderInline(line, `${key}-${lineIndex}`)}
+        </span>
+      ))}
+    </p>
+  )
+}
+
+function renderBlocks(blocks: ReplyBlock[], key: string): ReactNode[] {
+  return blocks.map((block, index) => renderBlock(block, `${key}-b${index}`))
+}
+
+export function ReplyText({ text: reply, live = false }: { text: string; live?: boolean }) {
   return (
     <div className="tutor-body reply" aria-live={live ? 'polite' : undefined}>
-      {blocks.map((block, index) => {
-        const key = `b${index}`
-        if (block.kind === 'heading') {
-          return <h3 key={key}>{renderInline(block.text, key)}</h3>
-        }
-        if (block.kind === 'code') {
-          return (
-            <pre key={key}>
-              <code data-language={block.language || undefined}>{block.code}</code>
-            </pre>
-          )
-        }
-        if (block.kind === 'list') {
-          const items = block.items.map((item, itemIndex) => (
-            <li key={`${key}-${itemIndex}`}>{renderInline(item, `${key}-${itemIndex}`)}</li>
-          ))
-          return block.ordered ? (
-            <ol key={key} start={block.start === 1 ? undefined : block.start}>
-              {items}
-            </ol>
-          ) : (
-            <ul key={key}>{items}</ul>
-          )
-        }
-        return (
-          <p key={key}>
-            {block.lines.map((line, lineIndex) => (
-              <span key={`${key}-${lineIndex}`}>
-                {lineIndex > 0 ? <br /> : null}
-                {renderInline(line, `${key}-${lineIndex}`)}
-              </span>
-            ))}
-          </p>
-        )
-      })}
+      {renderBlocks(parseReply(reply), 'r')}
     </div>
   )
 }

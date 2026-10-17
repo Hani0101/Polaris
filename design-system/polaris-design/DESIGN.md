@@ -74,6 +74,11 @@ Dark mode: yes
 | `color.state.info` | #2b5a8a | #9cc3ff | Info text and icons | Passes 4.5:1 on its background and the page |
 | `color.state.infoBg` | #e6eef7 | #0f1c2e | Info background | Soft background, calm |
 | `color.focus.ring` | #0c0701 | #f08a4b | Outline showing where the keyboard is | Highest contrast in each mode (18.9:1 light, 7.0:1 dark at worst) |
+| `color.code.keyword` | #7a3e9d | #c9a2ef | Keywords in code blocks in tutor replies: `if`, `def`, `return` | Code highlighting in replies; plum stays apart from the amber accent and the state colors |
+| `color.code.string` | #3d6b1f | #a8d48a | Strings in code blocks | Code highlighting in replies; an olive green, not the success green |
+| `color.code.number` | #1f5f8b | #8cc4ec | Numbers, literals, and built-in values in code blocks | Code highlighting in replies; not the info blue |
+| `color.code.function` | #9a3b5b | #f2a3c0 | Function, class, and type names in code blocks | Code highlighting in replies; a berry red, not the error red |
+| `color.code.comment` | #5c5249 | #9a8f82 | Comments in code blocks (same as `color.text.muted`) | Comments matter less than the code, and muted text already passes on the code block |
 | `color.whiteboard.board.default` | #faf8f4 | #0c0701 | Board when a whiteboard opens: white in light mode, night in dark mode | Familiar like a real classroom board |
 | `color.whiteboard.board.white` | #faf8f4 | #faf8f4 | Board box 1, warm white | Familiar like a real classroom board |
 | `color.whiteboard.board.night` | #0c0701 | #0c0701 | Board box 2, night sky | The dark mode board, the Polaris night sky |
@@ -163,6 +168,12 @@ Whiteboard tokens have the same value in both columns: they follow the board, no
 | `color.text.primary` | `color.state.errorBg` | text | 17.12:1 | 16.30:1 | Pass |
 | `color.state.success` | `color.state.infoBg` | text | 5.46:1 | 9.61:1 | Pass |
 | `color.state.error` | `color.state.infoBg` | text | 5.50:1 | 7.96:1 | Pass |
+| `color.text.primary` | `color.state.warningBg` | text | 17.74:1 | 15.24:1 | Pass |
+| `color.code.keyword` | `color.bg.subtle` | text | 6.04:1 | 9.05:1 | Pass |
+| `color.code.string` | `color.bg.subtle` | text | 5.46:1 | 11.38:1 | Pass |
+| `color.code.number` | `color.bg.subtle` | text | 5.92:1 | 10.26:1 | Pass |
+| `color.code.function` | `color.bg.subtle` | text | 5.76:1 | 9.85:1 | Pass |
+| `color.code.comment` | `color.bg.subtle` | text | 6.58:1 | 6.06:1 | Pass |
 
 Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), or `ui` (borders, icons, focus ring, needs 3:1). Ratios come from `check_sync.py`, never from estimation.
 
@@ -180,6 +191,8 @@ Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), 
 - Pens follow the board, not the app mode: the white, yellow, blue, green, and pink boards use the `pen.onLight` set, the night board uses `pen.onDark`. On a picked board color, use the set whose tutor pen has the higher contrast with it. Why: pens stay visible on whatever board is chosen.
 - With a picked pen or board color, the learner is responsible for visibility. Nothing changes automatically. Why: not given.
 - The amber accent is never a pen color. Why: keeps the accent for the app's own highlights, and `#f08a4b` is 2.4:1 on the light board.
+- `color.code.*` is used only for syntax colors inside code blocks in tutor replies, on `color.bg.subtle`. Inline code and the rest of the app never use it. Why: the code colors carry no meaning outside code, so they stay out of the way of the accent and the state colors.
+- Syntax color is never the only cue in code: keywords are also bold. Why: color alone fails people with color blindness.
 
 ## 3. Typography
 
@@ -704,6 +717,11 @@ States (variant: tutor):
 - Messages are `space.stack.default` apart. Why: breathing room so a long reply does not run into the next message.
 - Tutor replies follow the reading width rule (60 characters) and the structure rule: headings, numbered steps, short paragraphs (section 1). Why: Guiding.
 - Copy and Try again are always visible under a finished tutor reply, never hidden behind hover. Why: phones have no hover.
+- A key term in a tutor reply is bold and drawn in `color.accent`, with no fill and no underline. Why: the accent is reserved for key terms (2.3), and an underline would look like a link.
+- A callout in a tutor reply (note, tip, warning) looks like the Alert of the same color (note: info, tip: success, warning: warning) without its close button: the variant's soft fill, `radius.md`, padding `space.sm` `space.md`, and an icon (`component.icon.size.sm`) and label (`typography.label`) in the variant's color. Its body stays in `color.text.primary`. Why: one look for an inline message, and long text reads best in the main text color.
+- A quote in a tutor reply has a `border.width.emphasis` line on its left in `color.border.strong`, and text in `color.text.secondary`. Why: shows it is someone else's words without a new color.
+- A table in a tutor reply has `border.width.default` lines in `color.border.default`, header cells in `typography.label`, and wraps its cells instead of scrolling (6.5). Numbers in a column use `font.family.mono`. Why: same edges as cards, and columns of numbers line up.
+- Struck-through text stays in `color.text.primary`. Why: the line already shows it is wrong, and fading it would fail contrast.
 
 ### Thinking indicator
 Purpose: shows that the tutor is working and says what it is doing, before its reply starts. Never bouncing dots.
