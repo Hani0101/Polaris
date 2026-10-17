@@ -149,7 +149,7 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
 
 
 class FakeKeyCheck:
-    """Answers without the key (QZ-10). Records what it was shown."""
+    """Answers without the key (QZ-12). Records what it was shown."""
 
     def __init__(self, answers: dict[str, str] | None = None, fail: bool = False) -> None:
         self.answers = answers if answers is not None else {"q1": "b", "q2": "b"}
@@ -692,7 +692,7 @@ def test_create_quiz_tool_reports_a_blank_explanation(tmp_path: Path):
 
 
 def test_create_quiz_tool_refuses_a_key_the_check_disagrees_with(tmp_path: Path):
-    """QZ-10: a second model picks another choice, so the quiz is not stored."""
+    """QZ-12: a second model picks another choice, so the quiz is not stored."""
 
     stored: list[dict] = []
     check = FakeKeyCheck({"q1": "a"})
@@ -709,7 +709,7 @@ def test_create_quiz_tool_refuses_a_key_the_check_disagrees_with(tmp_path: Path)
 
 
 def test_create_quiz_tool_refuses_a_quiz_the_check_cannot_answer(tmp_path: Path):
-    """QZ-10: when the check cannot finish, the quiz is not stored."""
+    """QZ-12: when the check cannot finish, the quiz is not stored."""
 
     stored: list[dict] = []
     check = FakeKeyCheck(fail=True)
@@ -724,7 +724,7 @@ def test_create_quiz_tool_refuses_a_quiz_the_check_cannot_answer(tmp_path: Path)
 
 
 def test_a_quiz_refused_twice_is_not_checked_again(tmp_path: Path):
-    """QZ-10: one retry per reply, so a refused quiz cannot use up the turn budget."""
+    """QZ-12: one retry per reply, so a refused quiz cannot use up the turn budget."""
 
     check = FakeKeyCheck({"q1": "a"})
     agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)
@@ -763,7 +763,7 @@ def test_the_key_check_never_sees_the_key(tmp_path: Path):
 
 
 def test_a_quiz_without_notes_is_refused_before_the_check(tmp_path: Path):
-    """QZ-11: a wrong choice without a note never reaches the key check."""
+    """QZ-13: a wrong choice without a note never reaches the key check."""
 
     check = FakeKeyCheck()
     agent = _agent(tmp_path, [delta("Ok"), result()], [], key_check=check)

@@ -81,7 +81,7 @@ _MISSING_PROFILE = (
 POLARIS_SERVER_NAME = "polaris"
 CREATE_QUIZ_TOOL = "mcp__polaris__create_quiz"
 DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
-# A quiz the key check refuses may be sent once more in the same reply (QZ-10).
+# A quiz the key check refuses may be sent once more in the same reply (QZ-12).
 QUIZ_CHECK_ATTEMPTS = 2
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
 # each fix attempt, each quiz attempt, and one spare tool turn.
@@ -916,7 +916,7 @@ class ClaudeTeachingAgent:
         }
 
     async def _check_key(self, session_id: str, stored: dict[str, Any]) -> None:
-        """QZ-10: a second model answers without the key, and must match it.
+        """QZ-12: a second model answers without the key, and must match it.
         After QUIZ_CHECK_ATTEMPTS refusals in one reply, no quiz is checked or stored."""
 
         refusals = self._quiz_refusals.get(session_id, 0)

@@ -127,7 +127,7 @@ def describe_result(payload: dict[str, Any]) -> str:
 def disagreements(
     stored: dict[str, Any], answers: dict[str, str]
 ) -> list[str]:
-    """Questions where a check that never saw the key picked another choice (QZ-10)."""
+    """Questions where a check that never saw the key picked another choice (QZ-12)."""
 
     return [
         question["id"]

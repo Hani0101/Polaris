@@ -1,6 +1,6 @@
 # Quiz
 
-A quiz checks what the learner understood. It is an artifact of the session. The answer key stays in the database until the quiz is graded. See [Answer key stays in the database](../decisions/0002-answer-key-stays-in-db.md) and [Answer key shown after grading](../decisions/0006-answer-key-shown-after-grading.md).
+A quiz checks what the learner understood. It is an artifact of the session. The answer key stays in the database until the quiz is graded. See [Answer key stays in the database](../decisions/0002-answer-key-stays-in-db.md) and [Answer key shown after grading](../decisions/0007-answer-key-shown-after-grading.md).
 
 ## Rules
 
@@ -12,9 +12,9 @@ QZ-05  Each question has exactly one correct choice.
 QZ-06  After grading, every question shows its explanation of why the correct choice is right. A wrong question also shows the correct choice and the wrong-choice note for the choice the learner made.
 QZ-07  Creating a quiz stores it as an artifact of that session.
 QZ-08  The score is kept with the quiz.
-QZ-09  Every later reply in that session reads the score of each graded quiz, which questions were wrong, the choice the learner made, and for a wrong question the correct choice and the wrong-choice note for their choice.
-QZ-10  Before a quiz is stored, a second model answers it without the key. If any answer differs from the key, or the check cannot finish, the quiz is not stored and the teaching agent is told why. The agent may send it once more in the same reply.
-QZ-11  Each wrong choice has a wrong-choice note.
+QZ-11  Every later reply in that session reads the score of each graded quiz, which questions were wrong, the choice the learner made, and for a wrong question the correct choice and the wrong-choice note for their choice.
+QZ-12  Before a quiz is stored, a second model answers it without the key. If any answer differs from the key, or the check cannot finish, the quiz is not stored and the teaching agent is told why. The agent may send it once more in the same reply.
+QZ-13  Each wrong choice has a wrong-choice note.
 
 ## Scenarios
 
@@ -40,7 +40,7 @@ Scenario: one correct choice  [QZ-05]
   When the quiz is stored
   Then every question has exactly one correct choice in the key
 
-Scenario: the next reply sees the score  [QZ-09]
+Scenario: the next reply sees the score  [QZ-11]
   Given a quiz in the session that the learner submitted
   When the learner sends the next message
   Then the reply reads the score and which questions were wrong
@@ -52,13 +52,13 @@ Scenario: grading shows the key  [QZ-03, QZ-06]
   Then the right question shows its explanation
   And the wrong question shows the correct choice, the wrong-choice note for the learner's choice, and the explanation
 
-Scenario: a key the check disagrees with is refused  [QZ-10]
+Scenario: a key the check disagrees with is refused  [QZ-12]
   Given the agent creates a quiz
   When a second model, without the key, picks another choice for a question
   Then the quiz is not stored
   And the agent is told which question disagreed
 
-Scenario: a wrong choice needs a wrong-choice note  [QZ-11]
+Scenario: a wrong choice needs a wrong-choice note  [QZ-13]
   Given the agent creates a quiz
   When a wrong choice has no wrong-choice note
   Then the quiz is not stored

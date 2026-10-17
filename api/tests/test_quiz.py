@@ -1,4 +1,4 @@
-"""Quiz scenarios: QZ-01 through QZ-11, CH-02, and decisions 0002 and 0006.
+"""Quiz scenarios: QZ-01 through QZ-13, CH-02, and decisions 0002 and 0007.
 
 A filled profile is seeded so a quiz can be created without teaching on an
 empty profile. Nothing here writes the profile.
@@ -253,7 +253,7 @@ def test_grading_shows_the_key(make_client):
 
 
 def test_a_wrong_choice_needs_a_note():
-    """QZ-11: every wrong choice carries a note. The correct choice has none."""
+    """QZ-13: every wrong choice carries a note. The correct choice has none."""
 
     spec = copy.deepcopy(QUIZ_SPEC)
     del spec["questions"][0]["choices"][2]["why_wrong"]
@@ -267,7 +267,7 @@ def test_a_wrong_choice_needs_a_note():
 
 
 def test_a_quiz_stored_without_notes_still_grades(make_client):
-    """Quizzes stored before QZ-11 have no notes. A miss still shows the key."""
+    """Quizzes stored before QZ-13 have no notes. A miss still shows the key."""
 
     stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
     for question in stored["questions"]:
@@ -306,7 +306,7 @@ def test_score_is_kept_with_the_quiz(make_client):
 
 
 def test_the_next_reply_sees_the_quiz_score(make_client):
-    """QZ-09: the next teaching reply reads the score and the missed questions."""
+    """QZ-11: the next teaching reply reads the score and the missed questions."""
 
     client, agent, session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
@@ -326,7 +326,7 @@ def test_the_next_reply_sees_the_quiz_score(make_client):
 
 
 def test_quiz_result_names_the_learner_choice_and_the_key():
-    """QZ-09: a missed question names the learner's choice, the correct one, and the note."""
+    """QZ-11: a missed question names the learner's choice, the correct one, and the note."""
 
     stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
     graded = public_payload(

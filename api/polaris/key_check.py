@@ -1,4 +1,4 @@
-"""Key check for a new quiz (QZ-10). A second model answers the quiz
+"""Key check for a new quiz (QZ-12). A second model answers the quiz
 without the key, so a quiz whose key disagrees can be refused.
 
 Uses one-shot query() with structured output (streaming-vs-single-mode,

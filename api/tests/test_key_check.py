@@ -1,4 +1,4 @@
-"""Key check before a quiz is stored: QZ-10.
+"""Key check before a quiz is stored: QZ-12.
 
 A second model answers the quiz without the key. These tests use a fake
 query_fn in place of the Claude CLI.
