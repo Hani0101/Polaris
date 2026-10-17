@@ -86,7 +86,7 @@ export function QuizPage({ quizId, onBack }: QuizPageProps) {
             <>
               <h1 className="qz-page-title">{quiz.title}</h1>
               <div className="qz-page-column">
-                <QuizCard quiz={quiz} expanded onGraded={setQuiz} />
+                <QuizCard quiz={quiz} expanded onChecked={setQuiz} />
               </div>
             </>
           ) : (

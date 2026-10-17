@@ -31,7 +31,7 @@ from polaris.chat import (
 from polaris.login import ApiKeyPresent, assert_claude_login
 from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
-from polaris.quiz import AlreadyGraded, InvalidSubmission, MissingQuiz
+from polaris.quiz import AlreadyChecked, InvalidSubmission, MissingQuiz
 from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
 from polaris.teaching import ClaudeTeachingAgent, TeachingFailed, reply_error_message
 
@@ -62,10 +62,13 @@ class TurnBody(BaseModel):
     simplifies: str | None = None
     picture: PictureBody | None = None
     animation_step: AnimationStepBody | None = None
+    # The board pinned above the conversation. The turn is about it (WB-19).
+    pinned_whiteboard_id: str | None = None
 
 
-class GradeBody(BaseModel):
-    choices: dict[str, str]
+class AnswerBody(BaseModel):
+    question_id: str
+    choice_id: str
 
 
 # HTML from a job that finished before decision 0006 runs in its own
@@ -214,8 +217,8 @@ def create_app(
     ) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
-    @app.exception_handler(AlreadyGraded)
-    async def already_graded(_request, exc: AlreadyGraded) -> JSONResponse:
+    @app.exception_handler(AlreadyChecked)
+    async def already_checked(_request, exc: AlreadyChecked) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(InvalidSubmission)
@@ -307,6 +310,13 @@ def create_app(
                 body.animation_step.job_id,
                 body.animation_step.step_id,
             )
+        pinned = None
+        if body.pinned_whiteboard_id is not None and body.pinned_whiteboard_id.strip():
+            pinned = await asyncio.to_thread(
+                chat.resolve_pinned,
+                session_id,
+                body.pinned_whiteboard_id,
+            )
         chat.raise_if_busy(session_id)
 
         async def events() -> AsyncIterator[str]:
@@ -318,6 +328,7 @@ def create_app(
                     simplify,
                     picture=picture,
                     animation_step=animation_step,
+                    pinned=pinned,
                 ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})
@@ -344,6 +355,10 @@ def create_app(
     @app.get("/api/sessions/{session_id}/whiteboards")
     def list_whiteboards(session_id: str) -> dict[str, list[dict[str, object]]]:
         return {"whiteboards": chat.list_whiteboards(session_id)}
+
+    @app.post("/api/sessions/{session_id}/whiteboards", status_code=201)
+    def create_whiteboard(session_id: str) -> dict[str, object]:
+        return chat.create_learner_whiteboard(session_id)
 
     @app.get("/api/sessions/{session_id}/whiteboards/{whiteboard_id}")
     def read_whiteboard(session_id: str, whiteboard_id: str) -> dict[str, object]:
@@ -379,8 +394,8 @@ def create_app(
     def read_quiz(quiz_id: str) -> dict[str, object]:
         return chat.get_quiz(quiz_id)
 
-    @app.post("/api/quizzes/{quiz_id}/grade")
-    def grade_quiz(quiz_id: str, body: GradeBody) -> dict[str, object]:
-        return chat.grade_quiz(quiz_id, body.choices)
+    @app.post("/api/quizzes/{quiz_id}/answer")
+    def answer_quiz(quiz_id: str, body: AnswerBody) -> dict[str, object]:
+        return chat.answer_quiz(quiz_id, body.question_id, body.choice_id)
 
     return app

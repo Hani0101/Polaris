@@ -14,7 +14,7 @@ export type QuizScore = {
   total: number
 }
 
-/** Graded only (QZ-03): the key and the notes arrive with the score, never before. */
+/** One per checked question (QZ-03): its key and note arrive when it is checked, never before. */
 export type QuizFeedback = {
   question_id: string
   right: boolean
@@ -30,8 +30,11 @@ export type Quiz = {
   session_id: string
   title: string
   questions: QuizQuestion[]
+  /** Set when the last question is checked (QZ-08). */
   score: QuizScore | null
+  /** The pick for each checked question. */
   submitted?: Record<string, string>
+  /** The key of each checked question, in question order. */
   feedback?: QuizFeedback[]
 }
 
@@ -163,6 +166,8 @@ export type WhiteboardStep = {
   id: string
   reply_part: string
   elements: WhiteboardElement[]
+  // A step the agent added beside the learner's drawing on a pinned board (WB-20).
+  extension?: true
 }
 
 export type Comment = {
@@ -225,6 +230,7 @@ export type TurnBody = {
   simplifies?: string
   picture?: BoardPicture
   animation_step?: TurnAnimationStep
+  pinned_whiteboard_id?: string
 }
 
 /** A PNG of one whiteboard, sent with the next turn only. data is base64. */
@@ -240,6 +246,7 @@ export function turnBody(
   simplifies?: string | null,
   picture?: BoardPicture | null,
   animationStep?: { jobId: string; stepId: string } | null,
+  pinnedWhiteboardId?: string | null,
 ): TurnBody {
   const body: TurnBody = { message }
   if (pointing && pointing.parts.length > 0) {
@@ -253,6 +260,7 @@ export function turnBody(
   if (animationStep) {
     body.animation_step = { job_id: animationStep.jobId, step_id: animationStep.stepId }
   }
+  if (pinnedWhiteboardId) body.pinned_whiteboard_id = pinnedWhiteboardId
   return body
 }
 
@@ -363,6 +371,23 @@ export function getWhiteboard(
   )
 }
 
+export function listWhiteboards(
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<WhiteboardArtifact[]> {
+  return request<{ whiteboards: WhiteboardArtifact[] }>(
+    `/api/sessions/${sessionId}/whiteboards`,
+    { signal },
+  ).then((body) => body.whiteboards)
+}
+
+/** An empty board the learner made from the Whiteboard tab (WB-18). */
+export function createWhiteboard(sessionId: string): Promise<WhiteboardArtifact> {
+  return request<WhiteboardArtifact>(`/api/sessions/${sessionId}/whiteboards`, {
+    method: 'POST',
+  })
+}
+
 export function saveWhiteboard(
   sessionId: string,
   whiteboardId: string,
@@ -378,14 +403,16 @@ export function saveWhiteboard(
   )
 }
 
-export function gradeQuiz(
+/** Checks one pick against the stored key (QZ-14). The reply carries that question's key. */
+export function answerQuiz(
   quizId: string,
-  choices: Record<string, string>,
+  questionId: string,
+  choiceId: string,
 ): Promise<Quiz> {
-  return request<Quiz>(`/api/quizzes/${quizId}/grade`, {
+  return request<Quiz>(`/api/quizzes/${quizId}/answer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ choices }),
+    body: JSON.stringify({ question_id: questionId, choice_id: choiceId }),
   })
 }
 
@@ -421,6 +448,7 @@ export async function sendTurn(
     simplifies?: string | null
     picture?: BoardPicture | null
     animationStep?: { jobId: string; stepId: string } | null
+    pinnedWhiteboardId?: string | null
   },
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/turns`, {
@@ -436,6 +464,7 @@ export async function sendTurn(
         options?.simplifies,
         options?.picture,
         options?.animationStep,
+        options?.pinnedWhiteboardId,
       ),
     ),
     signal: options?.signal,

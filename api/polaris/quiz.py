@@ -1,5 +1,6 @@
-"""Quiz artifacts: the answer key stays in the database until the quiz is
-graded, and code grades it. A wrong choice's why_wrong note is part of the key."""
+"""Quiz artifacts: the key of a question stays in the database until that
+question is checked, and code checks it. A wrong choice's why_wrong note is
+part of the key."""
 
 import random
 import re
@@ -30,14 +31,14 @@ class MissingQuiz(Exception):
         super().__init__("No quiz with that id.")
 
 
-class AlreadyGraded(Exception):
+class AlreadyChecked(Exception):
     def __init__(self) -> None:
-        super().__init__("That quiz has already been graded.")
+        super().__init__("That question has already been checked.")
 
 
 class InvalidSubmission(Exception):
     def __init__(self) -> None:
-        super().__init__("Each question needs exactly one valid choice.")
+        super().__init__("Pick one of the choices of an existing question.")
 
 
 def normalize_spec(
@@ -68,47 +69,50 @@ def public_payload(
     stored: dict[str, Any],
     *,
     score: dict[str, int] | None,
-    submitted: dict[str, str] | None,
+    submitted: dict[str, str],
 ) -> dict[str, Any]:
-    """Learner-visible quiz. Before grading, questions never include answer or
-    correct fields (QZ-03). A graded quiz is locked, so its key is shown (QZ-06)."""
+    """Learner-visible quiz. A question never includes answer or correct fields
+    until it is checked (QZ-03). A checked question is locked, so its key is
+    shown (QZ-06): `feedback` holds one item for each checked question."""
 
-    payload: dict[str, Any] = {
+    return {
         "id": quiz_id,
         "kind": "quiz",
         "session_id": session_id,
         "title": stored["title"],
         "questions": [_public_question(question) for question in stored["questions"]],
         "score": score,
+        "submitted": submitted,
+        "feedback": _feedback(stored["questions"], submitted),
     }
-    if submitted is not None:
-        payload["submitted"] = submitted
-        payload["feedback"] = _feedback(stored["questions"], submitted)
-    return payload
 
 
-def grade(
-    stored: dict[str, Any], submitted: dict[str, str]
-) -> tuple[dict[str, int], dict[str, str]]:
-    """Compare submitted choices to the stored key. The model is not involved."""
+def check_answer(
+    stored: dict[str, Any],
+    submitted: dict[str, str],
+    question_id: str,
+    choice_id: str,
+) -> tuple[dict[str, str], dict[str, int] | None]:
+    """Compare one pick to the stored key (QZ-14). The model is not involved.
+
+    Returns the picks so far with this one added, and the score once the last
+    question is checked."""
 
     questions = stored["questions"]
-    expected = {question["id"]: question for question in questions}
-    if not isinstance(submitted, dict) or set(submitted) != set(expected):
+    question = next((item for item in questions if item["id"] == question_id), None)
+    if question is None or choice_id not in {
+        choice["id"] for choice in question["choices"]
+    }:
         raise InvalidSubmission()
-    choices: dict[str, str] = {}
-    for question_id, question in expected.items():
-        choice_id = submitted[question_id]
-        valid = {choice["id"] for choice in question["choices"]}
-        if not isinstance(choice_id, str) or choice_id not in valid:
-            raise InvalidSubmission()
-        choices[question_id] = choice_id
+    if question_id in submitted:
+        raise AlreadyChecked()
+    picks = {**submitted, question_id: choice_id}
+    if len(picks) < len(questions):
+        return picks, None
     earned = sum(
-        1
-        for question in questions
-        if choices[question["id"]] == question["correct_choice_id"]
+        1 for item in questions if picks[item["id"]] == item["correct_choice_id"]
     )
-    return {"earned": earned, "total": len(questions)}, choices
+    return picks, {"earned": earned, "total": len(questions)}
 
 
 def describe_result(payload: dict[str, Any]) -> str:
@@ -118,7 +122,7 @@ def describe_result(payload: dict[str, Any]) -> str:
     title = f'Quiz {payload["id"]} "{payload["title"]}"'
     score = payload.get("score")
     if score is None:
-        return f"{title}: not graded yet."
+        return f"{title}: not finished yet."
     submitted = payload.get("submitted") or {}
     feedback = {item["question_id"]: item for item in payload.get("feedback", [])}
     lines = [f"{title}: the learner scored {score['earned']} of {score['total']}."]
@@ -283,6 +287,8 @@ def _feedback(
     shown: list[dict[str, Any]] = []
     for question in questions:
         picked = submitted.get(question["id"])
+        if picked is None:
+            continue
         right = picked == question["correct_choice_id"]
         item: dict[str, Any] = {
             "question_id": question["id"],

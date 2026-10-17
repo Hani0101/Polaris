@@ -10,4 +10,6 @@ So the browser receives the key with the graded quiz, and not before. Every ques
 
 Before a quiz is stored, a second model answers it without the key (QZ-12). A key written by a model can be wrong, and code grading against a wrong key is confidently wrong. When the check disagrees or cannot finish, the quiz is not stored. The agent may fix it and send it once more in the same reply; after a second refusal it leaves the quiz out. Storing a quiz whose key was not checked was the alternative, and it was rejected.
 
+Amended by [Answer key shown for each question as it is checked](0009-answer-key-shown-per-question.md): the key is shown for each question when it is checked, not when the whole quiz is graded.
+
 See [the quiz research note](../research/0002-quiz-feedback.md).

@@ -1,4 +1,4 @@
-"""Quiz scenarios: QZ-01 through QZ-13, CH-02, and decisions 0002 and 0007.
+"""Quiz scenarios: QZ-01 through QZ-16, CH-02, and decisions 0002, 0007, and 0009.
 
 A filled profile is seeded so a quiz can be created without teaching on an
 empty profile. Nothing here writes the profile.
@@ -13,8 +13,10 @@ import pytest
 from polaris.models import Profile
 from polaris.quiz import (
     InvalidQuiz,
+    AlreadyChecked,
+    InvalidSubmission,
+    check_answer,
     describe_result,
-    grade,
     normalize_spec,
     public_payload,
 )
@@ -58,7 +60,7 @@ QUIZ_SPEC = {
 
 
 class QuizCreatingStub:
-    """Creates a stored quiz during a teaching reply. Does not grade."""
+    """Creates a stored quiz during a teaching reply. Does not check picks."""
 
     def __init__(self, spec: dict) -> None:
         self.spec = spec
@@ -126,6 +128,18 @@ def _quiz_from_session(session: dict) -> dict:
     return quizzes[0]
 
 
+def _answer(client, quiz: dict, question_id: str, choice_id: str):
+    return client.post(
+        f"/api/quizzes/{quiz['id']}/answer",
+        json={"question_id": question_id, "choice_id": choice_id},
+    )
+
+
+def _finish(client, quiz: dict, picks: dict[str, str]) -> None:
+    for question_id, choice_id in picks.items():
+        assert _answer(client, quiz, question_id, choice_id).status_code == 200
+
+
 def _make_quiz(make_client, spec: dict = QUIZ_SPEC):
     stub = QuizCreatingStub(spec)
     client, agent = make_client(stub, profile=FILLED_PROFILE)
@@ -174,7 +188,7 @@ def test_quiz_payload_has_no_answers(make_client):
     assert "why_wrong" not in encoded
     assert "is half of 2" not in json.dumps(saved)
     assert artifacts[0]["score"] is None
-    assert "feedback" not in artifacts[0]
+    assert artifacts[0]["feedback"] == []
 
 
 def test_one_correct_choice(make_client):
@@ -213,34 +227,32 @@ def test_one_correct_choice(make_client):
     assert client.get(f"/api/sessions/{session['id']}").json()["turns"] == []
 
 
-def test_code_grades_the_quiz(make_client):
+def test_code_checks_the_pick(make_client):
+    """QZ-04: the pick is compared to the stored key, not read by a model."""
+
     client, agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
     replies_before = agent.reply_count
 
-    graded = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "a", "q2": "b"}},
-    )
+    checked = _answer(client, quiz, "q1", "a")
 
-    assert graded.status_code == 200, graded.text
-    body = graded.json()
-    assert body["score"] == {"earned": 1, "total": 2}
+    assert checked.status_code == 200, checked.text
+    body = checked.json()
+    assert body["feedback"][0]["right"] is False
+    assert body["score"] is None
     assert agent.reply_count == replies_before
-    assert _forbidden_fields(body, in_question=False) == []
+    assert _forbidden_fields(body["questions"], in_question=True) == []
 
 
-def test_grading_shows_the_key(make_client):
-    """QZ-03, QZ-06: once graded, every question is explained and a miss shows the key."""
+def test_checking_shows_the_key_of_that_question_only(make_client):
+    """QZ-03, QZ-06: a wrong pick shows the key and the note; the other question has none."""
 
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
 
-    body = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "a", "q2": "b"}},
-    ).json()
+    body = _answer(client, quiz, "q1", "a").json()
 
+    assert body["submitted"] == {"q1": "a"}
     assert body["feedback"] == [
         {
             "question_id": "q1",
@@ -248,17 +260,41 @@ def test_grading_shows_the_key(make_client):
             "correct_choice_id": "b",
             "explanation": "Half of 4 is 2, because 4 divided by 2 is 2.",
             "why_wrong": "1 is half of 2, not of 4.",
-        },
-        {
-            "question_id": "q2",
-            "right": True,
-            "correct_choice_id": "b",
-            "explanation": "2/2 means two halves, which make one whole.",
-        },
+        }
     ]
     assert _forbidden_fields(body["questions"], in_question=True) == []
     reloaded = client.get(f"/api/quizzes/{quiz['id']}").json()
     assert reloaded["feedback"] == body["feedback"]
+    assert reloaded["score"] is None
+
+
+def test_a_right_pick_shows_the_explanation(make_client):
+    """QZ-06: a right pick shows its explanation and no wrong-choice note."""
+
+    client, _agent, _session, _events, saved = _make_quiz(make_client)
+    quiz = _quiz_from_session(saved)
+
+    body = _answer(client, quiz, "q1", "b").json()
+
+    assert body["feedback"] == [
+        {
+            "question_id": "q1",
+            "right": True,
+            "correct_choice_id": "b",
+            "explanation": "Half of 4 is 2, because 4 divided by 2 is 2.",
+        }
+    ]
+
+
+def test_a_fresh_quiz_has_no_picks_or_feedback(make_client):
+    client, _agent, _session, _events, saved = _make_quiz(make_client)
+    quiz = _quiz_from_session(saved)
+
+    fresh = client.get(f"/api/quizzes/{quiz['id']}").json()
+
+    assert fresh["score"] is None
+    assert fresh["submitted"] == {}
+    assert fresh["feedback"] == []
 
 
 def test_a_wrong_choice_needs_a_note():
@@ -280,7 +316,7 @@ def test_a_wrong_choice_needs_a_note():
     assert "why_wrong" not in stored_correct
 
 
-def test_a_quiz_stored_without_notes_still_grades(make_client):
+def test_a_quiz_stored_without_notes_still_checks(make_client):
     """Quizzes stored before QZ-13 have no notes. A miss still shows the key."""
 
     stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
@@ -304,17 +340,19 @@ def test_a_quiz_stored_without_notes_still_grades(make_client):
     }
 
 
-def test_score_is_kept_with_the_quiz(make_client):
+def test_score_is_kept_when_the_last_question_is_checked(make_client):
+    """QZ-08: no score until the last question is checked."""
+
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
 
-    client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "b", "q2": "a"}},
-    )
+    first = _answer(client, quiz, "q1", "b")
+    assert first.json()["score"] is None
+    last = _answer(client, quiz, "q2", "a")
     reloaded = client.get(f"/api/quizzes/{quiz['id']}").json()
     session = client.get(f"/api/sessions/{saved['id']}").json()
 
+    assert last.json()["score"] == {"earned": 1, "total": 2}
     assert reloaded["score"] == {"earned": 1, "total": 2}
     assert _quiz_from_session(session)["score"] == {"earned": 1, "total": 2}
 
@@ -324,10 +362,7 @@ def test_the_next_reply_sees_the_quiz_score(make_client):
 
     client, agent, session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
-    client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "a", "q2": "b"}},
-    )
+    _finish(client, quiz, {"q1": "a", "q2": "b"})
 
     post_turn(client, session["id"], "How did I do?")
 
@@ -337,6 +372,21 @@ def test_the_next_reply_sees_the_quiz_score(make_client):
     assert [item["question_id"] for item in seen[0]["feedback"] if not item["right"]] == [
         "q1"
     ]
+
+
+def test_a_half_finished_quiz_is_not_read_as_a_score(make_client):
+    """QZ-11: only a finished quiz carries a score to the next reply."""
+
+    client, agent, session, _events, saved = _make_quiz(make_client)
+    quiz = _quiz_from_session(saved)
+    _answer(client, quiz, "q1", "a")
+
+    post_turn(client, session["id"], "How did I do?")
+
+    seen = agent.seen_quizzes[-1][0]
+    assert seen["score"] is None
+    assert describe_result(seen).endswith("not finished yet.")
+    assert "half of 2" not in describe_result(seen)
 
 
 def test_quiz_result_names_the_learner_choice_and_the_key():
@@ -350,7 +400,7 @@ def test_quiz_result_names_the_learner_choice_and_the_key():
         score={"earned": 1, "total": 2},
         submitted={"q1": "a", "q2": "b"},
     )
-    ungraded = public_payload("quiz-2", "session-1", stored, score=None, submitted=None)
+    ungraded = public_payload("quiz-2", "session-1", stored, score=None, submitted={})
 
     text = describe_result(graded)
     lines = text.splitlines()
@@ -360,7 +410,7 @@ def test_quiz_result_names_the_learner_choice_and_the_key():
         'The correct choice is "2". Why their choice is wrong: 1 is half of 2, not of 4.'
     )
     assert lines[2] == '- q2 right: Which fraction equals one whole? The learner chose "2/2".'
-    assert describe_result(ungraded) == 'Quiz quiz-2 "Fractions": not graded yet.'
+    assert describe_result(ungraded) == 'Quiz quiz-2 "Fractions": not finished yet.'
 
     prompt = turn_prompt(
         Profile(("wants short explanations",)), "How did I do?", quizzes=(graded,)
@@ -388,10 +438,7 @@ def test_the_learner_expands_the_quiz(make_client):
     assert expanded["questions"] == in_chat["questions"]
     assert expanded["score"] is None
 
-    client.post(
-        f"/api/quizzes/{in_chat['id']}/grade",
-        json={"choices": {"q1": "b", "q2": "b"}},
-    )
+    _finish(client, in_chat, {"q1": "b", "q2": "b"})
     after_chat = _quiz_from_session(
         client.get(f"/api/sessions/{saved['id']}").json()
     )
@@ -420,50 +467,67 @@ def test_empty_profile_does_not_create_a_quiz(make_client):
     assert client.get("/api/profile").json() == {"facts": []}
 
 
-def test_grading_twice_keeps_the_original_score(make_client):
+def test_a_checked_question_is_locked(make_client):
+    """QZ-14: a second pick on a checked question is refused and changes nothing."""
+
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
 
-    first = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "b", "q2": "b"}},
-    )
-    second = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "a", "q2": "a"}},
-    )
+    first = _answer(client, quiz, "q1", "b")
+    second = _answer(client, quiz, "q1", "a")
     reloaded = client.get(f"/api/quizzes/{quiz['id']}").json()
 
     assert first.status_code == 200, first.text
-    assert first.json()["score"] == {"earned": 2, "total": 2}
     assert second.status_code == 409
-    assert reloaded["score"] == {"earned": 2, "total": 2}
-    assert reloaded["submitted"] == {"q1": "b", "q2": "b"}
+    assert reloaded["submitted"] == {"q1": "b"}
+    assert [item["right"] for item in reloaded["feedback"]] == [True]
 
 
 @pytest.mark.parametrize(
-    "choices",
-    [
-        {},
-        {"q1": "b"},
-        {"q1": "b", "q2": "b", "q3": "a"},
-        {"q1": "b", "q2": "z"},
-    ],
+    "question_id, choice_id",
+    [("q3", "a"), ("q1", "z"), ("q2", "c")],
 )
-def test_invalid_submission_is_rejected_and_not_stored(make_client, choices):
+def test_an_invalid_pick_is_refused_and_not_stored(make_client, question_id, choice_id):
+    """QZ-14: a pick that is not a choice of an existing question checks nothing."""
+
     client, _agent, _session, _events, saved = _make_quiz(make_client)
     quiz = _quiz_from_session(saved)
 
-    response = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": choices},
-    )
+    response = _answer(client, quiz, question_id, choice_id)
     reloaded = client.get(f"/api/quizzes/{quiz['id']}").json()
 
     assert response.status_code == 422, response.text
     assert reloaded["score"] is None
-    assert "submitted" not in reloaded
-    assert "feedback" not in reloaded
+    assert reloaded["submitted"] == {}
+    assert reloaded["feedback"] == []
+
+
+def test_a_reopened_quiz_keeps_its_answers(make_client):
+    """QZ-15: the picks so far come back with their feedback."""
+
+    client, _agent, _session, _events, saved = _make_quiz(make_client)
+    quiz = _quiz_from_session(saved)
+    _answer(client, quiz, "q1", "a")
+
+    reopened = client.get(f"/api/quizzes/{quiz['id']}").json()
+    in_session = _quiz_from_session(client.get(f"/api/sessions/{saved['id']}").json())
+
+    assert reopened["submitted"] == {"q1": "a"}
+    assert [item["question_id"] for item in reopened["feedback"]] == ["q1"]
+    assert in_session["submitted"] == {"q1": "a"}
+
+
+def test_check_answer_compares_to_the_key():
+    stored = normalize_spec(copy.deepcopy(QUIZ_SPEC))
+
+    picks, score = check_answer(stored, {}, "q1", "a")
+    assert picks == {"q1": "a"} and score is None
+    picks, score = check_answer(stored, picks, "q2", "b")
+    assert score == {"earned": 1, "total": 2}
+    with pytest.raises(AlreadyChecked):
+        check_answer(stored, picks, "q1", "b")
+    with pytest.raises(InvalidSubmission):
+        check_answer(stored, {}, "q1", "z")
 
 
 def test_unknown_quiz_is_not_found(make_client):
@@ -471,13 +535,13 @@ def test_unknown_quiz_is_not_found(make_client):
     missing = "00000000-0000-0000-0000-000000000000"
 
     listed = client.get(f"/api/quizzes/{missing}")
-    graded = client.post(
-        f"/api/quizzes/{missing}/grade",
-        json={"choices": {"q1": "a"}},
+    answered = client.post(
+        f"/api/quizzes/{missing}/answer",
+        json={"question_id": "q1", "choice_id": "a"},
     )
 
     assert listed.status_code == 404
-    assert graded.status_code == 404
+    assert answered.status_code == 404
 
 
 class FailingAfterQuizStub:
@@ -605,13 +669,11 @@ def test_correct_choice_id_is_trimmed(make_client):
     client, _agent, _session, _events, saved = _make_quiz(make_client, spec)
     quiz = _quiz_from_session(saved)
 
-    graded = client.post(
-        f"/api/quizzes/{quiz['id']}/grade",
-        json={"choices": {"q1": "b", "q2": "b"}},
-    )
+    _answer(client, quiz, "q1", "b")
+    last = _answer(client, quiz, "q2", "b")
 
-    assert graded.status_code == 200, graded.text
-    assert graded.json()["score"] == {"earned": 2, "total": 2}
+    assert last.status_code == 200, last.text
+    assert last.json()["score"] == {"earned": 2, "total": 2}
 
 
 FIRST_IS_CORRECT = {
@@ -646,13 +708,13 @@ def test_choices_are_shuffled():
     assert positions != {0}
 
 
-def test_shuffled_choices_keep_their_text_and_grade_against_the_key():
+def test_shuffled_choices_keep_their_text_and_check_against_the_key():
     stored = normalize_spec(FIRST_IS_CORRECT, rng=random.Random(1))
     texts = {choice["id"]: choice["text"] for choice in stored["questions"][0]["choices"]}
 
     assert texts == {"a": "4", "b": "2", "c": "8", "d": "16"}
-    assert grade(stored, {"q1": "a"})[0] == {"earned": 1, "total": 1}
-    assert grade(stored, {"q1": "b"})[0] == {"earned": 0, "total": 1}
+    assert check_answer(stored, {}, "q1", "a")[1] == {"earned": 1, "total": 1}
+    assert check_answer(stored, {}, "q1", "b")[1] == {"earned": 0, "total": 1}
 
 
 def _with_choice_text(choice_id: str, text: str) -> dict:

@@ -1,9 +1,11 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  createWhiteboard,
   getSession,
   leaveSession,
   listSessions,
+  listWhiteboards,
   renameSession,
   sessionLabel,
   openSession,
@@ -26,6 +28,7 @@ import { AnimationPage } from './AnimationPage.tsx'
 import { watchRunningAnimations } from './chat/animationNotices.ts'
 import { ChatShell } from './chat/ChatShell.tsx'
 import type { ViewTurn } from './chat/Conversation.tsx'
+import type { PinnedTurn } from './chat/PinnedWhiteboard.tsx'
 import { pointingFromTurn, type PointedPart, type Pointing } from './whiteboard/pointing.ts'
 import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
 import { QuizPage } from './QuizPage.tsx'
@@ -221,6 +224,11 @@ function App() {
   const [pointing, setPointing] = useState<Pointing | null>(null)
   // The latest picture of a board the learner drew on, for their next message.
   const [picture, setPicture] = useState<BoardPicture | null>(null)
+  // The board pinned above the conversation. Every turn is about it (WB-19).
+  const [pinnedId, setPinnedId] = useState<string | null>(null)
+  // Every whiteboard in the open session, for the Whiteboard tab (WB-18).
+  const [boards, setBoards] = useState<WhiteboardArtifact[]>([])
+  const [creatingBoard, setCreatingBoard] = useState(false)
   const [askedStep, setAskedStep] = useState<AskedStep | null>(null)
   // Steps asked about in this visit, so a saved turn's chip can name them.
   const [knownSteps, setKnownSteps] = useState<ReadonlyMap<string, AskedStep>>(() => new Map())
@@ -239,6 +247,8 @@ function App() {
   const sendAbort = useRef<AbortController | null>(null)
   const sending = useRef(false)
   const toastTimer = useRef<number | null>(null)
+
+  const sendablePicture = picture && picture.whiteboard_id === pinnedId ? picture : null
 
   const turns = useMemo(
     () => mergeTurns(open?.turns ?? [], kept, pending, knownSteps),
@@ -364,6 +374,14 @@ function App() {
     if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
   }
 
+  async function loadBoards(sessionId: string) {
+    try {
+      setBoards(await listWhiteboards(sessionId))
+    } catch {
+      // The tab keeps the boards it had; the next turn or reopen loads them again.
+    }
+  }
+
   function resetConversation() {
     sendAbort.current?.abort()
     setPending(null)
@@ -371,6 +389,8 @@ function App() {
     setDraft('')
     setPointing(null)
     setPicture(null)
+    setPinnedId(null)
+    setBoards([])
     setAskedStep(null)
     setSendError(null)
   }
@@ -381,6 +401,7 @@ function App() {
     try {
       const session = await startSession()
       setOpen(session)
+      void loadBoards(session.id)
       await refresh()
       closeDrawerIfPhone()
     } catch (caught) {
@@ -399,6 +420,7 @@ function App() {
     try {
       const session = await openSession(sessionId)
       setOpen(session)
+      void loadBoards(session.id)
       await refresh()
       closeDrawerIfPhone()
     } catch (caught) {
@@ -444,7 +466,7 @@ function App() {
     }
   }
 
-  function onQuizGraded(quiz: Quiz) {
+  function onQuizChecked(quiz: Quiz) {
     setOpen((current) =>
       current
         ? {
@@ -470,6 +492,35 @@ function App() {
     setPending((current) =>
       current && current.status === 'streaming' ? { ...current, status: 'stopped' } : current,
     )
+  }
+
+  // Opening a board pins it in place of the one pinned before (WB-19).
+  function pinBoard(whiteboardId: string) {
+    setPinnedId(whiteboardId)
+    setPicture((current) => (current && current.whiteboard_id !== whiteboardId ? null : current))
+    setPointing((current) => (current && current.whiteboardId !== whiteboardId ? null : current))
+  }
+
+  // Closing unpins it, so later turns are no longer about it (WB-19).
+  function unpinBoard() {
+    setPinnedId(null)
+    setPicture(null)
+  }
+
+  async function newBoard() {
+    if (!open || creatingBoard) return
+    setCreatingBoard(true)
+    try {
+      const board = await createWhiteboard(open.id)
+      setBoards((current) => [...current, board])
+      pinBoard(board.id)
+    } catch (caught) {
+      setSendError(
+        errorText(caught, "Couldn't make a whiteboard. Check your connection and try again."),
+      )
+    } finally {
+      setCreatingBoard(false)
+    }
   }
 
   function askAbout(whiteboardId: string, parts: PointedPart[]) {
@@ -506,7 +557,9 @@ function App() {
     if (pending?.status === 'streaming') return
     sending.current = true
     // A simpler redraw is asked from the description alone, so the picture waits.
-    const sentPicture = simplifies ? null : picture
+    // Only a picture of the pinned board is sent (WB-19).
+    const sentPicture = simplifies ? null : sendablePicture
+    const sentPinned = pinnedId
     setSendError(null)
     setDraft('')
     setPointing(null)
@@ -564,6 +617,7 @@ function App() {
           simplifies,
           picture: sentPicture,
           animationStep: step,
+          pinnedWhiteboardId: sentPinned,
         },
       )
       if (controller.signal.aborted) return
@@ -574,6 +628,7 @@ function App() {
       if (controller.signal.aborted) return
       setOpen(session)
       setPending(null)
+      void loadBoards(session.id)
       await refresh()
     } catch (caught) {
       if (controller.signal.aborted) return
@@ -655,6 +710,21 @@ function App() {
     ? sessionLabel(sessions.find((session) => session.id === open.id))
     : null
 
+  // The reply now running, and the pinned board as it last arrived in that reply.
+  let pinnedTurn: PinnedTurn | null = null
+  if (pending && pinnedId) {
+    const sent = pending.artifacts.filter(
+      (artifact): artifact is WhiteboardArtifact =>
+        artifact.kind === 'whiteboard' && artifact.id === pinnedId,
+    )
+    pinnedTurn = {
+      key: `${pending.after}:${pending.learner}`,
+      reply: pending.reply,
+      phase: pending.status === 'streaming' ? 'streaming' : pending.status === 'done' ? 'done' : 'stopped',
+      board: sent.length > 0 ? sent[sent.length - 1] : null,
+    }
+  }
+
   return (
     <>
       {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromCover()} /> : null}
@@ -724,17 +794,14 @@ function App() {
           onCopy={(text) => void onCopy(text)}
           onTryAgain={(message, again, againStep) => void onTryAgain(message, again, againStep)}
           onOpenQuiz={(id) => goTo(quizPath(id))}
-          onOpenWhiteboard={(id) => {
-            if (!open) return
-            goTo(whiteboardPath(open.id, id))
-          }}
+          onOpenWhiteboard={pinBoard}
           onOpenAnimation={(sessionId, jobId) => {
             goTo(animationPagePath(sessionId, jobId))
           }}
           onSimpler={(id) => void askSimpler(id)}
           pointing={pointing}
           onRemovePoint={removePoint}
-          pictureAttached={picture !== null}
+          pictureAttached={sendablePicture !== null}
           onRemovePicture={() => setPicture(null)}
           onAsk={askAbout}
           animationStep={askedStep}
@@ -746,7 +813,16 @@ function App() {
           toolsOpen={toolsOpen}
           onToggleTools={() => setToolsOpen((current) => !current)}
           onCloseTools={() => setToolsOpen(false)}
-          onQuizGraded={onQuizGraded}
+          onQuizChecked={onQuizChecked}
+          whiteboards={boards}
+          onNewWhiteboard={() => void newBoard()}
+          creatingWhiteboard={creatingBoard}
+          pinnedWhiteboardId={pinnedId}
+          pinnedTurn={pinnedTurn}
+          onClosePinned={unpinBoard}
+          onPicture={(next) => {
+            if (next.whiteboard_id === pinnedId) setPicture(next)
+          }}
         />
       </div>
     </>

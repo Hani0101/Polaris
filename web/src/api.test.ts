@@ -52,3 +52,13 @@ test('sendTurn posts the animation step with the message', async () => {
     animation_step: { job_id: 'job-1', step_id: 'discard' },
   })
 })
+
+test('a turn names the pinned whiteboard, and only while one is pinned (WB-19)', () => {
+  expect(turnBody('Is this right?', null, null, null, null, 'wb-1')).toEqual({
+    message: 'Is this right?',
+    pinned_whiteboard_id: 'wb-1',
+  })
+  expect(turnBody('Is this right?', null, null, null, null, null)).toEqual({
+    message: 'Is this right?',
+  })
+})

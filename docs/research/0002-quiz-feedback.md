@@ -6,7 +6,7 @@ status: proposed
 
 Findings about what a quiz does after the learner submits it. Each finding has a proposal and names the rules and decisions it would change. Nothing here is in force until it is accepted.
 
-Accepted: finding 1's teaching side (QZ-11), finding 2 (QZ-12), finding 3 (QZ-03, QZ-06, [decision 0007](../decisions/0007-answer-key-shown-after-grading.md)), and finding 5 (QZ-13). With finding 3, a right answer also shows its explanation. Finding 4 and the profile side of finding 1 are still proposals.
+Accepted: finding 1's teaching side (QZ-11), finding 2 (QZ-12), finding 3 (QZ-03, QZ-06, [decision 0007](../decisions/0007-answer-key-shown-after-grading.md)), and finding 5 (QZ-13). With finding 3, a right answer also shows its explanation. [Decision 0009](../decisions/0009-answer-key-shown-per-question.md) later moved the reveal from the whole quiz to each question as it is checked. Finding 4 and the profile side of finding 1 are still proposals.
 
 ## 1. Quiz results go nowhere
 
