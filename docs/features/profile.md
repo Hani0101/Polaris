@@ -4,16 +4,18 @@ The profile is what Polaris knows about the learner. It stands outside every ses
 
 ## Rules
 
-PR-01  The profile is read before every reply.
-PR-02  When the profile is empty, the conversation fills it before any teaching.
+PR-01  In a signed-in session, the profile is read before every reply.
+PR-02  In a signed-in session, when the profile is empty, the conversation fills it before any teaching.
 PR-03  One profile is shared by every session.
 PR-04  The teaching agent does not write the profile.
-PR-05  When a session ends (CH-05), a separate model reads that session. A later ending of the same session runs the pass again.
+PR-05  When a signed-in session ends (CH-05), a separate model reads the turns of that session that were sent while signed in. A later ending of the same session runs the pass again.
 PR-06  That model decides which milestones are true. A milestone is the fact that the learner understood a concept.
 PR-07  It sends fact changes as ADD, UPDATE, DELETE, or IGNORE.
 PR-08  A fact already stored is not added again. A repeat is UPDATE or IGNORE.
 
-PR-01 through PR-08 are in force. The pass design still needs research; see [decision 0003](../decisions/0003-profile-pass-is-a-proposal.md).
+PR-09  A turn is marked signed-in or anonymous when it is saved. An anonymous session reads no profile, asks no profile questions, and runs no pass. An anonymous turn never reaches the profile, even when the same session is signed in later. See [decision 0008](../decisions/0008-optional-sign-in-protects-the-profile.md).
+
+PR-01 through PR-09 are in force. The pass design still needs research; see [decision 0003](../decisions/0003-profile-pass-is-a-proposal.md).
 
 ## Scenarios
 
@@ -49,5 +51,17 @@ Scenario: a repeated fact is not stored twice  [PR-08]
   When a later profile pass sees that same fact
   Then the pass sends UPDATE or IGNORE
   And the profile still holds that fact once
+
+Scenario: an anonymous session neither reads nor writes the profile  [PR-09]
+  Given the learner is not signed in
+  When they chat and then leave the session
+  Then the reply asks no profile questions
+  And no profile pass runs
+  And the profile is unchanged
+
+Scenario: only signed-in turns reach the profile  [PR-05, PR-09]
+  Given a session that began anonymous and the learner signed in partway
+  When the learner leaves that session
+  Then the pass reads only the turns sent after sign-in
 
 The pass design still needs research. Do not replace it without a research note that keeps this design or chooses another.

@@ -13,8 +13,12 @@ One conversation between the learner and the agent.
 _Avoid_: thread, sign-in
 
 **Sign-in**:
-The local page where the learner enters a username and a password to open Polaris.
+The local page where the learner enters a username and a password so that Polaris keeps and uses their profile. It is optional.
 _Avoid_: account, OAuth, Claude login, passphrase
+
+**Anonymous session**:
+A session held while the learner is not signed in. It reads no profile and adds nothing to it.
+_Avoid_: guest, logged-out user
 
 **Claude login**:
 The login on the machine that Polaris uses to reach Claude.

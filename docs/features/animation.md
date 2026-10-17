@@ -19,13 +19,27 @@ AN-10  The backend checks the animation data before it is stored. Data that fail
 AN-11  The check refuses an animation where, at any moment, an element is outside the canvas, two pieces of text overlap, or text is smaller than the minimum size. It also refuses an action on an element that does not exist, a timing outside the limits, and a caption that is too long.
 AN-12  The animation plays in steps, and every step has a caption. The learner can play, pause, go back a step, go to the next step, and replay the current step. Step dots show which step they are on.
 AN-13  When the learner's system asks for reduced motion, the animation does not move on its own. Each step shows its finished picture, and the learner moves with Back and Next. The steps and captions are the same.
-AN-14  The player draws the animation with the design system's colours and fonts. The animation data names a colour by its role and does not choose a font.
+AN-14  Text uses the design system's fonts. The design system's colours are the default, not a limit: when the subject is better shown in other colours, or on another background, the writer may choose them. Text and thin lines keep a contrast of at least 4.5:1 with what is behind them (WCAG AA). In the animation format, the data names a colour by its role and does not choose a font.
 AN-15  Every animation has a text description that a screen reader can read (WCAG AA). When the step changes, a screen reader announces the new caption.
 AN-16  A later turn in the session can see what each finished animation showed, step by step.
 AN-17  The learner can ask about the step they are on. The next turn knows which animation and which step was asked about.
 AN-18  The learner can turn on narration, which reads each caption aloud with a voice on their own machine. It is off until they turn it on, and the captions stay on screen.
 AN-19  While a job runs, the learner can see which stage it is in: writing, checking, or fixing.
 AN-20  The animation fits a phone screen from 320px wide, with no horizontal scroll, and every control is at least a 44px tap target.
+AN-21  Before the writer starts, a small evaluation reads the learner's message and the brief and picks the engine: Manim for a maths problem or a heavy graph, Lottie for everything else. If the evaluation fails, a keyword check picks. Routing never fails a job.
+
+## Engines
+
+On `feat/animation` a job is written by one of two writers. `api/polaris/animation_router.py` picks it (AN-21).
+
+- **Manim** (`api/polaris/manim_writer.py`) for maths and heavy graphs: equations, calculus, geometry, trigonometry, linear algebra, proofs, plots of functions or data on axes, and graph theory with many nodes and edges. See [the Manim research](../research/0003-manim-experiment.md).
+- **Lottie** (`api/polaris/lottie_writer.py`) for everything else: how something works, processes, systems, stories, timelines, and simple diagrams and charts. See [the Lottie experiment](../experiments/lottie-animation.md).
+
+The evaluation is one structured-output call to a small model (`claude-haiku-5-5`, or `POLARIS_ROUTER_MODEL`) with no tools. It sees the learner's message from the turn that started the job and the teaching agent's brief, and returns `manim` or `lottie` with a reason. The choice is kept in the job's folder as `route.json`.
+
+`POLARIS_ANIMATION_ENGINE` set to `manim`, `lottie`, or `data` makes every job use that one writer. Unset, or `auto`, uses the router.
+
+Colours (AN-14): both writers start from the design system's palette and may leave it. The Lottie writer sets a background with its `set_background` tool, and the player paints it. A Manim scene sets `self.camera.background_color`.
 
 ## The animation format
 
@@ -140,6 +154,19 @@ Scenario: the animation uses the design system  [AN-14]
   When the player draws it
   Then the element uses the design system's accent colour
   And all text uses the design system's font
+
+Scenario: an animation may use its own colours  [AN-14]
+  Given a Lottie writer that chose a dark blue background for a night sky
+  When the learner opens the animation
+  Then the player paints that background behind every scene
+  And the text on it keeps a contrast of at least 4.5:1
+
+Scenario: maths goes to Manim, the rest to Lottie  [AN-21]
+  Given the learner asked "Show me the derivative as the slope of a tangent"
+  When the job starts
+  Then the evaluation picks Manim
+  And when the learner asks "How does the heart pump blood?", the evaluation picks Lottie
+  And if the evaluation call fails, a keyword check picks and the job still runs
 
 Scenario: a screen reader follows the animation  [AN-15]
   Given a finished animation

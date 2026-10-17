@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: accepted, superseded in part by [0008](0008-optional-sign-in-protects-the-profile.md)
 ---
 
 # Local sign-in before Sunday
+
+Decision 0008 replaces the idea that this page gates the whole app, and the "no sign-in before that Sunday" rule. Sign-in is optional and protects the profile only. The deadline below still stands.
 
 Polaris needs a sign-in page for its one learner before Sunday 18 Oct 2026, while it still runs on one machine. That page is not Google OAuth and not an accounts server. Those stay with the hosted version. Until the page exists, and only before that Sunday, the app opens with no sign-in.
 

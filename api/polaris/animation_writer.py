@@ -119,6 +119,7 @@ class AnimationWriter(Protocol):
         *,
         failed_data: dict[str, Any] | None,
         errors: list[str] | None,
+        job_id: str | None = None,
     ) -> dict[str, Any]:
         """Return animation data. A fix receives the data that failed and its errors."""
 
@@ -238,6 +239,7 @@ class ClaudeAnimationWriter:
         *,
         failed_data: dict[str, Any] | None,
         errors: list[str] | None,
+        job_id: str | None = None,
     ) -> dict[str, Any]:
         options = animation_writer_options(cwd=self.work_dir)
         prompt = writer_prompt(brief, failed_data=failed_data, errors=errors)

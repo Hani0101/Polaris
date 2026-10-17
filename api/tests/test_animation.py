@@ -115,7 +115,7 @@ class FakeWriter:
         self.gate = gate
         self.calls: list[tuple[str, object, list[str] | None]] = []
 
-    async def write(self, brief: str, *, failed_data, errors) -> object:
+    async def write(self, brief: str, *, failed_data, errors, job_id=None) -> object:
         if self.gate is not None:
             await asyncio.to_thread(self.gate.wait, 10)
         self.calls.append((brief, failed_data, errors))
@@ -123,7 +123,7 @@ class FakeWriter:
 
 
 class BrokenWriter:
-    async def write(self, brief: str, *, failed_data, errors) -> dict:
+    async def write(self, brief: str, *, failed_data, errors, job_id=None) -> dict:
         raise WriterFailed("The animation writer returned no animation.")
 
 
