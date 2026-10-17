@@ -37,7 +37,7 @@ Each sample gets its own temporary data dir with its own `profile.json` and `pol
 | `wb-graph` | WB-05, WB-06, WB-13 | `y = x^2 - 4` is a `graph` element, not freehand |
 | `quiz` | QZ-05, QZ-10 | First `create_quiz` call is accepted by the stored-quiz checks; the stored input re-passes `normalize_spec` |
 | `an-brief` | AN-04 | The `start_animation_job` brief contains no code |
-| `an-writer` | AN-04, AN-05 | The writer's first script, from a fixed brief, runs in the sandbox and writes `animation.html`, which loads nothing from the network |
+| `an-writer` | AN-04, AN-10 | The writer's first animation data, from a fixed brief, passes the animation check |
 | `pr08-exact` | PR-08 | Profile pass on a session that repeats "I suck at math" sends UPDATE or IGNORE, never a second ADD |
 | `pr08-reworded` | PR-08 | Same, with a reworded repeat |
 
