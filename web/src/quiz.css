@@ -284,18 +284,14 @@
   padding: var(--space-xl) var(--layout-page-margin-phone);
 }
 
+/* One centered reading column: the title and the card share its width and left edge. */
 .qz-page-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--layout-grid-columns), minmax(0, 1fr));
-  column-gap: var(--layout-grid-gutter);
+  display: flex;
+  flex-direction: column;
   /* DS-GAP: gap between the page title and the quiz card, used space.lg */
-  row-gap: var(--space-lg);
-  max-width: var(--layout-max-width-content);
+  gap: var(--space-lg);
+  max-width: var(--layout-max-width-chat);
   margin: 0 auto;
-}
-
-.qz-page-grid > * {
-  grid-column: 1 / -1;
 }
 
 .qz-page-title {
@@ -350,13 +346,6 @@
 
   .qz-page-title {
     font-size: var(--font-size-3xl);
-  }
-}
-
-@media (min-width: 1024px) {
-  /* DS-GAP: how many of the 12 columns the expanded quiz spans, used 8 (left-aligned) */
-  .qz-page-grid > .qz-page-column {
-    grid-column: 1 / span 8;
   }
 }
 

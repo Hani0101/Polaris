@@ -315,7 +315,7 @@ Shadows allowed: no
 ### 6.1 Grid
 | Token | Value | Used for | Why |
 |---|---|---|---|
-| `layout.grid.columns` | 12 | Full pages: expanded quiz, settings | Not given |
+| `layout.grid.columns` | 12 | Full pages: settings | Not given |
 | `layout.grid.gutter` | 1.5rem | Gap between grid columns (24px) | Not given |
 | `layout.page.margin` | 1.5rem | Left and right screen edges, 640px and up (24px) | Not given |
 | `layout.page.marginPhone` | 1rem | Left and right screen edges below 640px (16px) | Not given |
@@ -329,8 +329,8 @@ Shadows allowed: no
 ### 6.2 Max content widths
 | Token | Value | Used for | Why |
 |---|---|---|---|
-| `layout.maxWidth.content` | 1200px | Full pages: expanded quiz, settings | Not given |
-| `layout.maxWidth.chat` | 720px | The chat column, including the input bar | Not given |
+| `layout.maxWidth.content` | 1200px | Full pages: settings | Not given |
+| `layout.maxWidth.chat` | 720px | The chat column, including the input bar; the expanded quiz column (title and card), centered on the page with left-aligned text | One reading width for everything the learner reads, and a centered column keeps the page from feeling empty on wide screens |
 | `layout.maxWidth.form` | 400px | Forms, such as sign-in | Not given |
 
 ### 6.3 Breakpoints
@@ -352,7 +352,8 @@ Shadows allowed: no
 
 ### 6.5 Layout rules
 - The app is three panels: the session list on the left (`layout.panel.left`), the chat in the middle, tools on the right (`layout.panel.right`). The left and right panels can be closed. The chat is always visible and stops at `layout.maxWidth.chat`. Why: not given.
-- The 12-column grid is used for full pages (expanded quiz, settings), which stop at `layout.maxWidth.content`. Why: not given.
+- The 12-column grid is used for full pages (settings), which stop at `layout.maxWidth.content`. Why: not given.
+- The expanded quiz page is one column at `layout.maxWidth.chat`, centered, with the title above the card in the same column and the card kept at the top of the page, not centered vertically. Text stays left-aligned. Why: a column that hugs the left edge leaves the page feeling empty, and a vertically centered card would jump when the feedback opens.
 - From `breakpoint.md` up: all three panels. From `breakpoint.lg` up, the tools panel is `layout.panel.rightWide`. Why: not given.
 - From `breakpoint.sm` to below `breakpoint.md`: chat plus the tools panel. The session list is the menu button, as on phones. Why: not given.
 - Below `breakpoint.sm` (phone), one panel at a time, and page margins are `layout.page.marginPhone`. Why: not given.
