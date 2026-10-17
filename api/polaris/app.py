@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -12,6 +13,7 @@ from pydantic import BaseModel
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
+from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
     BlankMessage,
     Chat,
@@ -92,7 +94,12 @@ def create_app(
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
-        animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        # feat/manim-experiment: Manim is the default writer on this branch.
+        # POLARIS_ANIMATION_ENGINE=data brings back the animation-data writer.
+        if os.environ.get("POLARIS_ANIMATION_ENGINE", "manim") == "data":
+            animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
+        else:
+            animation_writer = ClaudeManimWriter(data_dir / "claude-work")
     chat = Chat(
         data_dir,
         agent,
@@ -337,6 +344,11 @@ def create_app(
             media_type=playback.media_type,
             headers=PLAYBACK_HEADERS,
         )
+
+    @app.get("/api/sessions/{session_id}/jobs/{job_id}/manim/{name:path}")
+    def read_job_manim_asset(session_id: str, job_id: str, name: str) -> FileResponse:
+        asset = chat.get_animation_asset(session_id, job_id, name)
+        return FileResponse(asset.path, media_type=asset.media_type, headers=PLAYBACK_HEADERS)
 
     @app.get("/api/quizzes/{quiz_id}")
     def read_quiz(quiz_id: str) -> dict[str, object]:
