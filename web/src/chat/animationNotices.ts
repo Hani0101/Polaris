@@ -6,6 +6,7 @@
  */
 
 import { getAnimationJob } from '../api.ts'
+import type { Artifact } from '../api.ts'
 import { animationPagePath } from '../animationPath.ts'
 
 const POLL_MS = 10_000
@@ -134,7 +135,7 @@ function stopWatching(key: WatchKey): void {
 
 /** Register every running animation in a list of artifacts. */
 export function watchRunningAnimations(
-  artifacts: { id: string; kind: string; session_id: string; status?: string }[],
+  artifacts: readonly Artifact[],
   onStatus?: AnimationStatusHandler,
 ): void {
   for (const artifact of artifacts) {

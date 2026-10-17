@@ -18,6 +18,10 @@ dist-ssr/
 # Python
 __pycache__/
 data/
+data-*/
+*.db
+*.db-shm
+*.db-wal
 *.py[cod]
 *$py.class
 .pytest_cache/
@@ -30,3 +34,9 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Live eval reports
+api/evals/reports/
+
+# Animation eval output
+api/evals/results/

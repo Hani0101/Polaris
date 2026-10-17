@@ -1,7 +1,23 @@
 """Quiz artifacts: the answer key stays in the database until the quiz is
 graded, and code grades it. A wrong choice's why_wrong note is part of the key."""
 
+import random
+import re
 from typing import Any
+
+# QZ-10: choices and explanations that give the answer away or break once the
+# choices are shuffled (QZ-09).
+_OVERALL_CHOICE = re.compile(
+    r"\b(?:all|none|both|neither)\s+of\s+(?:the\s+)?(?:above|below|these|those|them)\b",
+    re.IGNORECASE,
+)
+_LETTER_LABEL = re.compile(r"^\(?[A-Ha-h][).:]\s")
+_LETTER_REFERENCE = re.compile(r"\b(?i:option|choice|answer)\s+\(?[A-H]\)?(?![\w'])")
+# The correct choice gives itself away when it is both this many times longer
+# than the longest other choice and at least this many characters longer.
+_LONGEST_RATIO = 1.5
+_LONGEST_MARGIN = 20
+_SHUFFLE = random.Random()
 
 
 class InvalidQuiz(Exception):
@@ -24,8 +40,11 @@ class InvalidSubmission(Exception):
         super().__init__("Each question needs exactly one valid choice.")
 
 
-def normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
-    """Return the stored quiz body, or raise if QZ-05 would be broken."""
+def normalize_spec(
+    spec: dict[str, Any], *, rng: random.Random | None = None
+) -> dict[str, Any]:
+    """Return the stored quiz body with shuffled choices (QZ-09), or raise if
+    QZ-05 or QZ-10 would be broken."""
 
     title = spec.get("title")
     questions = spec.get("questions")
@@ -34,7 +53,7 @@ def normalize_spec(spec: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(questions, list) or not questions:
         raise InvalidQuiz("questions are missing")
     stored_questions = [
-        _normalize_question(question, index=index)
+        _normalize_question(question, index=index, rng=rng or _SHUFFLE)
         for index, question in enumerate(questions, start=1)
     ]
     ids = [question["id"] for question in stored_questions]
@@ -145,7 +164,9 @@ def check_view(stored: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
+def _normalize_question(
+    question: Any, *, index: int, rng: random.Random
+) -> dict[str, Any]:
     if not isinstance(question, dict):
         raise InvalidQuiz(f"question {index} is not an object")
     question_id = question.get("id")
@@ -175,6 +196,8 @@ def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
             choice.pop("why_wrong", None)
         elif not choice.get("why_wrong"):
             raise InvalidQuiz(f"{qid}: choice {choice['id']} needs a why_wrong note")
+    _check_item_writing(qid, choices, correct_id, explanation)
+    rng.shuffle(choices)
     return {
         "id": qid,
         "prompt": prompt.strip(),
@@ -182,6 +205,49 @@ def _normalize_question(question: Any, *, index: int) -> dict[str, Any]:
         "correct_choice_id": correct_id,
         "explanation": explanation.strip(),
     }
+
+
+def _check_item_writing(
+    qid: str, choices: list[dict[str, str]], correct_id: str, explanation: str
+) -> None:
+    """Raise if a choice gives the answer away or depends on the choice order (QZ-10)."""
+
+    seen: set[str] = set()
+    for choice in choices:
+        text = choice["text"]
+        key = " ".join(text.split()).casefold()
+        if key in seen:
+            raise InvalidQuiz(f"{qid}: two choices have the same text")
+        seen.add(key)
+        if _OVERALL_CHOICE.search(text):
+            raise InvalidQuiz(
+                f"{qid}: a choice refers to the other choices; "
+                "write each choice as its own answer"
+            )
+        if _LETTER_LABEL.match(text):
+            raise InvalidQuiz(
+                f"{qid}: a choice starts with a letter label; "
+                "Polaris shuffles the choices, so leave labels out"
+            )
+    if _LETTER_REFERENCE.search(explanation):
+        raise InvalidQuiz(
+            f"{qid}: the explanation names a choice by its letter; "
+            "Polaris shuffles the choices, so name it by its text"
+        )
+    correct = next(
+        len(choice["text"]) for choice in choices if choice["id"] == correct_id
+    )
+    longest_other = max(
+        len(choice["text"]) for choice in choices if choice["id"] != correct_id
+    )
+    if (
+        correct > longest_other * _LONGEST_RATIO
+        and correct - longest_other >= _LONGEST_MARGIN
+    ):
+        raise InvalidQuiz(
+            f"{qid}: the correct choice is far longer than the others; "
+            "make the choices about the same length"
+        )
 
 
 def _normalize_choice(choice: Any, *, question_id: str) -> dict[str, str]:

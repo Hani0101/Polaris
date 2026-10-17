@@ -1,0 +1,369 @@
+{
+  "version": 1,
+  "id": "sample-binary-search",
+  "title": "Binary search halves the list",
+  "description": "A sorted list of seven numbers. Each step checks the middle number and throws away the half that cannot hold 23.",
+  "elements": [
+    {
+      "id": "list",
+      "color": "muted",
+      "visible_at_start": true,
+      "kind": "rectangle",
+      "x": 20.0,
+      "y": 60.0,
+      "width": 360.0,
+      "height": 60.0,
+      "filled": false
+    },
+    {
+      "id": "numbers",
+      "color": "ink",
+      "visible_at_start": true,
+      "kind": "text",
+      "x": 200.0,
+      "y": 78.0,
+      "text": "3  8  12  17  23  31  40",
+      "size": 22.0,
+      "align": "middle"
+    },
+    {
+      "id": "target",
+      "color": "accent",
+      "visible_at_start": true,
+      "kind": "text",
+      "x": 20.0,
+      "y": 20.0,
+      "text": "Looking for 23",
+      "size": 22.0,
+      "align": "start"
+    },
+    {
+      "id": "pointer",
+      "color": "highlight",
+      "visible_at_start": false,
+      "kind": "arrow",
+      "start": {
+        "x": 200.0,
+        "y": 180.0
+      },
+      "end": {
+        "x": 200.0,
+        "y": 130.0
+      }
+    },
+    {
+      "id": "left-half",
+      "color": "negative",
+      "visible_at_start": false,
+      "kind": "rectangle",
+      "x": 20.0,
+      "y": 60.0,
+      "width": 180.0,
+      "height": 60.0,
+      "filled": true
+    },
+    {
+      "id": "checks",
+      "color": "ink",
+      "visible_at_start": false,
+      "kind": "text",
+      "x": 20.0,
+      "y": 240.0,
+      "text": "0",
+      "size": 24.0,
+      "align": "start"
+    },
+    {
+      "id": "checks-label",
+      "color": "muted",
+      "visible_at_start": true,
+      "kind": "text",
+      "x": 60.0,
+      "y": 242.0,
+      "text": "checks so far",
+      "size": 22.0,
+      "align": "start"
+    },
+    {
+      "id": "curve",
+      "color": "ink",
+      "visible_at_start": false,
+      "kind": "graph",
+      "x": 240.0,
+      "y": 160.0,
+      "width": 140.0,
+      "height": 120.0,
+      "x_label": "n",
+      "y_label": "checks",
+      "x_min": 1.0,
+      "x_max": 64.0,
+      "y_min": 0.0,
+      "y_max": 7.0,
+      "series": [
+        {
+          "expression": "log(x) / log(2)",
+          "sample_count": 40,
+          "plotted": [
+            {
+              "x": 1.0,
+              "y": 0.0
+            },
+            {
+              "x": 2.6153846153846154,
+              "y": 1.3870231231092474
+            },
+            {
+              "x": 4.230769230769231,
+              "y": 2.0809199953835678
+            },
+            {
+              "x": 5.846153846153847,
+              "y": 2.547487795302494
+            },
+            {
+              "x": 7.461538461538462,
+              "y": 2.8994731240460356
+            },
+            {
+              "x": 9.076923076923077,
+              "y": 3.182203331220749
+            },
+            {
+              "x": 10.692307692307693,
+              "y": 3.4185013545824154
+            },
+            {
+              "x": 12.307692307692308,
+              "y": 3.6214883767462704
+            },
+            {
+              "x": 13.923076923076923,
+              "y": 3.799406168942113
+            },
+            {
+              "x": 15.53846153846154,
+              "y": 3.9577717646107033
+            },
+            {
+              "x": 17.153846153846153,
+              "y": 4.100460181779213
+            },
+            {
+              "x": 18.76923076923077,
+              "y": 4.230297619421794
+            },
+            {
+              "x": 20.384615384615387,
+              "y": 4.34940883130947
+            },
+            {
+              "x": 22.0,
+              "y": 4.459431618637297
+            },
+            {
+              "x": 23.615384615384617,
+              "y": 4.561655127229088
+            },
+            {
+              "x": 25.230769230769234,
+              "y": 4.657112286476992
+            },
+            {
+              "x": 26.846153846153847,
+              "y": 4.74664350806856
+            },
+            {
+              "x": 28.461538461538463,
+              "y": 4.83094174237522
+            },
+            {
+              "x": 30.07692307692308,
+              "y": 4.91058507916626
+            },
+            {
+              "x": 31.692307692307693,
+              "y": 4.986060809042126
+            },
+            {
+              "x": 33.30769230769231,
+              "y": 5.057783496585633
+            },
+            {
+              "x": 34.92307692307692,
+              "y": 5.126108769149823
+            },
+            {
+              "x": 36.53846153846154,
+              "y": 5.191343985077219
+            },
+            {
+              "x": 38.15384615384615,
+              "y": 5.253756592245783
+            },
+            {
+              "x": 39.769230769230774,
+              "y": 5.313580752173842
+            },
+            {
+              "x": 41.38461538461539,
+              "y": 5.3710226444155325
+            },
+            {
+              "x": 43.0,
+              "y": 5.426264754702098
+            },
+            {
+              "x": 44.61538461538461,
+              "y": 5.479469371873843
+            },
+            {
+              "x": 46.23076923076923,
+              "y": 5.5307814625700935
+            },
+            {
+              "x": 47.84615384615385,
+              "y": 5.580331051989511
+            },
+            {
+              "x": 49.46153846153847,
+              "y": 5.6282352091868555
+            },
+            {
+              "x": 51.07692307692307,
+              "y": 5.674599713205833
+            },
+            {
+              "x": 52.69230769230769,
+              "y": 5.719520459706797
+            },
+            {
+              "x": 54.30769230769231,
+              "y": 5.763084655130088
+            },
+            {
+              "x": 55.92307692307693,
+              "y": 5.8053718357785025
+            },
+            {
+              "x": 57.53846153846154,
+              "y": 5.846454741746545
+            },
+            {
+              "x": 59.15384615384616,
+              "y": 5.886400069820734
+            },
+            {
+              "x": 60.76923076923077,
+              "y": 5.925269124923373
+            },
+            {
+              "x": 62.38461538461539,
+              "y": 5.9631183860761805
+            },
+            {
+              "x": 64.0,
+              "y": 6.0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "id": "middle",
+      "caption": "Look at the middle number, 17.",
+      "duration_ms": 1800,
+      "actions": [
+        {
+          "element": "pointer",
+          "start_ms": 0,
+          "duration_ms": 400,
+          "action": "appear"
+        },
+        {
+          "element": "checks",
+          "start_ms": 0,
+          "duration_ms": 300,
+          "action": "appear"
+        },
+        {
+          "element": "checks",
+          "start_ms": 600,
+          "duration_ms": 400,
+          "action": "count",
+          "from_value": 0.0,
+          "to_value": 1.0,
+          "decimals": 0
+        }
+      ]
+    },
+    {
+      "id": "discard",
+      "caption": "23 is bigger than 17, so the left half cannot hold it.",
+      "duration_ms": 2000,
+      "actions": [
+        {
+          "element": "left-half",
+          "start_ms": 0,
+          "duration_ms": 500,
+          "action": "appear"
+        },
+        {
+          "element": "numbers",
+          "start_ms": 500,
+          "duration_ms": 400,
+          "action": "highlight",
+          "color": "accent",
+          "keep": false
+        }
+      ]
+    },
+    {
+      "id": "next-middle",
+      "caption": "Check the middle of what is left: 31. Then 23 is found.",
+      "duration_ms": 2400,
+      "actions": [
+        {
+          "element": "pointer",
+          "start_ms": 0,
+          "duration_ms": 800,
+          "action": "move",
+          "to": {
+            "x": 300.0,
+            "y": 180.0
+          }
+        },
+        {
+          "element": "checks",
+          "start_ms": 800,
+          "duration_ms": 800,
+          "action": "count",
+          "from_value": 1.0,
+          "to_value": 3.0,
+          "decimals": 0
+        }
+      ]
+    },
+    {
+      "id": "growth",
+      "caption": "Doubling the list adds only one more check.",
+      "duration_ms": 2000,
+      "actions": [
+        {
+          "element": "pointer",
+          "start_ms": 0,
+          "duration_ms": 300,
+          "action": "disappear"
+        },
+        {
+          "element": "curve",
+          "start_ms": 300,
+          "duration_ms": 1500,
+          "action": "trace",
+          "series": null
+        }
+      ]
+    }
+  ]
+}

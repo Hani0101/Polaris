@@ -59,18 +59,25 @@ type WhiteboardElementBase = {
   style: Style
 }
 
+// label, start_element_id, and end_element_id exist on version 7 only.
 export type RectangleElement = WhiteboardElementBase & {
   kind: 'rectangle'
+  label?: string
 }
 
 export type EllipseElement = WhiteboardElementBase & {
   kind: 'ellipse'
+  label?: string
 }
 
 export type ArrowElement = WhiteboardElementBase & {
   kind: 'arrow'
   start: Point
   end: Point
+  label?: string
+  start_element_id?: string
+  end_element_id?: string
+  bend?: number
 }
 
 export type LineElement = WhiteboardElementBase & {
@@ -180,11 +187,15 @@ export type WhiteboardArtifact = Whiteboard & {
   kind: 'whiteboard'
 }
 
+/** What a running job is doing (AN-19). A ready or failed job has no stage. */
+export type AnimationStage = 'writing' | 'checking' | 'fixing'
+
 export type AnimationArtifact = {
   id: string
   kind: 'animation'
   session_id: string
   status: string
+  stage?: AnimationStage | null
 }
 
 export type Artifact = Quiz | WhiteboardArtifact | AnimationArtifact
@@ -194,19 +205,43 @@ export type TurnPointing = {
   element_ids: string[]
 }
 
+/** The animation step a turn asks about (AN-17). */
+export type TurnAnimationStep = {
+  job_id: string
+  step_id: string
+}
+
 export type Turn = {
   learner_message: string
   reply: string
   artifacts: Artifact[]
   pointing?: TurnPointing
+  animation_step?: TurnAnimationStep
+}
+
+export type TurnBody = {
+  message: string
+  pointing?: TurnPointing
+  simplifies?: string
+  picture?: BoardPicture
+  animation_step?: TurnAnimationStep
+}
+
+/** A PNG of one whiteboard, sent with the next turn only. data is base64. */
+export type BoardPicture = {
+  whiteboard_id: string
+  media_type: 'image/png'
+  data: string
 }
 
 export function turnBody(
   message: string,
   pointing: { whiteboardId: string; parts: { id: string }[] } | null,
   simplifies?: string | null,
-): { message: string; pointing?: TurnPointing; simplifies?: string } {
-  const body: { message: string; pointing?: TurnPointing; simplifies?: string } = { message }
+  picture?: BoardPicture | null,
+  animationStep?: { jobId: string; stepId: string } | null,
+): TurnBody {
+  const body: TurnBody = { message }
   if (pointing && pointing.parts.length > 0) {
     body.pointing = {
       whiteboard_id: pointing.whiteboardId,
@@ -214,6 +249,10 @@ export function turnBody(
     }
   }
   if (simplifies) body.simplifies = simplifies
+  if (picture) body.picture = picture
+  if (animationStep) {
+    body.animation_step = { job_id: animationStep.jobId, step_id: animationStep.stepId }
+  }
   return body
 }
 
@@ -365,6 +404,8 @@ export async function sendTurn(
     signal?: AbortSignal
     pointing?: { whiteboardId: string; parts: { id: string }[] } | null
     simplifies?: string | null
+    picture?: BoardPicture | null
+    animationStep?: { jobId: string; stepId: string } | null
   },
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/turns`, {
@@ -373,7 +414,15 @@ export async function sendTurn(
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
     },
-    body: JSON.stringify(turnBody(message, options?.pointing ?? null, options?.simplifies)),
+    body: JSON.stringify(
+      turnBody(
+        message,
+        options?.pointing ?? null,
+        options?.simplifies,
+        options?.picture,
+        options?.animationStep,
+      ),
+    ),
     signal: options?.signal,
   })
   if (!response.ok) throw new ApiError(response.status, await readDetail(response))

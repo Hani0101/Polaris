@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import { getAnimationJob } from './api.ts'
-import type { AnimationArtifact } from './api.ts'
-import { animationMediaUrl } from './animationPath.ts'
+import { AnimationPlayer } from './AnimationPlayer.tsx'
+import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AlertBanner } from './chat/ui.tsx'
 import './animation.css'
 
@@ -10,26 +10,10 @@ type AnimationPageProps = {
   sessionId: string
   jobId: string
   onBack: () => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
-type LoadState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; job: AnimationArtifact; mediaType: string }
-  | { kind: 'failed' }
-
-async function probeMediaType(
-  sessionId: string,
-  jobId: string,
-  signal: AbortSignal,
-): Promise<string> {
-  const response = await fetch(animationMediaUrl(sessionId, jobId), { signal })
-  if (!response.ok) {
-    throw new Error("Couldn't load the animation.")
-  }
-  // Body is discarded; the player loads the same URL again.
-  await response.arrayBuffer()
-  return response.headers.get('content-type') ?? ''
-}
+type LoadState = { kind: 'loading' } | { kind: 'ready' } | { kind: 'failed' }
 
 function AnimationSkeleton() {
   return (
@@ -42,64 +26,20 @@ function AnimationSkeleton() {
   )
 }
 
-function Playback({
-  sessionId,
-  jobId,
-  mediaType,
-}: {
-  sessionId: string
-  jobId: string
-  mediaType: string
-}) {
-  const src = animationMediaUrl(sessionId, jobId)
-  if (mediaType.startsWith('video/')) {
-    return (
-      <video className="an-player" controls playsInline src={src}>
-        Your browser cannot play this animation.
-      </video>
-    )
-  }
-  if (mediaType.startsWith('image/')) {
-    return <img className="an-player" src={src} alt="Animation" />
-  }
-  if (mediaType.includes('html')) {
-    return (
-      <iframe
-        className="an-player an-player--html"
-        title="Animation"
-        src={src}
-        sandbox="allow-scripts"
-      />
-    )
-  }
-  return (
-    <AlertBanner>This animation format cannot be shown in the browser.</AlertBanner>
-  )
-}
-
-export function AnimationPage({ sessionId, jobId, onBack }: AnimationPageProps) {
+export function AnimationPage({ sessionId, jobId, onBack, onAskAboutStep }: AnimationPageProps) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
-    async function load() {
-      try {
-        const job = await getAnimationJob(sessionId, jobId, controller.signal)
+    getAnimationJob(sessionId, jobId, controller.signal)
+      .then((job) => {
         if (controller.signal.aborted) return
-        if (job.status !== 'ready') {
-          setState({ kind: 'failed' })
-          return
-        }
-        const mediaType = await probeMediaType(sessionId, jobId, controller.signal)
-        if (controller.signal.aborted) return
-        setState({ kind: 'ready', job, mediaType })
-      } catch {
-        if (controller.signal.aborted) return
-        setState({ kind: 'failed' })
-      }
-    }
-    void load()
+        setState({ kind: job.status === 'ready' ? 'ready' : 'failed' })
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setState({ kind: 'failed' })
+      })
     return () => controller.abort()
   }, [sessionId, jobId, attempt])
 
@@ -139,13 +79,11 @@ export function AnimationPage({ sessionId, jobId, onBack }: AnimationPageProps) 
           ) : null}
           {state.kind === 'ready' ? (
             <div className="an-page-column">
-              <div className="an-stage">
-                <Playback
-                  sessionId={sessionId}
-                  jobId={jobId}
-                  mediaType={state.mediaType}
-                />
-              </div>
+              <AnimationPlayer
+                sessionId={sessionId}
+                jobId={jobId}
+                onAskAboutStep={onAskAboutStep}
+              />
             </div>
           ) : null}
         </div>

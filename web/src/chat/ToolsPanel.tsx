@@ -1,27 +1,27 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Layers, ListChecks, Presentation } from 'lucide-react'
+import { Clapperboard, Layers, ListChecks, Presentation } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import { AnimationPlayer } from '../AnimationPlayer.tsx'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { QuizCard } from '../QuizCard.tsx'
 import type { PointedPart } from '../whiteboard/pointing.ts'
 import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
-import { Badge, CloseIcon, IconButton } from './ui.tsx'
+import { FAILURE_NOTICE } from './AnimationCard.tsx'
+import { stageText, useAnimationJob } from './animationJob.ts'
+import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
 import './tools.css'
 
-export type ToolsTab = 'whiteboard' | 'quiz' | 'artifacts'
+export type ToolsTab = 'whiteboard' | 'quiz' | 'animation' | 'artifacts'
 
 const TABS: TabItem<ToolsTab>[] = [
   { id: 'whiteboard', label: 'Whiteboard' },
   { id: 'quiz', label: 'Quiz' },
+  { id: 'animation', label: 'Animation' },
   { id: 'artifacts', label: 'Artifacts' },
 ]
-
-const ANIMATION_STATUS: Record<string, string> = {
-  running: 'In progress',
-  failed: 'Could not create',
-}
 
 type ToolsPanelProps = {
   artifacts: Artifact[]
@@ -32,9 +32,10 @@ type ToolsPanelProps = {
   onOpenAnimation: (sessionId: string, jobId: string) => void
   onQuizGraded: (quiz: Quiz) => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
 }
 
-/** The tools content: header, then Whiteboard, Quiz, and Artifacts tabs. */
+/** The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs. */
 export function ToolsPanel({
   artifacts,
   headingId,
@@ -44,6 +45,7 @@ export function ToolsPanel({
   onOpenAnimation,
   onQuizGraded,
   onAsk,
+  onAskAboutStep,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
 
@@ -72,6 +74,13 @@ export function ToolsPanel({
             onQuizGraded={onQuizGraded}
           />
         ) : null}
+        {tab === 'animation' ? (
+          <AnimationTab
+            animation={latest(artifacts, isAnimation)}
+            onOpenAnimation={onOpenAnimation}
+            onAskAboutStep={onAskAboutStep}
+          />
+        ) : null}
         {tab === 'artifacts' ? (
           <ArtifactsTab
             artifacts={artifacts}
@@ -91,6 +100,10 @@ function isWhiteboard(artifact: Artifact): artifact is WhiteboardArtifact {
 
 function isQuiz(artifact: Artifact): artifact is Quiz {
   return artifact.kind === 'quiz'
+}
+
+function isAnimation(artifact: Artifact): artifact is AnimationArtifact {
+  return artifact.kind === 'animation'
 }
 
 function latest<T extends Artifact>(
@@ -189,6 +202,48 @@ function QuizTab({
   return <QuizCard key={quiz.id} quiz={quiz} onGraded={onQuizGraded} onExpand={onOpenQuiz} />
 }
 
+function AnimationTab({
+  animation,
+  onOpenAnimation,
+  onAskAboutStep,
+}: {
+  animation: AnimationArtifact | null
+  onOpenAnimation: (sessionId: string, jobId: string) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
+}) {
+  if (!animation) {
+    return (
+      <ToolsEmpty
+        icon={<Clapperboard size={24} strokeWidth={2} aria-hidden="true" />}
+        title="No animation yet"
+        body="Ask Polaris to animate an idea, and the animation shows here."
+      />
+    )
+  }
+  if (animation.status !== 'ready') {
+    return <AnimationCard animation={animation} onOpen={onOpenAnimation} />
+  }
+  return (
+    <div className="tools-animation">
+      <div className="tools-actions">
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => onOpenAnimation(animation.session_id, animation.id)}
+        >
+          Open animation
+        </button>
+      </div>
+      <AnimationPlayer
+        key={animation.id}
+        sessionId={animation.session_id}
+        jobId={animation.id}
+        onAskAboutStep={onAskAboutStep}
+      />
+    </div>
+  )
+}
+
 function ArtifactsTab({
   artifacts,
   onOpenQuiz,
@@ -257,8 +312,8 @@ function AnimationCard({
   animation: AnimationArtifact
   onOpen: (sessionId: string, jobId: string) => void
 }) {
-  const status = ANIMATION_STATUS[animation.status]
-  if (animation.status === 'ready') {
+  const { status, stage } = useAnimationJob(animation)
+  if (status === 'ready') {
     return (
       <ClickableCard
         title="Animation"
@@ -271,14 +326,17 @@ function AnimationCard({
     <div className="tools-card">
       <span className="tools-card-row">
         <span className="tools-card-title">Animation</span>
-        {status ? <Badge variant="neutral">{status}</Badge> : null}
+        {status === 'running' ? <Badge variant="neutral">In progress</Badge> : null}
       </span>
-      {animation.status === 'running' ? (
+      {status === 'running' && stageText(stage) ? (
+        <span className="tools-card-body" role="status">
+          {stageText(stage)}
+        </span>
+      ) : null}
+      {status === 'running' ? (
         <span className="tools-card-body">Still working. You can keep talking.</span>
       ) : null}
-      {animation.status === 'failed' ? (
-        <span className="tools-card-body">Polaris could not create this animation.</span>
-      ) : null}
+      {status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}
     </div>
   )
 }

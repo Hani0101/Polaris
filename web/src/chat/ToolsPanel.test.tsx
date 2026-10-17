@@ -2,9 +2,34 @@ import { useRef, useState } from 'react'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { sampleWhiteboard } from '../whiteboard/sampleWhiteboard.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { ToolsPanel } from './ToolsPanel.tsx'
+
+vi.mock('../AnimationPlayer.tsx', () => ({
+  AnimationPlayer: ({
+    jobId,
+    onAskAboutStep,
+  }: {
+    jobId: string
+    onAskAboutStep?: (ask: AskAboutStep) => void
+  }) => (
+    <>
+      <div data-testid="animation-player">{jobId}</div>
+      {onAskAboutStep ? (
+        <button
+          type="button"
+          onClick={() =>
+            onAskAboutStep({ jobId, stepId: 'discard', stepNumber: 2, caption: 'Drop the left half.' })
+          }
+        >
+          Ask about this step
+        </button>
+      ) : null}
+    </>
+  ),
+}))
 
 vi.mock('../whiteboard/Whiteboard.tsx', () => ({
   Whiteboard: ({ whiteboard }: { whiteboard: { id: string } }) => (
@@ -64,6 +89,7 @@ function renderPanel(
     onOpenWhiteboard: (id: string) => void
     onOpenAnimation: (sessionId: string, jobId: string) => void
     onClose: () => void
+    onAskAboutStep: (ask: AskAboutStep) => void
   }> = {},
 ) {
   return render(
@@ -75,6 +101,7 @@ function renderPanel(
       onOpenWhiteboard={callbacks.onOpenWhiteboard ?? noop}
       onOpenAnimation={callbacks.onOpenAnimation ?? noop}
       onQuizGraded={noop}
+      onAskAboutStep={callbacks.onAskAboutStep}
     />,
   )
 }
@@ -96,8 +123,11 @@ test('tabs switch with a click and with arrow keys', () => {
 
   const quizTab = screen.getByRole('tab', { name: 'Quiz' })
   fireEvent.keyDown(quizTab, { key: 'ArrowRight' })
+  expect(selectedTab()).toBe('Animation')
+  expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Animation' }))
+
+  fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Artifacts')
-  expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Artifacts' }))
 
   fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Whiteboard')
@@ -109,7 +139,7 @@ test('tabs switch with a click and with arrow keys', () => {
   expect(selectedTab()).toBe('Whiteboard')
 
   const tabs = screen.getAllByRole('tab')
-  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1])
+  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1])
 })
 
 test('each tab shows an empty state when the session has nothing yet', () => {
@@ -119,8 +149,67 @@ test('each tab shows an empty state when the session has nothing yet', () => {
   fireEvent.click(screen.getByRole('tab', { name: 'Quiz' }))
   expect(screen.getByText('No quiz yet')).toBeTruthy()
 
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+  expect(screen.getByText('No animation yet')).toBeTruthy()
+
   fireEvent.click(screen.getByRole('tab', { name: 'Artifacts' }))
   expect(screen.getByText('No artifacts yet')).toBeTruthy()
+})
+
+test('the animation tab plays the most recent ready animation and opens it', () => {
+  const onOpenAnimation = vi.fn()
+  const older: AnimationArtifact = { ...animation, id: 'job-old', status: 'ready' }
+  const newest: AnimationArtifact = { ...animation, id: 'job-new', status: 'ready' }
+  renderPanel([older, quiz, newest], { onOpenAnimation })
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  expect(screen.getByTestId('animation-player').textContent).toBe('job-new')
+  fireEvent.click(screen.getByRole('button', { name: 'Open animation' }))
+  expect(onOpenAnimation).toHaveBeenCalledWith('session-1', 'job-new')
+})
+
+test('the animation tab shows a running job and a failed one', () => {
+  const { rerender } = renderPanel([animation])
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+  expect(screen.getByText('In progress')).toBeTruthy()
+  expect(screen.queryByTestId('animation-player')).toBeNull()
+
+  rerender(
+    <ToolsPanel
+      artifacts={[{ ...animation, status: 'failed' }]}
+      headingId="tools-heading"
+      onClose={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onOpenAnimation={noop}
+      onQuizGraded={noop}
+    />,
+  )
+  expect(screen.getByRole('alert').textContent).toBe(
+    'Polaris cannot create the animation right now. Try later.',
+  )
+})
+
+test('the animation tab passes on asking about a step (AN-17)', () => {
+  const onAskAboutStep = vi.fn()
+  renderPanel([{ ...animation, status: 'ready' }], { onAskAboutStep })
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  fireEvent.click(screen.getByRole('button', { name: 'Ask about this step' }))
+
+  expect(onAskAboutStep).toHaveBeenCalledWith({
+    jobId: 'job-1',
+    stepId: 'discard',
+    stepNumber: 2,
+    caption: 'Drop the left half.',
+  })
+})
+
+test('a running job in the animation tab shows its stage (AN-19)', () => {
+  renderPanel([{ ...animation, stage: 'checking' }])
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  expect(screen.getByRole('status').textContent).toBe('Checking the animation')
 })
 
 test('the whiteboard tab shows the most recent whiteboard and opens it', () => {

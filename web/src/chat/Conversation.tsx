@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import type { FormEvent, KeyboardEvent, Ref } from 'react'
 import { Plus } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import { askedStepLabel } from '../animation/askedStep.ts'
+import type { AskedStep } from '../animation/askedStep.ts'
 import { revealWhiteboard, visibleReply } from '../whiteboard/reveal.ts'
 import type { RevealPhase } from '../whiteboard/reveal.ts'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
@@ -31,6 +33,7 @@ export type ViewTurn = {
   stopped?: boolean
   failed: boolean
   pointing?: Pointing | null
+  animationStep?: AskedStep | null
 }
 
 type ConversationProps = {
@@ -43,7 +46,11 @@ type ConversationProps = {
   onSend: (event: FormEvent<HTMLFormElement>) => void
   onStop: () => void
   onCopy: (text: string) => void
-  onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
+  onTryAgain: (
+    learnerMessage: string,
+    pointing?: Pointing | null,
+    animationStep?: AskedStep | null,
+  ) => void
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation?: (sessionId: string, jobId: string) => void
@@ -52,6 +59,12 @@ type ConversationProps = {
   onStart: () => void
   pointing?: Pointing | null
   onRemovePoint?: (elementId: string) => void
+  // A picture of the learner's drawing goes with the next message.
+  pictureAttached?: boolean
+  onRemovePicture?: () => void
+  /** The animation step the next turn asks about, shown as a chip (AN-17). */
+  animationStep?: AskedStep | null
+  onRemoveAnimationStep?: () => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
   /** Phone only: opens the tools bottom sheet from the + button in the chat input. */
   onOpenTools?: () => void
@@ -79,6 +92,10 @@ export function Conversation({
   onStart,
   pointing = null,
   onRemovePoint,
+  pictureAttached = false,
+  onRemovePicture,
+  animationStep = null,
+  onRemoveAnimationStep,
   onAsk,
   onOpenTools,
   toolsButtonRef,
@@ -151,6 +168,10 @@ export function Conversation({
         <form className="chat-input-bar" onSubmit={onSend}>
           {pointing && pointing.parts.length > 0 ? (
             <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
+          ) : null}
+          {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
+          {animationStep ? (
+            <StepChip step={animationStep} onRemove={onRemoveAnimationStep} />
           ) : null}
           <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
             {onOpenTools ? (
@@ -238,6 +259,51 @@ function PointChips({
   )
 }
 
+const PICTURE_LABEL = 'Picture of your drawing'
+
+function PictureChip({ onRemove }: { onRemove?: () => void }) {
+  return (
+    <ul className="point-chips" aria-label="Sent with your message">
+      <li className="point-chip">
+        <span>{PICTURE_LABEL}</span>
+        {onRemove ? (
+          <button
+            type="button"
+            className="ghost"
+            aria-label={`Remove ${PICTURE_LABEL.toLowerCase()}`}
+            onClick={onRemove}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        ) : null}
+      </li>
+    </ul>
+  )
+}
+
+function StepChip({ step, onRemove }: { step: AskedStep; onRemove?: () => void }) {
+  const label = askedStepLabel(step)
+  return (
+    <ul className="point-chips" aria-label="Animation step">
+      <li className="point-chip step-chip">
+        <span>{label}</span>
+        {onRemove ? (
+          <button
+            type="button"
+            className="ghost"
+            aria-label={
+              step.stepNumber === undefined ? 'Remove the step' : `Remove step ${step.stepNumber}`
+            }
+            onClick={onRemove}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        ) : null}
+      </li>
+    </ul>
+  )
+}
+
 function TurnBlock({
   turn,
   onCopy,
@@ -252,7 +318,11 @@ function TurnBlock({
 }: {
   turn: ViewTurn
   onCopy: (text: string) => void
-  onTryAgain: (learnerMessage: string, pointing?: Pointing | null) => void
+  onTryAgain: (
+    learnerMessage: string,
+    pointing?: Pointing | null,
+    animationStep?: AskedStep | null,
+  ) => void
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation?: (sessionId: string, jobId: string) => void
@@ -288,6 +358,7 @@ function TurnBlock({
         {turn.pointing && turn.pointing.parts.length > 0 ? (
           <PointChips parts={turn.pointing.parts} />
         ) : null}
+        {turn.animationStep ? <StepChip step={turn.animationStep} /> : null}
         <p>{turn.learner}</p>
       </div>
       {thinking ? <ThinkingIndicator status="Thinking" /> : null}
@@ -295,7 +366,7 @@ function TurnBlock({
         <div className="chat-msg chat-msg--tutor">
           <AlertBanner
             action={
-              <button type="button" className="secondary" onClick={() => onTryAgain(turn.learner, turn.pointing)}>
+              <button type="button" className="secondary" onClick={() => onTryAgain(turn.learner, turn.pointing, turn.animationStep)}>
                 Try again
               </button>
             }
@@ -371,7 +442,7 @@ function TurnBlock({
               <IconButton
                 label="Try again"
                 size="sm"
-                onClick={() => onTryAgain(turn.learner, turn.pointing)}
+                onClick={() => onTryAgain(turn.learner, turn.pointing, turn.animationStep)}
               >
                 <RetryIcon />
               </IconButton>

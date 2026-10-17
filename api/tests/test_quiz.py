@@ -6,11 +6,18 @@ empty profile. Nothing here writes the profile.
 
 import copy
 import json
+import random
 
 import pytest
 
 from polaris.models import Profile
-from polaris.quiz import InvalidQuiz, describe_result, normalize_spec, public_payload
+from polaris.quiz import (
+    InvalidQuiz,
+    describe_result,
+    grade,
+    normalize_spec,
+    public_payload,
+)
 from polaris.teaching import TeachingFailed, turn_prompt
 from test_chat import (
     EMPTY_PROFILE_REPLY,
@@ -72,6 +79,7 @@ class QuizCreatingStub:
         pointing=None,
         simplify=None,
         quizzes=(),
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
         self.reply_count += 1
@@ -158,7 +166,8 @@ def test_quiz_payload_has_no_answers(make_client):
     assert _forbidden_fields(saved, in_question=False) == []
     questions = artifacts[0]["questions"]
     assert [question["id"] for question in questions] == ["q1", "q2"]
-    assert [choice["text"] for choice in questions[0]["choices"]] == ["1", "2", "4"]
+    # QZ-09 shuffles the choices, so only the set of texts is fixed.
+    assert sorted(choice["text"] for choice in questions[0]["choices"]) == ["1", "2", "4"]
     encoded = json.dumps(questions)
     assert "correct_choice_id" not in encoded
     assert "explanation" not in encoded
@@ -261,9 +270,14 @@ def test_a_wrong_choice_needs_a_note():
         normalize_spec(spec)
 
     spec = copy.deepcopy(QUIZ_SPEC)
-    spec["questions"][0]["choices"][1]["why_wrong"] = "It is right."
+    question = spec["questions"][0]
+    correct = next(c for c in question["choices"] if c["id"] == question["correct_choice_id"])
+    correct["why_wrong"] = "It is right."
     stored = normalize_spec(spec)
-    assert "why_wrong" not in stored["questions"][0]["choices"][1]
+    stored_correct = next(
+        c for c in stored["questions"][0]["choices"] if c["id"] == question["correct_choice_id"]
+    )
+    assert "why_wrong" not in stored_correct
 
 
 def test_a_quiz_stored_without_notes_still_grades(make_client):
@@ -487,6 +501,7 @@ class FailingAfterQuizStub:
         pointing=None,
         simplify=None,
         quizzes=(),
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if not profile.facts:
@@ -597,3 +612,105 @@ def test_correct_choice_id_is_trimmed(make_client):
 
     assert graded.status_code == 200, graded.text
     assert graded.json()["score"] == {"earned": 2, "total": 2}
+
+
+FIRST_IS_CORRECT = {
+    "title": "Fractions",
+    "questions": [
+        {
+            "id": "q1",
+            "prompt": "What is 1/2 of 8?",
+            "choices": [
+                {"id": "a", "text": "4"},
+                {"id": "b", "text": "2", "why_wrong": "2 is half of 4, not of 8."},
+                {"id": "c", "text": "8", "why_wrong": "8 is the whole, not half of it."},
+                {"id": "d", "text": "16", "why_wrong": "16 doubles 8 instead of halving it."},
+            ],
+            "correct_choice_id": "a",
+            "explanation": "Half of 8 is 4, because 8 divided by 2 is 4.",
+        }
+    ],
+}
+
+
+def test_choices_are_shuffled():
+    rng = random.Random(0)
+    positions = set()
+    for _ in range(40):
+        question = normalize_spec(FIRST_IS_CORRECT, rng=rng)["questions"][0]
+        ids = [choice["id"] for choice in question["choices"]]
+        positions.add(ids.index("a"))
+        assert sorted(ids) == ["a", "b", "c", "d"]
+        assert question["correct_choice_id"] == "a"
+
+    assert positions != {0}
+
+
+def test_shuffled_choices_keep_their_text_and_grade_against_the_key():
+    stored = normalize_spec(FIRST_IS_CORRECT, rng=random.Random(1))
+    texts = {choice["id"]: choice["text"] for choice in stored["questions"][0]["choices"]}
+
+    assert texts == {"a": "4", "b": "2", "c": "8", "d": "16"}
+    assert grade(stored, {"q1": "a"})[0] == {"earned": 1, "total": 1}
+    assert grade(stored, {"q1": "b"})[0] == {"earned": 0, "total": 1}
+
+
+def _with_choice_text(choice_id: str, text: str) -> dict:
+    spec = copy.deepcopy(FIRST_IS_CORRECT)
+    for choice in spec["questions"][0]["choices"]:
+        if choice["id"] == choice_id:
+            choice["text"] = text
+    return spec
+
+
+def _with_explanation(text: str) -> dict:
+    spec = copy.deepcopy(FIRST_IS_CORRECT)
+    spec["questions"][0]["explanation"] = text
+    return spec
+
+
+@pytest.mark.parametrize(
+    ("spec", "reason"),
+    [
+        (_with_choice_text("d", "All of the above"), "refers to the other choices"),
+        (_with_choice_text("d", "None of these"), "refers to the other choices"),
+        (_with_choice_text("a", "Both of them"), "refers to the other choices"),
+        (_with_choice_text("b", "B) 2"), "starts with a letter label"),
+        (_with_choice_text("c", "(c) 8"), "starts with a letter label"),
+        (_with_choice_text("c", " 4 "), "two choices have the same text"),
+        (_with_explanation("Option A is right: 8 / 2 is 4."), "names a choice by its letter"),
+        (_with_explanation("The answer (A) is 4."), "names a choice by its letter"),
+        (
+            _with_choice_text("a", "4, because half of a number is that number divided by 2"),
+            "far longer than the others",
+        ),
+    ],
+)
+def test_a_choice_that_gives_the_answer_away_is_refused(spec, reason):
+    with pytest.raises(InvalidQuiz, match=rf"^q1: .*{reason}"):
+        normalize_spec(spec)
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        _with_choice_text("d", "a + b"),
+        _with_choice_text("a", "Four halves of one"),
+        _with_explanation("A wrong answer here usually means halving twice."),
+        _with_explanation("The answer is 4, not 2 or 8."),
+    ],
+)
+def test_ordinary_choices_and_explanations_are_not_refused(spec):
+    assert normalize_spec(spec)["title"] == "Fractions"
+
+
+def test_a_refused_quiz_is_not_stored(make_client):
+    client, _agent = make_client(profile=FILLED_PROFILE)
+    session = client.post("/api/sessions").json()
+
+    with pytest.raises(InvalidQuiz):
+        client.app.state.chat.create_quiz(
+            session["id"], _with_choice_text("d", "All of the above")
+        )
+
+    assert client.get(f"/api/sessions/{session['id']}").json()["turns"] == []

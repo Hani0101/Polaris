@@ -11,10 +11,17 @@ from pathlib import Path
 
 from polaris.chat import InvalidDrawing
 from polaris.teaching import ClaudeTeachingAgent, submit_marks, submit_whiteboard
-from polaris.whiteboard import MARKED_DRAWING_VERSION, WHITEBOARD_TOOL_LIMITS, apply_marks, check_drawing
+from polaris.whiteboard import (
+    CURRENT_DRAWING_VERSION,
+    MARKED_DRAWING_VERSION,
+    WHITEBOARD_TOOL_LIMITS,
+    apply_marks,
+    check_drawing,
+)
 from test_chat import make_client, parse_sse, post_turn, reply_text
 from test_quiz import FILLED_PROFILE
 from test_whiteboard import (
+    agent_drawing,
     _answer_drawing,
     _circle_mark,
     _element,
@@ -50,6 +57,7 @@ class DrawingStub:
         pointing=None,
         simplify=None,
         quizzes=(),
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if not profile.facts:
@@ -64,7 +72,7 @@ class DrawingStub:
         for drawing in self.drawings:
             submission = submit_whiteboard(
                 session_id,
-                drawing,
+                agent_drawing(drawing),
                 failures=self.failures,
                 store=self.chat.create_whiteboard,
             )
@@ -226,7 +234,9 @@ def test_the_agent_tool_stores_a_valid_drawing(tmp_path: Path):
     agent = ClaudeTeachingAgent(tmp_path)
     agent.bind_store(lambda _session_id, _spec: {"id": "quiz"}, store)
 
-    payload = asyncio.run(agent.handle_draw_whiteboard("session-9", valid_whiteboard()))
+    payload = asyncio.run(
+        agent.handle_draw_whiteboard("session-9", agent_drawing(valid_whiteboard()))
+    )
 
     assert payload.get("is_error") is not True
     assert stored[0][0] == "session-9"
@@ -244,7 +254,7 @@ def test_a_drawing_sent_as_json_strings_is_stored(tmp_path: Path):
         stored.append(drawing)
         return {"id": drawing["id"]}
 
-    drawing = _formula_drawing()
+    drawing = agent_drawing(_formula_drawing())
     encoded = {
         **drawing,
         "version": str(drawing["version"]),
@@ -257,19 +267,19 @@ def test_a_drawing_sent_as_json_strings_is_stored(tmp_path: Path):
     payload = asyncio.run(agent.handle_draw_whiteboard("session-9", encoded))
 
     assert payload.get("is_error") is not True
-    assert stored[0]["version"] == 5
+    assert stored[0]["version"] == 7
     assert stored[0]["steps"][0]["elements"][0]["kind"] == "math"
     assert stored[0]["comments"] == []
 
 
-def test_a_new_described_whiteboard_is_stored_as_version_4(tmp_path: Path):
+def test_a_new_described_whiteboard_is_stored_as_version_7(tmp_path: Path):
     stored: list[dict] = []
 
     def store(_session_id: str, drawing: dict) -> dict:
         stored.append(drawing)
         return {"id": drawing["id"]}
 
-    drawing = valid_whiteboard()
+    drawing = agent_drawing(valid_whiteboard())
     drawing["description"] = "Two boxes show one half of a whole."
     agent = ClaudeTeachingAgent(tmp_path)
     agent.bind_store(lambda _session_id, _spec: {"id": "quiz"}, store)
@@ -277,18 +287,18 @@ def test_a_new_described_whiteboard_is_stored_as_version_4(tmp_path: Path):
     payload = asyncio.run(agent.handle_draw_whiteboard("session-9", drawing))
 
     assert payload.get("is_error") is not True
-    assert stored[0]["version"] == 4
+    assert stored[0]["version"] == 7
     assert stored[0]["description"] == "Two boxes show one half of a whole."
 
 
-def test_a_formula_whiteboard_is_stored_as_version_5(tmp_path: Path):
+def test_a_formula_whiteboard_is_stored_as_version_7(tmp_path: Path):
     stored: list[dict] = []
 
     def store(_session_id: str, drawing: dict) -> dict:
         stored.append(drawing)
         return {"id": drawing["id"]}
 
-    drawing = _formula_drawing()
+    drawing = agent_drawing(_formula_drawing())
     drawing["version"] = 4
     agent = ClaudeTeachingAgent(tmp_path)
     agent.bind_store(lambda _session_id, _spec: {"id": "quiz"}, store)
@@ -296,19 +306,19 @@ def test_a_formula_whiteboard_is_stored_as_version_5(tmp_path: Path):
     payload = asyncio.run(agent.handle_draw_whiteboard("session-9", drawing))
 
     assert payload.get("is_error") is not True
-    assert stored[0]["version"] == 5
+    assert stored[0]["version"] == 7
     assert stored[0]["steps"][0]["elements"][0]["kind"] == "math"
     assert stored[0]["steps"][0]["elements"][1]["kind"] == "code"
 
 
-def test_a_graph_whiteboard_is_stored_as_version_6(tmp_path: Path):
+def test_a_graph_whiteboard_is_stored_as_version_7(tmp_path: Path):
     stored: list[dict] = []
 
     def store(_session_id: str, drawing: dict) -> dict:
         stored.append(drawing)
         return {"id": drawing["id"]}
 
-    drawing = _graph_drawing()
+    drawing = agent_drawing(_graph_drawing())
     drawing["version"] = 4
     assert "plotted" not in drawing["steps"][0]["elements"][0]["series"][0]
     agent = ClaudeTeachingAgent(tmp_path)
@@ -317,7 +327,7 @@ def test_a_graph_whiteboard_is_stored_as_version_6(tmp_path: Path):
     payload = asyncio.run(agent.handle_draw_whiteboard("session-9", drawing))
 
     assert payload.get("is_error") is not True
-    assert stored[0]["version"] == 6
+    assert stored[0]["version"] == 7
     series = stored[0]["steps"][0]["elements"][0]["series"][0]
     assert series["plotted"] == [
         {"x": 0.0, "y": 1.0},
@@ -401,6 +411,7 @@ class MarkingStub:
         pointing=None,
         simplify=None,
         quizzes=(),
+        **_extra,
     ):
         del learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         self._replies += 1
@@ -416,7 +427,7 @@ class MarkingStub:
             yield REPLY
             submit_whiteboard(
                 session_id,
-                _frame(),
+                agent_drawing(_frame()),
                 failures=0,
                 store=self.chat.create_whiteboard,
             )
@@ -450,7 +461,7 @@ def _prepared_answer(make_client, stub: MarkingStub):
         json=drawing,
     )
     assert put.status_code == 200, put.text
-    assert put.json()["version"] == 2
+    assert put.json()["version"] == 7
     return client, session, put.json()
 
 
@@ -476,7 +487,7 @@ def test_agent_marks_do_not_change_the_learners_drawing(make_client):
 
     assert after_elements == before_elements
     assert after_comments == before_comments
-    assert loaded["version"] == MARKED_DRAWING_VERSION
+    assert loaded["version"] == CURRENT_DRAWING_VERSION
     assert len(marks) == 1
     assert marks[0]["author"] == "agent"
     assert marks[0]["mark"] == "circle"
@@ -487,14 +498,14 @@ def test_agent_marks_do_not_change_the_learners_drawing(make_client):
     assert streamed[0]["id"] == before["id"]
     assert _learner_parts(streamed[0]) == (before_elements, before_comments)
     assert saved["turns"][0]["artifacts"][0]["id"] == before["id"]
-    assert saved["turns"][0]["artifacts"][0]["version"] == MARKED_DRAWING_VERSION
+    assert saved["turns"][0]["artifacts"][0]["version"] == CURRENT_DRAWING_VERSION
     assert saved["turns"][1]["artifacts"] == []
     assert stub.tool_results[0].get("is_error") is not True
 
 
 def test_the_mark_tool_refuses_a_changed_learner_element(make_client):
     edited = _learner_drawing(_frame())
-    edited["version"] = MARKED_DRAWING_VERSION
+    edited["version"] = CURRENT_DRAWING_VERSION
     edited["steps"][0]["elements"][1]["position"] = {"x": 9, "y": 9}
     edited["steps"].append(
         {
@@ -516,9 +527,9 @@ def test_the_mark_tool_refuses_a_changed_learner_element(make_client):
     message = stub.tool_results[0]["content"][0]["text"]
     assert "answer-1" in message
     assert "changed" in message
-    assert "Fix the drawing and call draw_whiteboard again." in message
+    assert "Fix the drawing and call mark_whiteboard again." in message
     assert _learner_parts(loaded)[0] == before_elements
-    assert loaded["version"] == 2
+    assert loaded["version"] == CURRENT_DRAWING_VERSION
 
 
 def test_a_failed_reply_rolls_back_marks(make_client):
@@ -545,7 +556,7 @@ def test_a_failed_reply_rolls_back_marks(make_client):
     assert response.status_code == 200, response.text
     assert rest == ""
     assert any("error" in event for event in events)
-    assert loaded["version"] == 2
+    assert loaded["version"] == CURRENT_DRAWING_VERSION
     assert _learner_parts(loaded) == _learner_parts(before)
     assert not any(
         element["kind"] == "mark"
@@ -610,6 +621,7 @@ def test_a_failed_reply_discards_its_unattached_whiteboard(make_client):
             pointing=None,
             simplify=None,
             quizzes=(),
+            **_extra,
         ):
             async for chunk in super().reply(
                 session_id=session_id,
@@ -689,6 +701,7 @@ class SimplerStub:
         pointing=None,
         simplify=None,
         quizzes=(),
+        **_extra,
     ):
         del prior_turns, sdk_session_id, whiteboards, pointing, quizzes
         self.calls += 1
@@ -705,7 +718,7 @@ class SimplerStub:
             yield REPLY
             submission = submit_whiteboard(
                 session_id,
-                valid_whiteboard(),
+                agent_drawing(valid_whiteboard()),
                 failures=0,
                 store=self.chat.create_whiteboard,
             )
@@ -716,7 +729,7 @@ class SimplerStub:
         for drawing in self.redraws:
             submission = submit_whiteboard(
                 session_id,
-                drawing,
+                agent_drawing(drawing),
                 failures=self.failures,
                 store=self.chat.create_whiteboard,
             )
@@ -756,7 +769,7 @@ def test_a_simpler_redraw_keeps_the_first_one(make_client):
     assert len(streamed) == 1
     assert streamed[0]["id"] == "wb-simple"
     assert streamed[0]["simplifies"] == "wb-1"
-    assert streamed[0]["version"] == 4
+    assert streamed[0]["version"] == CURRENT_DRAWING_VERSION
     assert _element_total(streamed[0]) == 1
     assert _element_total(original) == 7
     saved = client.get(f"/api/sessions/{session['id']}").json()
@@ -857,7 +870,7 @@ def test_a_drawing_without_simplifies_is_not_compared(make_client):
             assert self.chat is not None
             submission = submit_whiteboard(
                 kwargs["session_id"],
-                drawing,
+                agent_drawing(drawing),
                 failures=0,
                 store=self.chat.create_whiteboard,
             )
@@ -873,7 +886,7 @@ def test_a_drawing_without_simplifies_is_not_compared(make_client):
     streamed = _streamed(events)
     assert len(streamed) == 1
     assert streamed[0]["id"] == "wb-2"
-    assert streamed[0]["version"] == 4
+    assert streamed[0]["version"] == CURRENT_DRAWING_VERSION
     assert "simplifies" not in streamed[0]
     assert _element_total(streamed[0]) == 7
     saved = client.get(f"/api/sessions/{session['id']}").json()
