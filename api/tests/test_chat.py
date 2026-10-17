@@ -750,3 +750,105 @@ def test_naming_leaves_an_ended_session_as_it_was(make_client):  # CH-08
 
     assert client.get(f"/api/sessions/{session['id']}").json() == before
     assert before["ended"] is True
+
+
+def _rows(client, sql: str, *args: object) -> list[tuple]:
+    chat = client.app.state.chat
+    return chat._with_db(lambda conn: [tuple(row) for row in conn.execute(sql, args)])
+
+
+def test_deleting_a_session_removes_it_and_what_was_made_in_it(make_client):  # CH-11, CH-12
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+    board = client.post(f"/api/sessions/{session['id']}/whiteboards")
+    assert board.status_code == 201
+    other = client.post("/api/sessions").json()
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.status_code == 200
+    ids = [listed["id"] for listed in client.get("/api/sessions").json()["sessions"]]
+    assert ids == [other["id"]]
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+    assert _rows(client, "SELECT id FROM turns WHERE session_id = ?", session["id"]) == []
+    assert _rows(client, "SELECT id FROM artifacts WHERE session_id = ?", session["id"]) == []
+    assert _rows(client, "SELECT id FROM whiteboards") == []
+
+
+def test_deleting_keeps_the_profile(make_client):  # CH-12
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like step-by-step walkthroughs")
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.json() == {"id": session["id"], "facts_saved": True}
+    assert client.get("/api/profile").json() == {"facts": ["likes step-by-step walkthroughs"]}
+    assert _rows(client, "SELECT id FROM fact_evidence") == []
+    assert _rows(client, "SELECT id FROM profile_passes") == []
+
+
+def test_deleting_the_open_session_ends_it_first(make_client):  # CH-13
+    writer = StubPass()
+    client, agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like pictures")
+
+    client.delete(f"/api/sessions/{session['id']}")
+
+    assert writer.calls == [(("I like pictures",), ())]
+    assert agent.closed == [session["id"]]
+
+
+def test_deleting_stops_a_reply_in_progress(make_client):  # CH-14
+    agent = GatedAgent()
+    client, _agent = make_client(agent)
+    chat = client.app.state.chat
+    session = client.post("/api/sessions").json()
+
+    async def scenario() -> None:
+        seen: list[object] = []
+
+        async def consume() -> None:
+            async for item in chat.stream_reply(session["id"], "Tell me more"):
+                seen.append(item)
+
+        reply = asyncio.create_task(consume())
+        while not seen:
+            await asyncio.sleep(0.01)
+        deleting = asyncio.create_task(chat.delete_session(session["id"]))
+        await asyncio.sleep(0.05)
+        agent.release.set()
+        await deleting
+        await reply
+
+    asyncio.run(scenario())
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert _rows(client, "SELECT id FROM turns") == []
+
+
+def test_deleting_an_unknown_session_is_not_found(make_client):  # CH-17
+    client, _agent = make_client()
+
+    assert client.delete("/api/sessions/nope").status_code == 404
+
+
+def test_a_failed_profile_pass_does_not_block_deleting(make_client):  # CH-16
+    class ExplodingPass:
+        async def run(self, *, turns, facts):
+            del turns, facts
+            raise RuntimeError("pass failed")
+
+    client, _agent = make_client(profile_pass=ExplodingPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"id": session["id"], "facts_saved": False}
+    assert client.get("/api/sessions").json() == {"sessions": []}

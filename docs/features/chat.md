@@ -14,6 +14,13 @@ CH-07  A name is trimmed and at most 80 characters. A blank name removes it.
 CH-08  Naming a session changes its label only. It does not open or end the session, add a turn, or stop a reply in progress. The agent and the profile pass never read it.
 CH-09  The reply text is drawn from a small Markdown subset: headings, numbered and bulleted lists, paragraphs, bold, key terms (`==term==`), struck text (`~~text~~`), inline code, code blocks with syntax colors when they name a language, tables, quotes, callouts (`> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`), maths (`$...$` and `$$...$$`), and web links. Anything else is shown as plain text, and italic is never shown.
 CH-10  Raw HTML in a reply is shown as text and never rendered. Only http and https links become links. Maths that cannot be read is shown as its source.
+CH-11  The learner can delete a session from its row in the session list, after one confirmation. The confirmation names the session, says it cannot be undone, and says the profile keeps what it learned.
+CH-12  Deleting removes the session, its turns, and the whiteboards, quizzes, and animation jobs made in it. Nothing is archived and there is no undo. The profile is not changed by the delete.
+CH-13  The learner can delete the session they have open. It ends first (CH-05), and then a new empty session opens.
+CH-14  A reply or animation job still running in the session is stopped before it is deleted. A write that arrives for a deleted session is dropped.
+CH-15  A learner can delete only their own sessions. An anonymous session can be deleted too.
+CH-16  In a signed-in session, deleting waits for the profile pass on it to finish (PR-05). If the pass fails, the session is still deleted and the learner is told that its facts were not saved.
+CH-17  Opening a session that no longer exists tells the learner so and opens a new empty session.
 
 Profile rules PR-01, PR-02, and PR-03 apply before a teaching reply. While an animation job runs, AN-02 and AN-03 apply in the chat.
 
@@ -78,3 +85,53 @@ Scenario: raw HTML stays text  [CH-10]
   Given the reply contains <img src=x onerror=alert(1)>
   When the reply is shown
   Then no image is drawn and the learner sees the text as written
+
+Scenario: deleting a session removes it  [CH-11, CH-12]
+  Given the learner has a session with turns and a quiz
+  When they delete it from the session list and confirm
+  Then it is gone from the list
+  And reopening it finds no turns and no quiz
+
+Scenario: the confirmation can be cancelled  [CH-11]
+  Given the learner chose to delete a session
+  When they cancel the confirmation
+  Then the session is still there with the same turns
+
+Scenario: deleting keeps the profile  [CH-12]
+  Given a signed-in session whose pass stored a fact
+  When the learner deletes that session
+  Then the fact is still in the profile
+
+Scenario: deleting the open session opens a new one  [CH-13]
+  Given the learner is in a session
+  When they delete it
+  Then the session has ended and the pass has run
+  And a new empty session is open
+
+Scenario: deleting stops a reply in progress  [CH-14]
+  Given the agent is still producing a reply
+  When the learner deletes the session
+  Then the reply stops and the session is gone
+  And no turn is saved for it later
+
+Scenario: another learner's session cannot be deleted  [CH-15]
+  Given a session that belongs to another learner
+  When a delete is requested for it
+  Then it is refused and the session is unchanged
+
+Scenario: an anonymous session can be deleted  [CH-15]
+  Given an anonymous session
+  When the learner deletes it
+  Then it is gone and no profile pass runs
+
+Scenario: a failed pass does not block the delete  [CH-16]
+  Given a signed-in session whose profile pass fails
+  When the learner deletes it
+  Then the session is deleted
+  And the learner is told its facts were not saved
+
+Scenario: opening a deleted session  [CH-17]
+  Given a session deleted in another tab
+  When the learner opens it from a stale list
+  Then they are told it no longer exists
+  And a new empty session opens

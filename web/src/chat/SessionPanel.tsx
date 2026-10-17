@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Ellipsis, Pencil, Settings } from 'lucide-react'
+import { Ellipsis, Pencil, Settings, Trash2 } from 'lucide-react'
 import { ApiError, sessionLabel } from '../api.ts'
 import type { SessionSummary } from '../api.ts'
+import { DeleteDialog } from './DeleteDialog.tsx'
 import { DropdownMenu } from './Menu.tsx'
 import { RenameDialog } from './RenameDialog.tsx'
 import { CloseIcon, EmptyState, IconButton } from './ui.tsx'
@@ -15,6 +16,7 @@ type SessionPanelProps = {
   onStart: () => void
   onOpen: (sessionId: string) => void
   onRename: (sessionId: string, name: string) => Promise<void>
+  onDelete: (sessionId: string) => Promise<void>
   onOpenSettings: () => void
 }
 
@@ -27,6 +29,7 @@ export function SessionPanel({
   onStart,
   onOpen,
   onRename,
+  onDelete,
   onOpenSettings,
 }: SessionPanelProps) {
   // The session being renamed stays set while the dialog fades out.
@@ -34,6 +37,9 @@ export function SessionPanel({
   const [renaming, setRenaming] = useState(false)
   const [value, setValue] = useState('')
   const [renameError, setRenameError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteBusy, setDeleteBusy] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   function startRename(session: SessionSummary) {
     setTarget(session)
@@ -53,6 +59,29 @@ export function SessionPanel({
           ? caught.message
           : "Couldn't rename the session. Check your connection and try again.",
       )
+    }
+  }
+
+  function startDelete(session: SessionSummary) {
+    setTarget(session)
+    setDeleteError(null)
+    setDeleting(true)
+  }
+
+  async function confirmDelete() {
+    if (!target || deleteBusy) return
+    setDeleteBusy(true)
+    try {
+      await onDelete(target.id)
+      setDeleting(false)
+    } catch (caught) {
+      setDeleteError(
+        caught instanceof ApiError
+          ? caught.message
+          : "Couldn't delete the session. Check your connection and try again.",
+      )
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -113,6 +142,13 @@ export function SessionPanel({
                     icon: <Pencil size={20} strokeWidth={2} aria-hidden="true" />,
                     onSelect: () => startRename(session),
                   },
+                  {
+                    id: 'delete',
+                    label: 'Delete',
+                    icon: <Trash2 size={20} strokeWidth={2} aria-hidden="true" />,
+                    destructive: true,
+                    onSelect: () => startDelete(session),
+                  },
                 ]}
               >
                 <Ellipsis size={20} strokeWidth={2} aria-hidden="true" />
@@ -137,6 +173,13 @@ export function SessionPanel({
         }}
         onSave={() => void saveRename()}
         onCancel={() => setRenaming(false)}
+      />
+      <DeleteDialog
+        open={deleting}
+        label={target ? sessionLabel(target) : ''}
+        error={deleteError}
+        onDelete={() => void confirmDelete()}
+        onCancel={() => setDeleting(false)}
       />
     </nav>
   )

@@ -1,11 +1,13 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import {
+  ApiError,
   createWhiteboard,
   getSession,
   leaveSession,
   listSessions,
   listWhiteboards,
+  deleteSession,
   renameSession,
   sessionLabel,
   openSession,
@@ -333,6 +335,18 @@ function App() {
     )
   }
 
+  async function onDelete(sessionId: string) {
+    const deleted = await deleteSession(sessionId)
+    setSessions((current) => current.filter((session) => session.id !== sessionId))
+    if (!deleted.facts_saved) {
+      showToast("Deleted. Polaris couldn't save what it learned from that session.")
+    }
+    if (open?.id === sessionId) {
+      setOpen(null)
+      await onStart()
+    }
+  }
+
   async function loadSessions() {
     setError(null)
     setLoading(true)
@@ -426,6 +440,11 @@ function App() {
       await refresh()
       closeDrawerIfPhone()
     } catch (caught) {
+      if (caught instanceof ApiError && caught.status === 404) {
+        showToast('That session no longer exists.')
+        await onStart()
+        return
+      }
       setError(
         errorText(
           caught,
@@ -784,6 +803,7 @@ function App() {
           onStart={() => void onStart()}
           onOpen={(sessionId) => void onOpen(sessionId)}
           onRename={onRename}
+          onDelete={onDelete}
           onOpenSettings={() => {
             goTo(SETTINGS_PATH)
             if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)

@@ -11,7 +11,11 @@ afterEach(() => {
 const unnamed: SessionSummary = { id: 'a', ended: false, name: '', preview: 'What is a fraction?' }
 const named: SessionSummary = { id: 'b', ended: true, name: 'Fractions', preview: 'Older' }
 
-function panel(onRename: (id: string, name: string) => Promise<void>, sessions = [unnamed, named]) {
+function panel(
+  onRename: (id: string, name: string) => Promise<void>,
+  sessions = [unnamed, named],
+  onDelete: (id: string) => Promise<void> = async () => {},
+) {
   return render(
     <SessionPanel
       sessions={sessions}
@@ -22,6 +26,7 @@ function panel(onRename: (id: string, name: string) => Promise<void>, sessions =
       onStart={() => {}}
       onOpen={() => {}}
       onRename={onRename}
+      onDelete={onDelete}
       onOpenSettings={() => {}}
     />,
   )
@@ -89,4 +94,57 @@ test('a failed save keeps the dialog open and says why', async () => {
 
   expect((await screen.findByRole('alert')).textContent).toContain('at most 80 characters')
   expect(screen.getByRole('dialog', { name: 'Rename session' })).toBeTruthy()
+})
+
+async function openDelete(label: string) {
+  fireEvent.click(screen.getByRole('button', { name: `Actions for ${label}` }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }))
+  return screen.findByRole('alertdialog', { name: 'Delete this session?' })
+}
+
+test('delete asks first, names the session, and says the profile keeps its facts', async () => {
+  const onDelete = vi.fn(async () => {})
+  panel(async () => {}, [unnamed, named], onDelete)
+
+  const dialog = await openDelete('Fractions')
+
+  expect(dialog.textContent).toContain('Fractions')
+  expect(dialog.textContent).toContain('can’t be undone')
+  expect(dialog.textContent).toContain('stays in your profile')
+  expect(onDelete).not.toHaveBeenCalled()
+})
+
+test('confirming deletes that session', async () => {
+  const onDelete = vi.fn(async () => {})
+  panel(async () => {}, [unnamed, named], onDelete)
+
+  await openDelete('Fractions')
+  fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+
+  await waitFor(() => expect(onDelete).toHaveBeenCalledWith('b'))
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+})
+
+test('cancelling a delete changes nothing', async () => {
+  const onDelete = vi.fn(async () => {})
+  panel(async () => {}, [unnamed, named], onDelete)
+
+  await openDelete('Fractions')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+  await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+  expect(onDelete).not.toHaveBeenCalled()
+})
+
+test('a failed delete keeps the dialog open and says so', async () => {
+  const onDelete = vi.fn(async () => {
+    throw new Error('network')
+  })
+  panel(async () => {}, [unnamed, named], onDelete)
+
+  await openDelete('Fractions')
+  fireEvent.click(screen.getByRole('button', { name: 'Delete session' }))
+
+  expect((await screen.findByRole('alert')).textContent).toContain("Couldn't delete the session")
+  expect(screen.getByRole('alertdialog', { name: 'Delete this session?' })).toBeTruthy()
 })

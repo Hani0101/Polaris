@@ -6,6 +6,7 @@ The teaching agent does not write the profile. The session-end pass does.
 import asyncio
 import json
 import re
+import shutil
 import sqlite3
 import threading
 import uuid
@@ -13,6 +14,8 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from claude_agent_sdk import delete_session
 
 from polaris.agent import ReplyAgent, ReplyResult
 from polaris.animation import (
@@ -231,6 +234,8 @@ class Chat:
         self.profile_path = data_dir / "profile.json"
         self._lock = threading.Lock()
         self._busy: set[str] = set()
+        # Sessions being deleted (CH-14): a reply running in one stops and saves nothing.
+        self._deleting: set[str] = set()
         # session id -> the learner's message of the turn now running, so an
         # animation job started in that turn can route on what was asked.
         self._turn_messages: dict[str, str] = {}
@@ -414,6 +419,88 @@ class Chat:
         self._with_db(write)
         return {"id": session_id, "name": text}
 
+    async def delete_session(self, session_id: str) -> dict[str, object]:
+        """Delete a session and everything made in it (CH-11 to CH-16).
+
+        Stops a reply in progress, ends the session if it is open and waits for
+        its profile pass, then removes it. The profile keeps its facts. Returns
+        whether the pass kept the facts from this session.
+        """
+
+        row = await asyncio.to_thread(self._require, session_id)
+        self._deleting.add(session_id)
+        try:
+            await self.agent.close_session(session_id)
+            for _ in range(100):
+                if session_id not in self._busy:
+                    break
+                await asyncio.sleep(0.1)
+            facts_saved = True
+            if row["ended_at"] is None:
+                await asyncio.to_thread(self.leave, session_id)
+                await self.run_profile_pass(session_id)
+                facts_saved = await asyncio.to_thread(self._last_pass_kept, session_id)
+            sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
+            job_ids = await asyncio.to_thread(self._delete_rows, session_id)
+            for job_id in job_ids:
+                shutil.rmtree(self.data_dir / "animation" / job_id, ignore_errors=True)
+            if sdk_session_id:
+                try:
+                    delete_session(sdk_session_id)
+                except (FileNotFoundError, ValueError):
+                    pass
+            return {"id": session_id, "facts_saved": facts_saved}
+        finally:
+            self._deleting.discard(session_id)
+
+    def _last_pass_kept(self, session_id: str) -> bool:
+        def read(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                """
+                SELECT status FROM profile_passes
+                WHERE session_id = ?
+                ORDER BY started_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            return row is None or row["status"] != "failed"
+
+        return self._with_db(read)
+
+    def _delete_rows(self, session_id: str) -> list[str]:
+        """Remove the session's rows. A fact stays, without evidence from here (CH-12)."""
+
+        def write(conn: sqlite3.Connection) -> list[str]:
+            job_ids = [
+                row["id"]
+                for row in conn.execute(
+                    """
+                    SELECT j.id FROM animation_jobs j
+                    JOIN artifacts a ON a.id = j.id
+                    WHERE a.session_id = ?
+                    """,
+                    (session_id,),
+                ).fetchall()
+            ]
+            artifacts = "SELECT id FROM artifacts WHERE session_id = ?"
+            conn.execute("DELETE FROM fact_evidence WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM profile_passes WHERE session_id = ?", (session_id,))
+            for table in ("quizzes", "whiteboards", "animation_jobs"):
+                conn.execute(f"DELETE FROM {table} WHERE id IN ({artifacts})", (session_id,))
+            conn.execute("DELETE FROM artifacts WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
+            conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            return job_ids
+
+        job_ids = self._with_db(write)
+        with self._lock:
+            self._pending.pop(session_id, None)
+            self._mark_rollbacks.pop(session_id, None)
+            self._extension_rollbacks.pop(session_id, None)
+            self._animation_notices.pop(session_id, None)
+        return job_ids
+
     def get(self, session_id: str) -> dict[str, object]:
         self._require(session_id)
         return self._payload(session_id)
@@ -530,6 +617,8 @@ class Chat:
                 animations=animations,
                 animation_step=animation_step,
             ):
+                if session_id in self._deleting:
+                    return
                 if isinstance(item, ReplyResult):
                     captured = item.sdk_session_id
                     continue

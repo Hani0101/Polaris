@@ -261,6 +261,10 @@ def create_app(
     def rename_session(session_id: str, body: NameBody) -> dict[str, object]:
         return chat.rename(session_id, body.name)
 
+    @app.delete("/api/sessions/{session_id}")
+    async def delete_session(session_id: str) -> dict[str, object]:
+        return await chat.delete_session(session_id)
+
     @app.post("/api/sessions/{session_id}/open")
     async def open_session(session_id: str) -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.open, session_id)

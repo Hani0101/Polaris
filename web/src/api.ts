@@ -328,6 +328,15 @@ export function renameSession(sessionId: string, name: string): Promise<{ name: 
   })
 }
 
+export function deleteSession(
+  sessionId: string,
+): Promise<{ id: string; facts_saved: boolean }> {
+  return request<{ id: string; facts_saved: boolean }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' },
+  )
+}
+
 export function readProfile(signal?: AbortSignal): Promise<string[]> {
   return request<{ facts: string[] }>('/api/profile', { signal }).then((body) => body.facts)
 }
