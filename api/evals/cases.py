@@ -11,12 +11,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from polaris.animation_format import check_animation
 from polaris.animation_writer import ClaudeAnimationWriter
 from polaris.models import FactChange, Profile, Turn
 from polaris.profile import apply_changes, load_profile
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import InvalidQuiz, normalize_spec
-from polaris.sandbox import run as sandbox_run
 from polaris.teaching import (
     CREATE_QUIZ_TOOL,
     DRAW_WHITEBOARD_TOOL,
@@ -361,12 +361,6 @@ WRITER_BRIEF = (
     "A speed bar under the pendulum grows and shrinks with the speed. "
     "Captions name each step in plain words."
 )
-_NETWORK_LOAD = re.compile(
-    r"""((src|href)\s*=\s*["']?\s*(https?:)?//|@import\s+(url\()?\s*["']?https?:|url\(\s*["']?https?:)""",
-    re.I,
-)
-
-
 async def animation_brief(data_dir: Path, sample: Sample) -> None:
     run = TeachingRun(data_dir, STRUGGLE_FACTS)
     try:
@@ -392,26 +386,17 @@ async def animation_writer(data_dir: Path, sample: Sample) -> None:
     log = CallLog()
     writer = ClaudeAnimationWriter(data_dir / "claude-work", query_fn=recording_query(log))
     try:
-        code = await writer.write(WRITER_BRIEF, failed_code=None, error=None)
+        data = await writer.write(WRITER_BRIEF, failed_data=None, errors=None)
     finally:
         sample.cost_usd += log.cost_usd
         sample.models |= log.models
     sample.note("brief", WRITER_BRIEF)
-    sample.note("code (first 1500 chars)", code[:1500])
-    job_dir = data_dir / "job"
-    result = sandbox_run(code, work_dir=job_dir)
-    sample.check("AN-04 first script runs in the sandbox", result.ok, result.error or "")
-    page = job_dir / "animation.html"
-    sample.check("AN-05 first script writes animation.html", page.is_file())
-    if not page.is_file():
-        sample.check("AN-04 animation.html loads nothing from the network", None, "no file")
-        return
-    html = page.read_text(encoding="utf-8", errors="replace")
-    found = _NETWORK_LOAD.search(html)
+    sample.note("data (first 1500 chars)", json.dumps(data)[:1500])
+    checked = check_animation({**data, "id": "eval"})
     sample.check(
-        "AN-04 animation.html loads nothing from the network",
-        found is None,
-        f"found {found.group(0)!r}" if found else f"{len(html)} chars",
+        "AN-10 first animation data passes the check",
+        checked.animation is not None,
+        "; ".join(checked.errors[:5]),
     )
 
 
@@ -515,7 +500,7 @@ CASES: tuple[Case, ...] = (
     Case("wb-graph", "WB-05, WB-06, WB-13", "Function uses a graph element", wb_graph),
     Case("quiz", "QZ-05, QZ-10", "Created quiz passes the stored-quiz checks", quiz),
     Case("an-brief", "AN-04", "Animation brief contains no code", animation_brief),
-    Case("an-writer", "AN-04, AN-05", "Writer's first script writes animation.html in the sandbox", animation_writer),
+    Case("an-writer", "AN-04, AN-10", "Writer's first animation data passes the check", animation_writer),
     Case("pr08-exact", "PR-08", "Pass does not ADD a stored fact again (exact repeat)", pr08_exact),
     Case("pr08-reworded", "PR-08", "Pass does not ADD a stored fact again (reworded repeat)", pr08_reworded),
 )
