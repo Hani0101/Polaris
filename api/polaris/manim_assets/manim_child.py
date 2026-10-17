@@ -38,7 +38,7 @@ FRAME_WIDTH = FRAME_HEIGHT * 4 / 3
 # Everything visible stays inside the frame by more than this.
 EDGE_TOLERANCE = 0.02
 # Overlap of two text boxes, as a share of the smaller box, that counts.
-OVERLAP_SHARE = 0.04
+OVERLAP_SHARE = 0.0
 MIN_FONT_SIZE = 40
 MAX_STEPS = 10
 MAX_CAPTION = 140
