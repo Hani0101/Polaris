@@ -213,3 +213,14 @@ def test_a_manim_job_plays_in_steps_and_later_turns_see_it(make_client):
     assert "A circle appears." in prompt
     assert f"step 2 of 2 of animation {job['id']}" in prompt
 
+
+
+def test_a_line_through_a_label_is_a_warning(tmp_path: Path):
+    code = GOOD_SCENE.replace(
+        '        self.play(Write(label), run_time=0.5)',
+        '        line = Line(label.get_left() + LEFT, label.get_right() + RIGHT, color=INK)\n'
+        '        self.play(Write(label), Create(line), run_time=0.5)',
+    )
+    result = render(code, tmp_path / "out", quality=PREVIEW)
+    assert result.ok, result.errors
+    assert any("Line runs through Text 'circle'" in warning for warning in result.warnings)

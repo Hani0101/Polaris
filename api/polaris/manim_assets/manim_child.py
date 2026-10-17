@@ -207,7 +207,7 @@ def _run(request: dict, out_dir: Path, report: dict) -> None:
     seen_issues: set[str] = set()
     frames_dir = out_dir / "frames"
     frames_dir.mkdir(exist_ok=True)
-    probe = _Probe(np, scene_path, issues, seen_issues)
+    probe = _Probe(np, scene_path, issues, seen_issues, report["warnings"])
 
     scene_class = scenes[0]
 
@@ -373,8 +373,11 @@ def _describe_exception(error: BaseException, scene_path: str) -> str:
 class _Probe:
     """Layout checks after each animation."""
 
-    def __init__(self, np, scene_path: Path, issues: list[str], seen: set[str]) -> None:
+    def __init__(
+        self, np, scene_path: Path, issues: list[str], seen: set[str], warnings: list[str]
+    ) -> None:
         self.np = np
+        self.warnings = warnings
         self.scene_path = str(scene_path)
         self.issues = issues
         self.seen = seen
@@ -388,15 +391,25 @@ class _Probe:
         half_h = scene.camera.frame_height / 2 if hasattr(scene.camera, "frame_height") else FRAME_HEIGHT / 2
         center = self._camera_center(scene)
         texts: list[tuple[str, tuple[float, float, float, float]]] = []
+        strokes: list[tuple[str, object]] = []
         for mobject in scene.mobjects:
-            self._walk(mobject, texts, center, half_w, half_h, where)
+            self._walk(mobject, texts, center, half_w, half_h, where, strokes)
+        for text_name, box in texts:
+            for stroke_name, points in strokes:
+                if _crosses(points, box, self.np):
+                    warning = (
+                        f"Step {step_number}: a {stroke_name} runs through {text_name}; "
+                        "move the label beside it."
+                    )
+                    if warning not in self.warnings:
+                        self.warnings.append(warning)
         for index, (name_a, box_a) in enumerate(texts):
             for name_b, box_b in texts[index + 1 :]:
                 share = _overlap_share(box_a, box_b)
                 if share > OVERLAP_SHARE:
                     self._add(f"In {where}: text {name_a} overlaps text {name_b}.")
 
-    def _walk(self, mobject, texts, center, half_w, half_h, where) -> None:
+    def _walk(self, mobject, texts, center, half_w, half_h, where, strokes) -> None:
         name = type(mobject).__name__
         if name in NOT_DRAWN:
             return
@@ -442,8 +455,12 @@ class _Probe:
                     f"use at least {MIN_FONT_SIZE} so it reads on a phone."
                 )
             return
+        if not mobject.submobjects:
+            line = _stroke_points(mobject, self.np)
+            if line is not None:
+                strokes.append((name, line))
         for child in mobject.submobjects:
-            self._walk(child, texts, center, half_w, half_h, where)
+            self._walk(child, texts, center, half_w, half_h, where, strokes)
 
     def composition(self, scene, step_number: int, report: dict) -> None:
         """Warn when the end of a step uses only a small part of the frame."""
@@ -537,6 +554,44 @@ def _member_visible(member, np) -> bool:
     stroke_max = float(np.max(stroke)) if len(stroke) else 0.0
     stroke_width = getattr(member, "stroke_width", 1) or 0
     return fill_max > 0.05 or (stroke_max > 0.05 and stroke_width > 0)
+
+
+def _stroke_points(mobject, np):
+    """Points along a visible stroke, or None. Filled shapes count by their edge."""
+
+    points = getattr(mobject, "points", None)
+    if points is None or len(points) < 4 or (getattr(mobject, "stroke_width", 0) or 0) <= 0:
+        return None
+    try:
+        opacity = float(np.max(mobject.get_stroke_opacities()))
+    except Exception:  # noqa: BLE001
+        return None
+    if opacity < 0.2:
+        return None
+    # Cubic Bezier anchors and handles in groups of four; sample each curve.
+    count = len(points) // 4 * 4
+    curves = points[:count].reshape(-1, 4, 3)
+    t = np.linspace(0, 1, 12)[:, None]
+    samples = [
+        ((1 - t) ** 3) * c[0] + 3 * ((1 - t) ** 2) * t * c[1] + 3 * (1 - t) * t**2 * c[2] + t**3 * c[3]
+        for c in curves
+    ]
+    return np.concatenate(samples)[:, :2]
+
+
+def _crosses(points, box, np) -> bool:
+    """True when the stroke passes through the inner part of a text box."""
+
+    x0, y0, x1, y1 = box
+    shrink_x = (x1 - x0) * 0.15
+    shrink_y = (y1 - y0) * 0.15
+    inside = (
+        (points[:, 0] > x0 + shrink_x)
+        & (points[:, 0] < x1 - shrink_x)
+        & (points[:, 1] > y0 + shrink_y)
+        & (points[:, 1] < y1 - shrink_y)
+    )
+    return bool(np.any(inside))
 
 
 def _text_opacity(mobject, np) -> float:
