@@ -1,7 +1,7 @@
 # Design system: polaris-design
 
 Status: In progress
-Last updated: 2026-10-16
+Last updated: 2026-10-18
 Tokens file: tokens.json
 Banned defaults: banned.md
 
@@ -192,6 +192,8 @@ Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), 
 - With a picked pen or board color, the learner is responsible for visibility. Nothing changes automatically. Why: not given.
 - The amber accent is never a pen color. Why: keeps the accent for the app's own highlights, and `#f08a4b` is 2.4:1 on the light board.
 - Parts the agent adds beside the learner's drawing on a pinned board are drawn in pen box 1 (the tutor's pen) with a dashed line, whatever stroke they were sent with. Marks stay red and dashed. Why: the learner's pens are always solid, so the dash tells the agent's parts from theirs, and an explanation does not look like a correction (WB-20).
+- The learner chooses the mode on the Settings page: System, Light, or Dark. System follows the operating system. Every token has both a Light and a Dark value, so no screen is built for one mode only. Why: the learner decides how the screen looks, and both palettes are checked in 2.2 (ST-02, ST-03).
+- Whiteboard tokens do not change with the mode. A new board opens on `color.whiteboard.board.default`, which is the one board token that differs by mode, and a board that exists is never recolored. Why: recoloring a board would change what the learner drew (WB-22).
 - `color.code.*` is used only for syntax colors inside code blocks in tutor replies, on `color.bg.subtle`. Inline code and the rest of the app never use it. Why: the code colors carry no meaning outside code, so they stay out of the way of the accent and the state colors.
 - Syntax color is never the only cue in code: keywords are also bold. Why: color alone fails people with color blindness.
 
@@ -354,6 +356,7 @@ Shadows allowed: no
 ### 6.5 Layout rules
 - The app is three panels: the session list on the left (`layout.panel.left`), the chat in the middle, tools on the right (`layout.panel.right`). The left and right panels can be closed. The chat is always visible and stops at `layout.maxWidth.chat`. Why: not given.
 - The 12-column grid is used for full pages (settings), which stop at `layout.maxWidth.content`. Why: not given.
+- The Settings page is a full page with a Back button (ghost, with a back icon) and the title "Settings" in `typography.label` at the top, and one column below at `layout.maxWidth.chat`, centered, text left-aligned, with `space.section.gap` between sections. Each section has a heading and its controls. Below `breakpoint.sm` the margins are `layout.page.marginPhone`. Why: one section today, so the 12-column grid has nothing to divide; the column matches the quiz page (ST-01, ST-11).
 - The expanded quiz page is one column at `layout.maxWidth.chat`, centered, with the title above the card in the same column and the card kept at the top of the page, not centered vertically. Text stays left-aligned. Why: a column that hugs the left edge leaves the page feeling empty, and a vertically centered card would jump when the feedback opens.
 - From `breakpoint.md` up: all three panels. From `breakpoint.lg` up, the tools panel is `layout.panel.rightWide`. Why: not given.
 - From `breakpoint.sm` to below `breakpoint.md`: chat plus the tools panel. The session list is the menu button, as on phones. Why: not given.
@@ -635,6 +638,7 @@ States (all variants):
 #### Checkbox and radio rules
 - Chosen always means an amber fill with a mark in `color.text.onAccent`, for both checkbox and radio. Why: one rule for both, and a filled box is easy to tell apart from an empty one.
 - The label is tappable and part of the 44px tap area. Why: a 24px box alone is a small target.
+- A radio group has a visible name above it in `typography.label` (a legend for screen readers), its radios stacked with `space.form.fieldGap` between them, and a short helper under a label in `typography.small` and `color.text.secondary` when the choice needs explaining. Why: the group is named once and each choice is heard with its group. The Appearance setting is one: "System" (helper: "Follows your device"), "Light", and "Dark" (ST-02, ST-11).
 
 ### Chat input
 Purpose: where the learner types to the tutor. One box holding the + tools button, the text, and Send. Not for other forms: use the text input.
@@ -1020,6 +1024,7 @@ States:
 
 #### Side panel rules
 - Closing a panel gives its space to the chat. A button in the top bar opens it again. Why: not given.
+- The left panel ends with a footer: a 1px subtle line above it, then a Settings button (ghost, with the Lucide settings icon at `component.icon.size.md` and the label "Settings"), full width, at least `component.tapTarget.min` tall. The footer stays at the bottom while the session list scrolls. On phones it is the bottom of the drawer. Why: Settings is reachable from every screen without a new top bar item (ST-01).
 
 ### Tabs
 Purpose: switches between views in the same place, such as Whiteboard, Quiz, and Artifacts in the tools panel.

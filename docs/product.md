@@ -22,6 +22,7 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 - Quiz, graded against a stored answer key. It starts in the chat, and the learner can expand it onto its own page.
 - Animation. A later long-running job uses the same notice rules as animation (AN-02, AN-03, AN-07, AN-08).
 - Artifacts: a stored whiteboard, quiz, or animation, reopened from the session that created it
+- Settings, with one section for now: the appearance mode (System, Light, or Dark), kept in the browser. See [Settings](features/settings.md).
 
 Success for this scope is a correct explanation, an animation that plays, a quiz whose score matches the stored key, and evals that pass.
 

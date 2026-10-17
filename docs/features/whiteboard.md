@@ -32,6 +32,8 @@ WB-19  A whiteboard the learner creates or opens is pinned above the conversatio
 WB-20  The agent can add its own parts to the pinned board, as a new step, next to what the learner drew. It never changes or deletes the learner's parts or comments. The learner can tell the agent's parts from their own, as with marks (WB-09).
 WB-21  A save of the learner's drawing never removes a part the agent added, including one added after the learner's browser last loaded the board.
 
+WB-22  A new whiteboard opens on the board color for the current appearance mode: white in Light, night in Dark. With System, the operating system's setting decides. A whiteboard that already exists keeps its colors when the mode changes, and its pens follow its board as before.
+
 WB-07, WB-14, and WB-15 are kept for later rules: replay step by step, the learner finishing a drawing, and undo history.
 
 A drawing that contains a math or code element is version 5 and includes a description, under the same rules as version 4. `check_drawing` still accepts versions 2, 3, 4, and 5. A version 5 drawing with no math or code is allowed when the description is valid. Marks and a simpler redraw keep working on version 5. Version 2, 3, and 4 drawings with no math or code still open.
@@ -236,6 +238,17 @@ Scenario: a stale save keeps the agent's parts  [WB-21]
   Given the agent added a step after the learner's browser loaded the board
   When the learner's browser saves its older copy
   Then the agent's step is still on the board
+
+Scenario: a new board follows the mode  [WB-22]
+  Given the appearance mode is Dark
+  When the learner creates a whiteboard
+  Then it opens on the night board color
+  And when the mode is Light, a board made then opens on the white board color
+
+Scenario: switching the mode leaves a board alone  [WB-22]
+  Given a whiteboard on the white board color with the learner's drawing
+  When the learner switches the mode to Dark
+  Then the board keeps its white color and every mark keeps its color
 
 ## Open questions
 

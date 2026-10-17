@@ -27,6 +27,7 @@ AN-18  The learner can turn on narration, which reads each caption aloud with a 
 AN-19  While a job runs, the learner can see which stage it is in: writing, checking, or fixing.
 AN-20  The animation fits a phone screen from 320px wide, with no horizontal scroll, and every control is at least a 44px tap target.
 AN-21  Before the writer starts, a small evaluation reads the learner's message and the brief and picks the engine: Manim for a maths problem or a heavy graph, Lottie for everything else. If the evaluation fails, a keyword check picks. Routing never fails a job.
+AN-22  A video animation made by Manim keeps its own colors in Light and in Dark, since they are fixed when it is rendered. A data animation follows the appearance mode through its color roles (AN-14).
 
 ## Engines
 
@@ -160,6 +161,12 @@ Scenario: an animation may use its own colours  [AN-14]
   When the learner opens the animation
   Then the player paints that background behind every scene
   And the text on it keeps a contrast of at least 4.5:1
+
+Scenario: a video keeps its colors in Light  [AN-22]
+  Given a finished Manim video with a dark background
+  When the appearance mode is Light
+  Then the video plays with the same dark background
+  And its captions and controls use the Light colors
 
 Scenario: maths goes to Manim, the rest to Lottie  [AN-21]
   Given the learner asked "Show me the derivative as the slope of a tangent"

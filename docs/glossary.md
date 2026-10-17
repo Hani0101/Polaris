@@ -68,6 +68,10 @@ _Avoid_: graded quiz, completed quiz
 A short sentence stored with a wrong choice on a quiz. It says why a learner might pick that choice and why it is wrong. It is part of the answer key.
 _Avoid_: note, hint, distractor
 
+**Appearance mode**:
+The learner's choice of System, Light, or Dark colors. It is kept in the browser, not on the profile.
+_Avoid_: theme, skin, dark mode (as the name of the setting)
+
 **Animation**:
 A moving explanation the learner can watch.
 _Avoid_: illustration, video
