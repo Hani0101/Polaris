@@ -95,6 +95,14 @@ export const agentMarkLook = {
   fill: whiteboardMarks.open,
 } as const
 
+// Parts the agent added beside the learner's drawing (WB-20): the tutor's pen,
+// box 1, dashed. The learner only draws solid lines, so the dash tells them
+// apart; red stays for marks.
+export const agentAddedLook = {
+  color: 'black',
+  dash: 'dashed',
+} as const
+
 export type MappedStyle = {
   color: (typeof SOLID_COLORS)[number]['name']
   fill: typeof whiteboardMarks.filled | typeof whiteboardMarks.open

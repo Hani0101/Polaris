@@ -33,11 +33,13 @@ class ReplyAgent(Protocol):
         picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
+        pinned: Whiteboard | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
 
         quizzes are the learner-visible payloads of this session's quizzes.
-        Chat passes picture only when the learner's turn carries one.
+        Chat passes picture only when the learner's turn carries one, and
+        pinned only while a board is pinned above the conversation (WB-19).
         """
 
     async def close_session(self, session_id: str) -> None:

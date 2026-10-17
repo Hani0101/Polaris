@@ -1,0 +1,56 @@
+/* Drag dividers for the side panels and the pinned whiteboard. Laptops only (1024px up);
+   DESIGN.md has no resize rule yet, so these use the border tokens. */
+
+.resize-handle {
+  display: none;
+  flex: none;
+  position: relative;
+  background: transparent;
+  touch-action: none;
+}
+
+@media (min-width: 1024px) {
+  .resize-handle {
+    display: block;
+  }
+}
+
+.resize-handle--vertical {
+  width: var(--border-width-emphasis);
+  cursor: col-resize;
+}
+
+.resize-handle--horizontal {
+  height: var(--border-width-emphasis);
+  cursor: row-resize;
+}
+
+/* A wider grab area than the visible line. */
+.resize-handle::before {
+  content: '';
+  position: absolute;
+}
+
+.resize-handle--vertical::before {
+  top: 0;
+  bottom: 0;
+  left: calc(var(--space-xs) * -1);
+  right: calc(var(--space-xs) * -1);
+}
+
+.resize-handle--horizontal::before {
+  left: 0;
+  right: 0;
+  top: calc(var(--space-xs) * -1);
+  bottom: calc(var(--space-xs) * -1);
+}
+
+.resize-handle:hover,
+.resize-handle.is-dragging {
+  background: var(--color-accent);
+}
+
+.resize-handle:focus-visible {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}

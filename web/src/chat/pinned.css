@@ -1,0 +1,80 @@
+/* The whiteboard pinned above the conversation (WB-19, WB-16). */
+
+.pinned-board {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  /* DS-GAP: height of the pinned whiteboard, a third of the screen as WB-19 says, no token */
+  height: 33dvh;
+  /* DS-GAP: smallest pinned whiteboard on a short screen, used 6 × component.tapTarget.min */
+  min-height: calc(var(--component-tap-target-min) * 6);
+  background: var(--color-bg-page);
+  border-bottom: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+.pinned-board.is-expanded {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-index-modal);
+  height: auto;
+  border-bottom: none;
+}
+
+.pinned-board-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding: var(--space-2xs) var(--layout-page-margin-phone);
+}
+
+.pinned-board-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.pinned-board-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.pinned-board-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inline-default);
+  margin: 0;
+  padding: 0 var(--layout-page-margin-phone) var(--space-xs);
+  color: var(--color-state-error);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
+.pinned-board-loading {
+  margin: 0;
+  padding: var(--space-sm) var(--layout-page-margin-phone);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+/* Laptop: the learner drags the bottom edge; the composer keeps room below. */
+@media (min-width: 1024px) {
+  .pinned-board:not(.is-expanded) {
+    height: var(--pinned-height, 33dvh);
+    max-height: 75dvh;
+  }
+}
+
+@media (min-width: 640px) {
+  .pinned-board-bar,
+  .pinned-board-error,
+  .pinned-board-loading {
+    padding-left: var(--layout-page-margin);
+    padding-right: var(--layout-page-margin);
+  }
+}

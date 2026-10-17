@@ -84,6 +84,7 @@ from polaris.quiz import (
 )
 from polaris.auto_layout import expand_layout
 from polaris.board_picture import BoardPicture
+from polaris.extend import ExtensionCheck
 from polaris.layout_check import LayoutProblem, layout_problems, mark_problems
 from polaris.whiteboard import (
     CURRENT_DRAWING_VERSION,
@@ -111,6 +112,7 @@ DRAW_WHITEBOARD_TOOL = "mcp__polaris__draw_whiteboard"
 QUIZ_CHECK_ATTEMPTS = 2
 MARK_WHITEBOARD_TOOL = "mcp__polaris__mark_whiteboard"
 SIMPLIFY_WHITEBOARD_TOOL = "mcp__polaris__simplify_whiteboard"
+EXTEND_WHITEBOARD_TOOL = "mcp__polaris__extend_whiteboard"
 START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
 # each fix attempt, one animation job, the quiz and its key-check retry
@@ -184,6 +186,21 @@ MARK_WHITEBOARD_DESCRIPTION = (
     "target_element_id is the id of a learner element from the whiteboard's text description. "
     "Do not change, move, or delete learner elements or learner comments. "
     "Use a new id for the step and every mark."
+)
+EXTEND_WHITEBOARD_DESCRIPTION = (
+    "Add your own parts to a whiteboard already in the session, usually the one pinned "
+    "above the conversation, to explain next to what the learner drew. "
+    "Send whiteboard_id, step_id, reply_part [[step:<step_id>]], and elements, or layout "
+    "for boxes joined by arrows. Write that same marker in the reply where the parts "
+    "should appear. Draw the parts between (0, 0) and (1000, 1400) as if on an empty board: "
+    "Polaris checks them on their own, then moves them as one group into free space beside "
+    "what is already on the board. Polaris sets each part's author, and the learner sees "
+    "your parts dashed in the tutor's pen. An arrow may attach only to your own new parts. "
+    "Each element has id, kind, position (x, y), size (width, height), and style "
+    "(stroke, fill, stroke_width), with the same kinds and fields as draw_whiteboard. "
+    "Do not change, move, or delete learner elements or learner comments. "
+    "To point out a mistake in what the learner drew, use mark_whiteboard instead. "
+    "Use a new id for the step and every part."
 )
 SIMPLIFY_WHITEBOARD_DESCRIPTION = (
     "Draw a simpler version of a whiteboard already in the session when the learner asks "
@@ -365,6 +382,31 @@ MARK_WHITEBOARD_SCHEMA = {
     "required": ["whiteboard_id", "step_id", "reply_part", "marks"],
     "additionalProperties": True,
 }
+EXTEND_WHITEBOARD_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "whiteboard_id": {
+            "type": "string",
+            "description": "Id of the stored whiteboard to add parts to.",
+        },
+        "step_id": {
+            "type": "string",
+            "description": "Id of the new step that holds your parts.",
+        },
+        "reply_part": {
+            "type": "string",
+            "description": "[[step:<step_id>]]. Write the same marker in the reply.",
+        },
+        "elements": {
+            "type": _LIST_OR_JSON,
+            "description": "Your parts, drawn as if on an empty board.",
+            "items": _ELEMENT_SCHEMA,
+        },
+        "layout": _LAYOUT_SCHEMA,
+    },
+    "required": ["whiteboard_id", "step_id", "reply_part"],
+    "additionalProperties": True,
+}
 CREATE_QUIZ_SCHEMA = {
     "type": "object",
     "properties": {
@@ -509,7 +551,7 @@ def teaching_prompt() -> str:
         f"{_MISSING_PROFILE}\n"
         "Do not call create_quiz.\n"
         "Do not call draw_whiteboard.\n"
-        "Do not call mark_whiteboard or simplify_whiteboard.\n"
+        "Do not call mark_whiteboard, simplify_whiteboard, or extend_whiteboard.\n"
         "Do not call start_animation_job.\n"
         "When the turn lists facts, teach the topic in the learner message using those facts.\n"
         "Write the reply in Markdown so it is easy to follow: ## headings for parts, "
@@ -536,10 +578,10 @@ def teaching_prompt() -> str:
         "Before a quiz is stored, a second model answers it without the key. "
         "If it disagrees, the quiz is refused. Then fix the question or its key "
         "and send it once more, or leave the quiz out.\n"
-        "Never put the correct choices of a quiz the learner has not submitted "
+        "Never put the correct choices of a quiz the learner has not finished "
         "in the reply text.\n"
-        "Do not grade the learner's choices. Code grades them against the stored key.\n"
-        "When the turn lists a graded quiz, use its score and the questions "
+        "Do not grade the learner's choices. Code checks each one against the stored key.\n"
+        "When the turn lists a finished quiz, use its score and the questions "
         "the learner missed to choose what to teach next.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
@@ -569,6 +611,12 @@ def teaching_prompt() -> str:
         "whiteboard_id, step_id, reply_part [[step:<that step's id>]], and marks. "
         "A mark is a circle, an arrow, or a note on one learner element. "
         "Do not change, move, or delete what the learner drew.\n"
+        "When the turn says a whiteboard is pinned, the learner is looking at it above the "
+        "conversation and the message is about it. To explain on that board, call "
+        "extend_whiteboard with whiteboard_id, step_id, reply_part "
+        "[[step:<that step's id>]], and your parts, and write that marker in the reply. "
+        "Polaris places your parts beside the learner's drawing. Draw a new whiteboard "
+        "only for a separate idea.\n"
         "When the learner asks for a simpler version of a whiteboard, "
         "call simplify_whiteboard with fewer elements, a description, and simplifies "
         "set to that whiteboard's id. Do not change or delete the original whiteboard.\n"
@@ -619,12 +667,15 @@ def _detailed_whiteboard_ids(
     pointing: Pointing | None,
     simplify: Whiteboard | None,
     picture: BoardPicture | None,
+    pinned: Whiteboard | None = None,
 ) -> set[str]:
     """Boards this turn is about. The rest get one line each to keep the prompt short."""
 
     ids: set[str] = set()
     if whiteboards:
         ids.add(whiteboards[-1].id)
+    if pinned is not None:
+        ids.add(pinned.id)
     if pointing is not None:
         ids.add(pointing.whiteboard_id)
     if picture is not None:
@@ -667,6 +718,7 @@ def turn_prompt(
     picture: BoardPicture | None = None,
     animations: Sequence[Animation] = (),
     animation_step: AnimationStep | None = None,
+    pinned: Whiteboard | None = None,
 ) -> str:
     lines = [
         "Profile facts, read for this reply:",
@@ -687,7 +739,7 @@ def turn_prompt(
                 lines.append(earlier_step)
             lines.append(f"Polaris: {turn.reply}")
     if whiteboards:
-        detailed = _detailed_whiteboard_ids(whiteboards, pointing, simplify, picture)
+        detailed = _detailed_whiteboard_ids(whiteboards, pointing, simplify, picture, pinned)
         lines.append("")
         lines.append("Whiteboards in this session:")
         for whiteboard in whiteboards:
@@ -703,6 +755,13 @@ def turn_prompt(
             "above with their ids. Say what you think the learner drew and check "
             "with them before you rely on it."
         )
+    if pinned is not None:
+        lines.append("")
+        lines.append(
+            f"Whiteboard {pinned.id} is pinned above the conversation, and this message "
+            "is about it. Its parts are listed above with their ids. To explain next to "
+            "the learner's drawing, call extend_whiteboard with that id."
+        )
     if animations:
         lines.append("")
         lines.append("Animations in this session:")
@@ -710,7 +769,7 @@ def turn_prompt(
             lines.append(describe_animation(animation))
     if quizzes:
         lines.append("")
-        lines.append("Quizzes in this session. Code grades them against the stored key:")
+        lines.append("Quizzes in this session. Code checks each pick against the stored key:")
         for quiz in quizzes:
             lines.append(describe_result(quiz))
     current = _pointing_text(whiteboards, pointing)
@@ -790,7 +849,7 @@ def _limit_message() -> str:
     limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     return (
         f"The drawing fix limit for this turn is {limit}. "
-        "This drawing was not shown. Do not draw, mark, or simplify a whiteboard "
+        "This drawing was not shown. Do not draw, mark, simplify, or add to a whiteboard "
         "again this turn."
     )
 
@@ -895,13 +954,13 @@ def submit_whiteboard(
 
 
 def _layout_detail(problems: Sequence[LayoutProblem], noun: str = "drawing") -> str:
-    verb = "have" if noun == "marks" else "has"
+    verb = "have" if noun in ("marks", "parts") else "has"
     lines = [f"The {noun} passed the format check but {verb} layout problems:"]
     lines.extend(f"- {problem.message}" for problem in problems)
     return "\n".join(lines)
 
 
-_JSON_LIST_FIELDS = ("steps", "comments", "marks", "layout")
+_JSON_LIST_FIELDS = ("steps", "comments", "marks", "layout", "elements")
 
 
 def _decode_json_lists(data: dict[str, Any]) -> dict[str, Any]:
@@ -1025,6 +1084,80 @@ def submit_marks(
     )
 
 
+ExtensionPreview = Callable[[str, dict[str, Any]], ExtensionCheck]
+
+
+def submit_extension(
+    session_id: str,
+    data: object,
+    *,
+    failures: int,
+    store: WhiteboardStore | None,
+    preview: ExtensionPreview | None = None,
+    tool: str = "extend_whiteboard",
+) -> WhiteboardSubmission:
+    """Check the agent's added parts, then store them beside the learner's drawing (WB-20).
+
+    preview checks the parts on their own, so layout problems are refused
+    while a fix remains, as for a new drawing.
+    """
+
+    limit = WHITEBOARD_TOOL_LIMITS.max_fix_attempts
+    if failures > limit:
+        return WhiteboardSubmission(tool_result=_tool_error(_limit_message()), failures=failures)
+    if store is None:
+        return WhiteboardSubmission(
+            tool_result=_tool_error("Whiteboard storage is not available."),
+            failures=failures,
+        )
+    action = _decode_json_lists(data) if isinstance(data, dict) else {}
+    elements = action.get("elements")
+    if isinstance(elements, list):
+        # Polaris sets each part's author.
+        action["elements"] = [
+            {**element, "author": "agent"} if isinstance(element, dict) else element
+            for element in elements
+        ]
+    problems: list[LayoutProblem] = []
+    try:
+        if preview is not None:
+            problems = preview(session_id, action).problems
+            if problems and failures < limit:
+                updated = failures + 1
+                return WhiteboardSubmission(
+                    tool_result=_tool_error(
+                        _fix_message(_layout_detail(problems, noun="parts"), updated, tool)
+                    ),
+                    failures=updated,
+                )
+        payload = store(session_id, action)
+    except MissingWhiteboard:
+        updated = failures + 1
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message("No whiteboard with that id.", updated, tool)),
+            failures=updated,
+        )
+    except InvalidDrawing as exc:
+        updated = failures + 1
+        return WhiteboardSubmission(
+            tool_result=_tool_error(_fix_message("\n".join(exc.errors), updated, tool)),
+            failures=updated,
+        )
+    text = (
+        f"Your parts were added to whiteboard {payload['id']} beside the learner's drawing. "
+        "The learner's drawing was not changed."
+    )
+    if problems:
+        text = (
+            f"{text} The parts still have layout problems. Do not add to it again this turn.\n"
+            f"{_layout_detail(problems, noun='parts')}"
+        )
+    return WhiteboardSubmission(
+        tool_result={"content": [{"type": "text", "text": text}]},
+        failures=failures,
+    )
+
+
 def _sent_mark_ids(action: dict[str, Any]) -> list[str]:
     """Ids of the marks in a mark action, or in a full drawing's steps."""
 
@@ -1051,9 +1184,11 @@ def polaris_mcp_server(
     start_animation_job: AnimationHandler,
     mark_whiteboard: WhiteboardHandler | None = None,
     simplify_whiteboard: WhiteboardHandler | None = None,
+    extend_whiteboard: WhiteboardHandler | None = None,
 ):
     mark = mark_whiteboard or _unavailable_whiteboard
     simplify = simplify_whiteboard or _unavailable_whiteboard
+    extend = extend_whiteboard or _unavailable_whiteboard
 
     @tool(
         "create_quiz",
@@ -1097,6 +1232,14 @@ def polaris_mcp_server(
         return await simplify(args)
 
     @tool(
+        "extend_whiteboard",
+        EXTEND_WHITEBOARD_DESCRIPTION,
+        EXTEND_WHITEBOARD_SCHEMA,
+    )
+    async def extend_whiteboard_tool(args: dict[str, Any]) -> dict[str, Any]:
+        return await extend(args)
+
+    @tool(
         "start_animation_job",
         START_ANIMATION_JOB_DESCRIPTION,
         START_ANIMATION_JOB_SCHEMA,
@@ -1112,6 +1255,7 @@ def polaris_mcp_server(
             draw_whiteboard_tool,
             mark_whiteboard_tool,
             simplify_whiteboard_tool,
+            extend_whiteboard_tool,
             start_animation_job_tool,
         ],
     )
@@ -1125,6 +1269,7 @@ def teaching_options(
     start_animation_job: AnimationHandler | None = None,
     mark_whiteboard: WhiteboardHandler | None = None,
     simplify_whiteboard: WhiteboardHandler | None = None,
+    extend_whiteboard: WhiteboardHandler | None = None,
 ) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=teaching_prompt(),
@@ -1139,6 +1284,7 @@ def teaching_options(
                 start_animation_job=start_animation_job or _unavailable_animation,
                 mark_whiteboard=mark_whiteboard,
                 simplify_whiteboard=simplify_whiteboard,
+                extend_whiteboard=extend_whiteboard,
             )
         },
         allowed_tools=[
@@ -1146,6 +1292,7 @@ def teaching_options(
             DRAW_WHITEBOARD_TOOL,
             MARK_WHITEBOARD_TOOL,
             SIMPLIFY_WHITEBOARD_TOOL,
+            EXTEND_WHITEBOARD_TOOL,
             START_ANIMATION_JOB_TOOL,
         ],
         include_partial_messages=True,
@@ -1316,6 +1463,8 @@ class ClaudeTeachingAgent:
         self._store_whiteboard: WhiteboardStore | None = None
         self._mark_whiteboard: WhiteboardStore | None = None
         self._preview_marks: MarkPreview | None = None
+        self._extend_whiteboard: WhiteboardStore | None = None
+        self._preview_extension: ExtensionPreview | None = None
         self._start_animation_job: AnimationJobStore | None = None
         self._drawing_failures: dict[str, int] = {}
         self._quiz_refusals: dict[str, int] = {}
@@ -1328,6 +1477,8 @@ class ClaudeTeachingAgent:
         mark_whiteboard: WhiteboardStore | None = None,
         start_animation_job: AnimationJobStore | None = None,
         preview_marks: MarkPreview | None = None,
+        extend_whiteboard: WhiteboardStore | None = None,
+        preview_extension: ExtensionPreview | None = None,
     ) -> None:
         """Chat calls this so tools can store an artifact. Does not write the profile."""
 
@@ -1335,6 +1486,8 @@ class ClaudeTeachingAgent:
         self._store_whiteboard = store_whiteboard
         self._mark_whiteboard = mark_whiteboard
         self._preview_marks = preview_marks
+        self._extend_whiteboard = extend_whiteboard
+        self._preview_extension = preview_extension
         self._start_animation_job = start_animation_job
 
     def _handler_for(self, session_id: str) -> QuizHandler:
@@ -1419,6 +1572,12 @@ class ClaudeTeachingAgent:
 
         return handle
 
+    def _extend_handler_for(self, session_id: str) -> WhiteboardHandler:
+        async def handle(args: dict[str, Any]) -> dict[str, Any]:
+            return await self.handle_extend_whiteboard(session_id, args)
+
+        return handle
+
     def _simplify_handler_for(self, session_id: str) -> WhiteboardHandler:
         async def handle(args: dict[str, Any]) -> dict[str, Any]:
             return await self.handle_simplify_whiteboard(session_id, args)
@@ -1432,7 +1591,7 @@ class ClaudeTeachingAgent:
         args: object,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Run one whiteboard submission. All three tools share one fix count per turn."""
+        """Run one whiteboard submission. The whiteboard tools share one fix count per turn."""
 
         submission = await asyncio.to_thread(
             partial(
@@ -1467,6 +1626,19 @@ class ClaudeTeachingAgent:
             store=self._mark_whiteboard,
             tool="mark_whiteboard",
             preview=self._preview_marks,
+        )
+
+    async def handle_extend_whiteboard(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """The agent's own parts beside the learner's drawing. Polaris sets their author."""
+
+        return await self._submit(
+            session_id,
+            submit_extension,
+            args,
+            store=self._extend_whiteboard,
+            preview=self._preview_extension,
         )
 
     async def handle_simplify_whiteboard(
@@ -1563,6 +1735,7 @@ class ClaudeTeachingAgent:
         picture: BoardPicture | None = None,
         animations: Sequence[Animation] = (),
         animation_step: AnimationStep | None = None,
+        pinned: Whiteboard | None = None,
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
         self._quiz_refusals[session_id] = 0
@@ -1582,6 +1755,7 @@ class ClaudeTeachingAgent:
             picture,
             animations,
             animation_step,
+            pinned,
         )
         if picture is None:
             await client.query(prompt)
@@ -1628,6 +1802,7 @@ class ClaudeTeachingAgent:
             draw_whiteboard=self._whiteboard_handler_for(session_id),
             mark_whiteboard=self._mark_handler_for(session_id),
             simplify_whiteboard=self._simplify_handler_for(session_id),
+            extend_whiteboard=self._extend_handler_for(session_id),
             start_animation_job=self._animation_handler_for(session_id),
         )
         include_transcript = False

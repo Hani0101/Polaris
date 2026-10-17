@@ -4,6 +4,8 @@ Newest first. Deciding a value for the first time is not a change and is not log
 
 | Date | What changed | Old value | New value | Why |
 |---|---|---|---|---|
+| 2026-10-17 | Color rule in 2.3: the look of parts the agent adds to the learner's pinned board | none | Pen box 1, dashed, whatever stroke was sent | The learner must tell the agent's added parts from their own (WB-20) |
+| 2026-10-17 | Quiz question card, Answer option, Result feedback (section 7): when a quiz answer is checked, and where its feedback sits | "Check answer" button at the end, a separate feedback box under the options, "See results" on the last question | A pick checks at once, feedback text inside the options, quiz results appear under the last question | Quiz feedback is immediate (decision 0009) |
 | 2026-10-17 | Expanded quiz page layout (section 6): `layout.maxWidth.chat` also used for the quiz column; quiz removed from the 12-column grid and `layout.maxWidth.content` uses | 8 of 12 columns, left-aligned, title full width | One 720px column, centered, title and card inside it | The quiz page felt empty with the column pushed to the left |
 | 2026-10-17 | Added `color.code.keyword`, `.string`, `.number`, `.function`, `.comment` (section 2) | none | #7a3e9d / #c9a2ef, #3d6b1f / #a8d48a, #1f5f8b / #8cc4ec, #9a3b5b / #f2a3c0, `color.text.muted` | Syntax colors for code blocks in tutor replies |
 | 2026-10-17 | Chat message rules: key term, callout, quote, table, and struck-through looks in tutor replies | none | See Chat message rules | Tutor replies support more Markdown |

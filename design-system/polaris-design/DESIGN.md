@@ -191,6 +191,7 @@ Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), 
 - Pens follow the board, not the app mode: the white, yellow, blue, green, and pink boards use the `pen.onLight` set, the night board uses `pen.onDark`. On a picked board color, use the set whose tutor pen has the higher contrast with it. Why: pens stay visible on whatever board is chosen.
 - With a picked pen or board color, the learner is responsible for visibility. Nothing changes automatically. Why: not given.
 - The amber accent is never a pen color. Why: keeps the accent for the app's own highlights, and `#f08a4b` is 2.4:1 on the light board.
+- Parts the agent adds beside the learner's drawing on a pinned board are drawn in pen box 1 (the tutor's pen) with a dashed line, whatever stroke they were sent with. Marks stay red and dashed. Why: the learner's pens are always solid, so the dash tells the agent's parts from theirs, and an explanation does not look like a correction (WB-20).
 - `color.code.*` is used only for syntax colors inside code blocks in tutor replies, on `color.bg.subtle`. Inline code and the rest of the app never use it. Why: the code colors carry no meaning outside code, so they stay out of the way of the accent and the state colors.
 - Syntax color is never the only cue in code: keywords are also bold. Why: color alone fails people with color blindness.
 
@@ -755,7 +756,7 @@ States:
 - The star icon uses `color.accent`, counted as a progress use (2.3). Why: not given.
 
 ### Quiz question card
-Purpose: holds one quiz question: progress at the top, the question, the answer options, the result feedback, and one primary button. Lives in the chat, the tools panel, or its own page.
+Purpose: holds one quiz question: progress at the top, the question, the answer options with their feedback, and the navigation buttons. Lives in the chat, the tools panel, or its own page.
 
 Variants:
 | Variant | When to use | Why |
@@ -770,7 +771,7 @@ Sizes:
 States:
 | State | What changes | Tokens |
 |---|---|---|
-| default | Card: surface fill, 1px default border, 12px corners. Progress bar, question, options `space.stack.default` apart, "Check answer" primary button, disabled until an answer is picked | `color.surface.default`, `border.width.default`, `color.border.default`, `radius.md` |
+| default | Card: surface fill, 1px default border, 12px corners. Progress bar, question, options `space.stack.default` apart, then "Previous question" (secondary, from the second question) and "Next question" (primary, enabled once the question is checked, hidden on the last question) | `color.surface.default`, `border.width.default`, `color.border.default`, `radius.md` |
 | hover | n/a: the card itself is not interactive | n/a |
 | active | n/a: the card itself is not interactive | n/a |
 | focus | n/a: options and the button take focus | n/a |
@@ -780,8 +781,15 @@ States:
 | empty | n/a: a quiz always has at least one question | n/a |
 
 #### Quiz question card rules
-- One question at a time. After "Check answer", the result feedback appears and the button becomes "Next question" ("See results" on the last one). Why: one step at a time keeps the learner focused.
-- The correct answer is revealed right after checking, with the explanation. Why: the score honestly matches the stored answer key on the first try, and the "here's why" teaches immediately.
+- One question at a time. Picking an option checks it at once: there is no "Check answer" button. The feedback appears inside the options (see Answer option) and "Next question" enables. Why: one step at a time keeps the learner focused, and feedback while the thought is fresh teaches best.
+- The correct answer is revealed right after the pick, with the explanation. Why: the score honestly matches the stored answer key on the first try, and the "here's why" teaches immediately.
+- On the last question there is no "See results" button. Its feedback stays on screen and the quiz results (below) appear under the card's options. Why: the learner reads the feedback for the question they just answered, and does not have to click to see how they did.
+- A check that fails shows the Alert "Couldn't check that answer. Try again." above the buttons and leaves the options unlocked. Why: a failed check reveals nothing, so the learner just picks again.
+
+#### Quiz results
+Purpose: shown when the last question is checked and whenever a finished quiz is opened. The score line "You got X of Y right." (`typography.body` in bold), then one row for each question: its number and prompt, and a check icon with "Right" or a cross icon with "Wrong", then a "Review answers" secondary button that opens question 1 with its locked feedback, "Previous question" and "Next question", and "Back to results". A row opens that question. Rows have the `space.stack.default` gap; marks use color, icon, and text together (2.3).
+
+Result row states: default is the Answer option look (surface fill, 1px strong border, 8px corners, primary text). Hover keeps the fill and darkens the border to `color.text.secondary`. Active (pressed) takes the `color.action.secondary.default` fill with the same border. Focus is the focus ring. Why: a row is not a filled button, so it never takes the button hover fill, and the text stays above 14:1 in every state (2.2).
 
 ### Answer option
 Purpose: one answer in a quiz question: a full-width row with a radio (one correct answer) or checkbox (several), the whole row tappable.
@@ -804,16 +812,17 @@ States (all variants):
 | hover | Border darkens | `color.text.secondary` |
 | active | n/a: pressing selects it (see selected) | n/a |
 | focus | Focus ring around the row | `component.focusRing.width`, `component.focusRing.offset`, `color.focus.ring` |
-| selected | 2px accent border, radio or checkbox filled | `border.width.emphasis`, `color.accent` |
+| selected | 2px accent border, radio or checkbox filled, for the moment the pick is being checked | `border.width.emphasis`, `color.accent` |
 | disabled | After checking: locked, not clickable, look unchanged apart from the marks below | n/a |
-| correct | After checking, the correct answer: 2px success border, success background, check icon and "Correct answer" | `border.width.emphasis`, `color.state.success`, `color.state.successBg`, `typography.small` |
-| incorrect | After checking, the learner's wrong pick: 2px error border, soft error background, cross icon and "Your answer" | `border.width.emphasis`, `color.state.error`, `color.state.errorBg`, `typography.small` |
-| loading | n/a: the options appear with the card | n/a |
-| error | n/a: "Check answer" is disabled until something is picked, so there is no "nothing picked" error | n/a |
+| correct | After checking, the correct answer: 2px success border, success background, check icon and "Correct answer", then its explanation in `typography.body` | `border.width.emphasis`, `color.state.success`, `color.state.successBg`, `typography.small` |
+| incorrect | After checking, the learner's wrong pick: 2px error border, soft error background, cross icon and "Your answer", then the wrong-choice note in `typography.body` | `border.width.emphasis`, `color.state.error`, `color.state.errorBg`, `typography.small` |
+| loading | While a pick is being checked: all options not clickable | n/a |
+| error | n/a: a failed check shows the Alert in the quiz card and leaves the options unlocked | n/a |
 | empty | n/a: an option always has text | n/a |
 
 #### Answer option rules
 - Right and wrong are always shown with color, icon, and text together. Why: color alone fails people with color blindness (2.3).
+- The feedback text lives inside the option it is about: the explanation under the correct option, the wrong-choice note under the learner's wrong pick. It is never repeated in a separate box. Why: the learner reads why next to the thing they chose.
 
 ### Progress bar
 Purpose: shows how far through something the learner is, such as a quiz. Always with text above it.
@@ -846,6 +855,8 @@ States:
 | empty | At the start: "Question 1 of 5" with an empty track | `color.bg.subtle` |
 
 ### Result feedback
+Retired for the quiz: the feedback now sits inside the Answer option (see Answer option rules). The box below is kept for a place that needs feedback apart from a choice.
+
 Purpose: after checking an answer, says right or wrong and explains why. Same calm box for both.
 
 Variants:

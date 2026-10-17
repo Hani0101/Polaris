@@ -1,18 +1,24 @@
 import { useId, useRef, useState, useSyncExternalStore } from 'react'
-import type { FormEvent } from 'react'
-import type { Artifact, Quiz, SessionSummary } from '../api.ts'
+import type { CSSProperties, FormEvent } from 'react'
+import type { Artifact, BoardPicture, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { Conversation } from './Conversation.tsx'
 import type { ViewTurn } from './Conversation.tsx'
+import { PinnedWhiteboard } from './PinnedWhiteboard.tsx'
+import type { PinnedTurn } from './PinnedWhiteboard.tsx'
+import { ResizeHandle, useSize } from './ResizeHandle.tsx'
 import { SessionPanel } from './SessionPanel.tsx'
 import { ToolsPanel } from './ToolsPanel.tsx'
 import { TopBar } from './TopBar.tsx'
 import { AlertBanner, Toast } from './ui.tsx'
 
 const PHONE_QUERY = '(max-width: 639px)'
+// Side panels the learner can drag on a laptop. DS-GAP: no token for the limits.
+const PANEL_MIN = 200
+const PANEL_MAX = 640
 
 function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(
@@ -70,7 +76,16 @@ type ChatShellProps = {
   toolsOpen?: boolean
   onToggleTools?: () => void
   onCloseTools?: () => void
-  onQuizGraded?: (quiz: Quiz) => void
+  onQuizChecked?: (quiz: Quiz) => void
+  /** Every whiteboard in the session, for the Whiteboard tab (WB-18). */
+  whiteboards?: WhiteboardArtifact[]
+  onNewWhiteboard?: () => void
+  creatingWhiteboard?: boolean
+  /** The board pinned above the conversation, and the reply adding to it (WB-19). */
+  pinnedWhiteboardId?: string | null
+  pinnedTurn?: PinnedTurn | null
+  onClosePinned?: () => void
+  onPicture?: (picture: BoardPicture) => void
 }
 
 const noTools = () => {}
@@ -116,7 +131,14 @@ export function ChatShell({
   toolsOpen = false,
   onToggleTools = noTools,
   onCloseTools = noTools,
-  onQuizGraded = noTools,
+  onQuizChecked = noTools,
+  whiteboards = [],
+  onNewWhiteboard,
+  creatingWhiteboard = false,
+  pinnedWhiteboardId = null,
+  pinnedTurn = null,
+  onClosePinned = noTools,
+  onPicture,
 }: ChatShellProps) {
   const phone = useMediaQuery(PHONE_QUERY)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -124,15 +146,39 @@ export function ChatShell({
   const panelHeading = useId()
   const sheetHeading = useId()
   const sessionOpen = openId !== null
+  const body = useRef<HTMLDivElement>(null)
+  const [leftWidth, setLeftWidth] = useSize('polaris.panel.left', PANEL_MIN, PANEL_MAX)
+  const [rightWidth, setRightWidth] = useSize('polaris.panel.right', PANEL_MIN, PANEL_MAX)
+  const widthOf = (selector: string) => () =>
+    body.current?.querySelector(selector)?.getBoundingClientRect().width ?? PANEL_MIN
+  const panelWidths = {
+    ...(leftWidth === null ? {} : { '--panel-left-width': `${leftWidth}px` }),
+    ...(rightWidth === null ? {} : { '--panel-right-width': `${rightWidth}px` }),
+  } as CSSProperties
 
   if (sheetOpen && (!phone || !sessionOpen)) setSheetOpen(false)
 
+  // On a phone the sheet closes, so the board pinned above the chat is in view.
+  function openBoard(whiteboardId: string) {
+    setSheetOpen(false)
+    onOpenWhiteboard(whiteboardId)
+  }
+
   const toolsProps = {
     artifacts,
+    whiteboards,
+    pinnedWhiteboardId,
+    creatingWhiteboard,
+    onNewWhiteboard: onNewWhiteboard
+      ? () => {
+          setSheetOpen(false)
+          onNewWhiteboard()
+        }
+      : undefined,
     onOpenQuiz,
-    onOpenWhiteboard,
+    onOpenWhiteboard: openBoard,
     onOpenAnimation,
-    onQuizGraded,
+    onQuizChecked,
     onAsk,
     onAskAboutStep,
   }
@@ -162,7 +208,7 @@ export function ChatShell({
           </AlertBanner>
         </div>
       ) : null}
-      <div className="app-body">
+      <div className="app-body" ref={body} style={panelWidths}>
         <SessionPanel
           sessions={sessions}
           openId={openId}
@@ -173,6 +219,17 @@ export function ChatShell({
           onOpen={onOpen}
           onRename={onRename}
         />
+        {sessionListOpen ? (
+          <ResizeHandle
+            label="Resize sessions panel"
+            orientation="vertical"
+            grows={1}
+            min={PANEL_MIN}
+            max={PANEL_MAX}
+            measure={widthOf('.session-panel')}
+            onResize={setLeftWidth}
+          />
+        ) : null}
         {sessionListOpen ? (
           <button
             type="button"
@@ -207,7 +264,32 @@ export function ChatShell({
           onAsk={onAsk}
           onOpenTools={phone ? () => setSheetOpen(true) : undefined}
           toolsButtonRef={toolsButton}
+          pinnedWhiteboardId={pinnedWhiteboardId}
+          pinned={
+            sessionOpen && openId && pinnedWhiteboardId ? (
+              <PinnedWhiteboard
+                key={pinnedWhiteboardId}
+                sessionId={openId}
+                whiteboardId={pinnedWhiteboardId}
+                turn={pinnedTurn}
+                onClose={onClosePinned}
+                onAsk={(parts) => onAsk(pinnedWhiteboardId, parts)}
+                onPicture={onPicture}
+              />
+            ) : null
+          }
         />
+        {sessionOpen && !phone && toolsOpen ? (
+          <ResizeHandle
+            label="Resize tools panel"
+            orientation="vertical"
+            grows={-1}
+            min={PANEL_MIN}
+            max={PANEL_MAX}
+            measure={widthOf('.tools-panel')}
+            onResize={setRightWidth}
+          />
+        ) : null}
         {sessionOpen && !phone && toolsOpen ? (
           <aside className="tools-panel" aria-labelledby={panelHeading}>
             <ToolsPanel headingId={panelHeading} onClose={onCloseTools} {...toolsProps} />

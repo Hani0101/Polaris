@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import type { FormEvent, KeyboardEvent, Ref } from 'react'
+import type { FormEvent, KeyboardEvent, ReactNode, Ref } from 'react'
 import { Plus } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
 import { askedStepLabel } from '../animation/askedStep.ts'
@@ -69,6 +69,10 @@ type ConversationProps = {
   /** Phone only: opens the tools bottom sheet from the + button in the chat input. */
   onOpenTools?: () => void
   toolsButtonRef?: Ref<HTMLButtonElement>
+  /** The whiteboard pinned above the turns, with the composer below (WB-19). */
+  pinned?: ReactNode
+  /** The pinned board shows above, so a turn does not draw it again. */
+  pinnedWhiteboardId?: string | null
 }
 
 const PHONE_QUERY = '(max-width: 639px)'
@@ -99,6 +103,8 @@ export function Conversation({
   onAsk,
   onOpenTools,
   toolsButtonRef,
+  pinned = null,
+  pinnedWhiteboardId = null,
 }: ConversationProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
@@ -129,6 +135,7 @@ export function Conversation({
 
   return (
     <section className="conversation" aria-label="Conversation">
+      {pinned}
       <div className="conversation-scroll" ref={scroller} aria-busy={sending || undefined}>
         <div className="conversation-inner">
           {!sessionOpen ? (
@@ -160,6 +167,7 @@ export function Conversation({
               sending={sending}
               sessionId={sessionId}
               onAsk={onAsk}
+              pinnedWhiteboardId={pinnedWhiteboardId}
             />
           ))}
         </div>
@@ -315,6 +323,7 @@ function TurnBlock({
   sending,
   sessionId,
   onAsk,
+  pinnedWhiteboardId,
 }: {
   turn: ViewTurn
   onCopy: (text: string) => void
@@ -330,6 +339,7 @@ function TurnBlock({
   sending: boolean
   sessionId: string | null
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  pinnedWhiteboardId: string | null
 }) {
   const quizzes = turn.artifacts.filter((artifact): artifact is Quiz => artifact.kind === 'quiz')
   const animations = turn.artifacts.filter(
@@ -344,6 +354,7 @@ function TurnBlock({
   )
   const reply = visibleReply(turn.reply, turn.streaming, markers)
   const whiteboards = storedBoards.flatMap((whiteboard) => {
+    if (whiteboard.id === pinnedWhiteboardId) return []
     const revealed = revealWhiteboard(whiteboard, turn.reply, phase)
     return revealed ? [{ ...revealed, kind: 'whiteboard' as const }] : []
   })
@@ -387,9 +398,16 @@ function TurnBlock({
           ))}
           {quizzes.map((quiz) => (
             <div className="quiz-chip" key={quiz.id}>
-              <p className="quiz-chip-title">{quiz.title}</p>
+              <div>
+                <p className="quiz-chip-title">{quiz.title}</p>
+                {quiz.score ? (
+                  <p className="quiz-chip-score">
+                    {quiz.score.earned} of {quiz.score.total} right
+                  </p>
+                ) : null}
+              </div>
               <button type="button" className="secondary" onClick={() => onOpenQuiz(quiz.id)}>
-                Open quiz
+                {quiz.score ? 'Review quiz' : 'Open quiz'}
               </button>
             </div>
           ))}

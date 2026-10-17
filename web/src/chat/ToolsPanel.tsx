@@ -6,7 +6,6 @@ import { AnimationPlayer } from '../AnimationPlayer.tsx'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { QuizCard } from '../QuizCard.tsx'
 import type { PointedPart } from '../whiteboard/pointing.ts'
-import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
@@ -30,9 +29,14 @@ type ToolsPanelProps = {
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation: (sessionId: string, jobId: string) => void
-  onQuizGraded: (quiz: Quiz) => void
+  onQuizChecked: (quiz: Quiz) => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
   onAskAboutStep?: (ask: AskAboutStep) => void
+  /** Every whiteboard in the session, including the learner's own (WB-18). */
+  whiteboards?: WhiteboardArtifact[]
+  pinnedWhiteboardId?: string | null
+  onNewWhiteboard?: () => void
+  creatingWhiteboard?: boolean
 }
 
 /** The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs. */
@@ -43,9 +47,12 @@ export function ToolsPanel({
   onOpenQuiz,
   onOpenWhiteboard,
   onOpenAnimation,
-  onQuizGraded,
-  onAsk,
+  onQuizChecked,
   onAskAboutStep,
+  whiteboards = [],
+  pinnedWhiteboardId = null,
+  onNewWhiteboard,
+  creatingWhiteboard = false,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
 
@@ -62,16 +69,18 @@ export function ToolsPanel({
       <Tabs label="Tools" tabs={TABS} selected={tab} onSelect={setTab}>
         {tab === 'whiteboard' ? (
           <WhiteboardTab
-            whiteboard={latest(artifacts, isWhiteboard)}
+            whiteboards={whiteboards}
+            pinnedWhiteboardId={pinnedWhiteboardId}
             onOpenWhiteboard={onOpenWhiteboard}
-            onAsk={onAsk}
+            onNewWhiteboard={onNewWhiteboard}
+            creating={creatingWhiteboard}
           />
         ) : null}
         {tab === 'quiz' ? (
           <QuizTab
             quiz={latest(artifacts, isQuiz)}
             onOpenQuiz={onOpenQuiz}
-            onQuizGraded={onQuizGraded}
+            onQuizChecked={onQuizChecked}
           />
         ) : null}
         {tab === 'animation' ? (
@@ -92,10 +101,6 @@ export function ToolsPanel({
       </Tabs>
     </div>
   )
-}
-
-function isWhiteboard(artifact: Artifact): artifact is WhiteboardArtifact {
-  return artifact.kind === 'whiteboard'
 }
 
 function isQuiz(artifact: Artifact): artifact is Quiz {
@@ -141,42 +146,70 @@ function ToolsEmpty({
   )
 }
 
+/** New whiteboard, then every board in the session. Opening one pins it (WB-18, WB-19). */
 function WhiteboardTab({
-  whiteboard,
+  whiteboards,
+  pinnedWhiteboardId,
   onOpenWhiteboard,
-  onAsk,
+  onNewWhiteboard,
+  creating,
 }: {
-  whiteboard: WhiteboardArtifact | null
+  whiteboards: WhiteboardArtifact[]
+  pinnedWhiteboardId: string | null
   onOpenWhiteboard: (whiteboardId: string) => void
-  onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  onNewWhiteboard?: () => void
+  creating: boolean
 }) {
-  if (!whiteboard) {
+  const newButton = onNewWhiteboard ? (
+    <div className="tools-actions">
+      <button type="button" onClick={onNewWhiteboard} disabled={creating}>
+        New whiteboard
+      </button>
+    </div>
+  ) : null
+  if (whiteboards.length === 0) {
     return (
-      <ToolsEmpty
-        icon={<Presentation size={24} strokeWidth={2} aria-hidden="true" />}
-        title="No whiteboard yet"
-        body="Ask Polaris to draw an idea, and the whiteboard shows here."
-      />
+      <div className="tools-whiteboard">
+        <ToolsEmpty
+          icon={<Presentation size={24} strokeWidth={2} aria-hidden="true" />}
+          title="No whiteboard yet"
+          body="Make one to sketch an idea and ask Polaris about it, or ask Polaris to draw."
+        />
+        {newButton}
+      </div>
     )
   }
+  const newestFirst = [...whiteboards].reverse()
   return (
     <div className="tools-whiteboard">
-      <div className="tools-actions">
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => onOpenWhiteboard(whiteboard.id)}
-        >
-          Open whiteboard
-        </button>
-      </div>
-      <div className="tools-whiteboard-board">
-        <Whiteboard
-          key={whiteboard.id}
-          whiteboard={whiteboard}
-          onAsk={onAsk ? (parts) => onAsk(whiteboard.id, parts) : undefined}
-        />
-      </div>
+      {newButton}
+      <ul className="tools-artifacts" aria-label="Whiteboards in this session">
+        {newestFirst.map((whiteboard) => {
+          const pinned = whiteboard.id === pinnedWhiteboardId
+          return (
+            <li key={whiteboard.id}>
+              <button
+                type="button"
+                className={
+                  pinned
+                    ? 'tools-card tools-card--clickable is-selected'
+                    : 'tools-card tools-card--clickable'
+                }
+                aria-current={pinned ? 'true' : undefined}
+                onClick={() => onOpenWhiteboard(whiteboard.id)}
+              >
+                <span className="tools-card-row">
+                  <span className="tools-card-title">Whiteboard</span>
+                  {pinned ? <Badge variant="accent">Pinned</Badge> : null}
+                </span>
+                {whiteboard.description ? (
+                  <span className="tools-card-body">{firstSentence(whiteboard.description)}</span>
+                ) : null}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }
@@ -184,11 +217,11 @@ function WhiteboardTab({
 function QuizTab({
   quiz,
   onOpenQuiz,
-  onQuizGraded,
+  onQuizChecked,
 }: {
   quiz: Quiz | null
   onOpenQuiz: (quizId: string) => void
-  onQuizGraded: (quiz: Quiz) => void
+  onQuizChecked: (quiz: Quiz) => void
 }) {
   if (!quiz) {
     return (
@@ -199,7 +232,7 @@ function QuizTab({
       />
     )
   }
-  return <QuizCard key={quiz.id} quiz={quiz} onGraded={onQuizGraded} onExpand={onOpenQuiz} />
+  return <QuizCard key={quiz.id} quiz={quiz} onChecked={onQuizChecked} onExpand={onOpenQuiz} />
 }
 
 function AnimationTab({

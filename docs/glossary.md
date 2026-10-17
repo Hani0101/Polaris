@@ -56,6 +56,14 @@ _Avoid_: canvas, diagram
 A set of questions used to check what the learner understood.
 _Avoid_: test, exam, questionnaire
 
+**Checked question**:
+A quiz question the learner has picked a choice for. Code compared the pick to the answer key, the question is locked, and its key is shown.
+_Avoid_: submitted, graded question
+
+**Finished quiz**:
+A quiz whose last question has been checked. It has a score.
+_Avoid_: graded quiz, completed quiz
+
 **Wrong-choice note**:
 A short sentence stored with a wrong choice on a quiz. It says why a learner might pick that choice and why it is wrong. It is part of the answer key.
 _Avoid_: note, hint, distractor

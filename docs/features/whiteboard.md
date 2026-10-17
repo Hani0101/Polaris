@@ -48,17 +48,27 @@ The agent has four whiteboard tools; the fourth, `extend_whiteboard`, is describ
 
 ### The pinned whiteboard
 
-A new whiteboard is version 7 with no parts and the description "Blank whiteboard". `readable_description` rebuilds the text a screen reader reads from the learner's shapes and comments as they draw (WB-10). Creating a board pins it. Opening a board from the Whiteboard tab or from an artifact card in the chat pins it in place of the one pinned before. Closing the pinned board leaves the other boards as artifacts.
+A new whiteboard is version 7 with no parts and the description "Blank whiteboard". It has one empty step, `learner`, so the learner's parts have a step to join. `readable_description` rebuilds the text a screen reader reads from the learner's shapes and comments as they draw (WB-10). Creating a board pins it. Opening a board from the Whiteboard tab or from an artifact card in the chat pins it in place of the one pinned before. Closing the pinned board leaves the other boards as artifacts.
 
-While a board is pinned, the turn attaches the full text description of that board, and the picture of the learner's drawing under the rules in "A picture of the learner's drawing". Pointing at a part (WB-08) narrows the turn to that part. With no board pinned, those two attachments are not sent, and the prompt follows "Whiteboards in the prompt".
+A board the learner creates belongs to no turn. It is marked as learner-made, so a turn that fails or is stopped does not delete it, and no turn claims it. The Whiteboard tab lists every board in the session, newest first, and marks the pinned one.
+
+While a board is pinned, the turn sends `pinned_whiteboard_id` and attaches the full text description of that board, and the picture of the learner's drawing under the rules in "A picture of the learner's drawing". The browser sends a picture only of the pinned board. Pointing at a part (WB-08) narrows the turn to that part. With no board pinned, those two attachments are not sent, and the prompt follows "Whiteboards in the prompt".
 
 The pinned board is about a third of the screen height on a phone, with controls to expand it to the full screen and to collapse it back (WB-16). A new board the agent draws as its own artifact does not replace the pinned board. It appears as an artifact card in the chat.
 
 ### The agent draws on the pinned board
 
-The fourth whiteboard tool, `extend_whiteboard`, takes the whiteboard id, a new step id, its `reply_part`, and the agent's parts, and Polaris sets each part's author. The step appears as its `reply_part` arrives (WB-06). The parts are placed in free space next to the learner's drawing and are checked like any new drawing: `check_drawing` and `layout_problems` apply to the agent's parts, and the learner's parts are never at fault. The tool shares the one fix count per turn with the other whiteboard tools. This adds a field to version 7 and does not add a version ([decision 0006](../decisions/0006-one-drawing-format-version.md)).
+The fourth whiteboard tool, `extend_whiteboard`, takes the whiteboard id, a new step id, its `reply_part`, and the agent's parts (`elements`, or a `layout` as in "Placed layouts"), and Polaris sets each part's author. The step appears as its `reply_part` arrives (WB-06). The parts are placed in free space next to the learner's drawing and are checked like any new drawing: `check_drawing` and `layout_problems` apply to the agent's parts, and the learner's parts are never at fault. The tool shares the one fix count per turn with the other whiteboard tools. This adds a field to version 7 and does not add a version ([decision 0006](../decisions/0006-one-drawing-format-version.md)).
+
+`apply_extension` in `api/polaris/extend.py` does this in order. It checks the agent's parts as a drawing of their own, in the usual drawing area, so the learner's parts cannot fail the check. An arrow may attach only to the agent's new parts, so a learner who later erases a part never breaks the board. At most 24 parts go in one step. It then moves the parts as one group to the right of everything already on the board, tops aligned, with a gap of 80, unless they already sit clear of it. The step is stored with `extension: true`, the new version 7 field. A step with that field holds only the agent's own parts, never a mark, and is refused on an older version. A board older than version 7 cannot be added to; the agent draws a new whiteboard instead.
+
+The browser draws the parts of an added step in the tutor's pen, dashed, whatever stroke they were stored with. The learner's pens are always solid, and marks stay red, so the learner can tell the agent's parts from their own and from a mark.
+
+If the turn fails or is stopped, only the added step is taken back. Learner saves made during the turn stay.
 
 A learner save replaces only the learner's parts and comments. The backend keeps every agent part already stored, so a stale save loses nothing. The browser shows a new agent step on the pinned board as it arrives.
+
+A copy may leave out stored steps, agent parts, and agent comments; the stored ones are kept. A copy may not add a step, reorder steps, change a step's reply text or its `extension` field, change an agent part, or put a learner part in an added step. Each step is stored as its agent parts in their stored order, then the copy's learner parts. The save and the agent's step are written one at a time, so neither overwrites the other.
 
 ### Layout checks
 

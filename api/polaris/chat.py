@@ -52,12 +52,19 @@ from polaris.profile import (
     import_profile_json,
     start_pass,
 )
-from polaris.quiz import AlreadyGraded, MissingQuiz, grade, normalize_spec, public_payload
+from polaris.quiz import (
+    MissingQuiz,
+    check_answer,
+    normalize_spec,
+    public_payload,
+)
+from polaris.extend import ExtensionCheck, apply_extension
 from polaris.whiteboard import (
     MissingWhiteboard,
     Whiteboard,
     WhiteboardUnreadable,
     apply_marks,
+    blank_whiteboard,
     check_drawing,
     check_learner_drawing,
     pointed_element_errors,
@@ -229,6 +236,13 @@ class Chat:
         self._turn_messages: dict[str, str] = {}
         self._pending: dict[str, list[dict[str, object]]] = {}
         self._mark_rollbacks: dict[str, list[tuple[str, str]]] = {}
+        # session id -> (whiteboard id, step id) the agent added this turn. A
+        # failed turn removes only that step, so learner saves made during the
+        # turn are kept.
+        self._extension_rollbacks: dict[str, list[tuple[str, str]]] = {}
+        # Held while a board is read, changed, and written, so a learner save
+        # and an agent step never overwrite each other (WB-21).
+        self._board_lock = threading.Lock()
         self._animation_notices: dict[str, list[str]] = {}
         # job id -> worker writing that animation off the turn (AN-01).
         self._animation_threads: dict[str, threading.Thread] = {}
@@ -243,6 +257,8 @@ class Chat:
                 self.create_whiteboard,
                 mark_whiteboard=self.mark_whiteboard,
                 preview_marks=self.preview_marks,
+                extend_whiteboard=self.extend_whiteboard,
+                preview_extension=self.preview_extension,
                 start_animation_job=self.start_animation_job,
             )
 
@@ -458,6 +474,11 @@ class Chat:
 
         return self._stored_whiteboard(session_id, whiteboard_id.strip())
 
+    def resolve_pinned(self, session_id: str, whiteboard_id: str) -> Whiteboard:
+        """The board pinned above the conversation. The turn is about it (WB-19)."""
+
+        return self._stored_whiteboard(session_id, whiteboard_id.strip())
+
     async def stream_reply(
         self,
         session_id: str,
@@ -466,6 +487,7 @@ class Chat:
         simplify: Whiteboard | None = None,
         picture: BoardPicture | None = None,
         animation_step: AnimationStep | None = None,
+        pinned: Whiteboard | None = None,
     ) -> AsyncIterator[str | dict[str, object]]:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
@@ -491,6 +513,8 @@ class Chat:
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)
             # The picture is for this turn only and is not stored.
             extra: dict[str, Any] = {"picture": picture} if picture is not None else {}
+            if pinned is not None:
+                extra["pinned"] = pinned
             animations = await asyncio.to_thread(self.animations_for_reply, session_id)
             async for item in self.agent.reply(
                 session_id=session_id,
@@ -545,7 +569,7 @@ class Chat:
         stored = normalize_spec(spec)
         quiz_id = str(uuid.uuid4())
         payload = public_payload(
-            quiz_id, session_id, stored, score=None, submitted=None
+            quiz_id, session_id, stored, score=None, submitted={}
         )
 
         def write(conn: sqlite3.Connection) -> None:
@@ -995,31 +1019,55 @@ class Chat:
             raise WhiteboardUnreadable()
         return payload
 
-    def update_whiteboard(
-        self, session_id: str, whiteboard_id: str, drawing: object
-    ) -> dict[str, object]:
-        """Store a learner's drawing after the same check the agent drawing uses."""
+    def create_learner_whiteboard(self, session_id: str) -> dict[str, object]:
+        """An empty board the learner made (WB-18). No turn owns it, and it is kept."""
 
         self._require(session_id)
-        stored = self._stored_whiteboard(session_id, whiteboard_id)
-        incoming: object = drawing
-        if isinstance(drawing, dict):
-            incoming = {**drawing, "session_id": session_id}
-        checked = check_learner_drawing(stored, incoming)
-        if checked.whiteboard is None:
-            raise InvalidDrawing(checked.errors)
-        if checked.whiteboard.id != whiteboard_id:
-            raise InvalidDrawing(["whiteboard id cannot change"])
-
-        canonical = checked.whiteboard.model_dump(mode="json")
+        whiteboard_id = str(uuid.uuid4())
+        canonical = blank_whiteboard(whiteboard_id, session_id).model_dump(mode="json")
 
         def write(conn: sqlite3.Connection) -> None:
             conn.execute(
-                "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
-                (json.dumps(canonical), whiteboard_id),
+                """
+                INSERT INTO artifacts (id, session_id, turn_id, kind, created_at, learner_made)
+                VALUES (?, ?, NULL, 'whiteboard', ?, 1)
+                """,
+                (whiteboard_id, session_id, _now()),
+            )
+            conn.execute(
+                "INSERT INTO whiteboards (id, drawing_json) VALUES (?, ?)",
+                (whiteboard_id, json.dumps(canonical)),
             )
 
         self._with_db(write)
+        return {**canonical, "kind": "whiteboard"}
+
+    def update_whiteboard(
+        self, session_id: str, whiteboard_id: str, drawing: object
+    ) -> dict[str, object]:
+        """Merge a learner's drawing into the stored board after the drawing check (WB-21)."""
+
+        self._require(session_id)
+        incoming: object = drawing
+        if isinstance(drawing, dict):
+            incoming = {**drawing, "session_id": session_id}
+        with self._board_lock:
+            stored = self._stored_whiteboard(session_id, whiteboard_id)
+            checked = check_learner_drawing(stored, incoming)
+            if checked.whiteboard is None:
+                raise InvalidDrawing(checked.errors)
+            if checked.whiteboard.id != whiteboard_id:
+                raise InvalidDrawing(["whiteboard id cannot change"])
+
+            canonical = checked.whiteboard.model_dump(mode="json")
+
+            def write(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
+                    (json.dumps(canonical), whiteboard_id),
+                )
+
+            self._with_db(write)
         payload = dict(canonical)
         payload["kind"] = "whiteboard"
         return payload
@@ -1052,17 +1100,18 @@ class Chat:
     ) -> dict[str, object]:
         """Append agent marks onto a stored whiteboard and show the update."""
 
-        marked, raw = self._marked(session_id, action)
-        canonical = marked.model_dump(mode="json")
-        whiteboard_id = str(canonical["id"])
+        with self._board_lock:
+            marked, raw = self._marked(session_id, action)
+            canonical = marked.model_dump(mode="json")
+            whiteboard_id = str(canonical["id"])
 
-        def write(conn: sqlite3.Connection) -> None:
-            conn.execute(
-                "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
-                (json.dumps(canonical), whiteboard_id),
-            )
+            def write(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
+                    (json.dumps(canonical), whiteboard_id),
+                )
 
-        self._with_db(write)
+            self._with_db(write)
         payload: dict[str, object] = {**canonical, "kind": "whiteboard"}
         with self._lock:
             self._mark_rollbacks.setdefault(session_id, []).append(
@@ -1070,6 +1119,82 @@ class Chat:
             )
             self._pending.setdefault(session_id, []).append(payload)
         return payload
+
+    def _extended(self, session_id: str, action: dict[str, Any]) -> ExtensionCheck:
+        """The stored board with the agent's step added, or why it was refused."""
+
+        self._require(session_id)
+        whiteboard_id = action.get("whiteboard_id")
+        if not isinstance(whiteboard_id, str) or not whiteboard_id.strip():
+            raise InvalidDrawing(["whiteboard_id: missing field"])
+        stored = self._stored_whiteboard(session_id, whiteboard_id.strip())
+        checked = apply_extension(stored, {**action, "whiteboard_id": whiteboard_id.strip()})
+        if checked.whiteboard is None:
+            raise InvalidDrawing(checked.errors)
+        return checked
+
+    def preview_extension(self, session_id: str, action: dict[str, Any]) -> ExtensionCheck:
+        """What extend_whiteboard would store, with its layout problems. Nothing is written."""
+
+        return self._extended(session_id, action)
+
+    def extend_whiteboard(
+        self, session_id: str, action: dict[str, Any]
+    ) -> dict[str, object]:
+        """Add the agent's own parts to a stored board as a new step (WB-20)."""
+
+        with self._board_lock:
+            checked = self._extended(session_id, action)
+            assert checked.whiteboard is not None
+            canonical = checked.whiteboard.model_dump(mode="json")
+            whiteboard_id = str(canonical["id"])
+            step_id = str(canonical["steps"][-1]["id"])
+
+            def write(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
+                    (json.dumps(canonical), whiteboard_id),
+                )
+
+            self._with_db(write)
+        payload: dict[str, object] = {**canonical, "kind": "whiteboard"}
+        with self._lock:
+            self._extension_rollbacks.setdefault(session_id, []).append(
+                (whiteboard_id, step_id)
+            )
+            self._pending.setdefault(session_id, []).append(payload)
+        return payload
+
+    def _remove_added_step(self, session_id: str, whiteboard_id: str, step_id: str) -> None:
+        """Take back a step the agent added in a turn that failed. Learner parts stay."""
+
+        with self._board_lock:
+            raw = self._drawing_json(session_id, whiteboard_id)
+            if raw is None:
+                return
+            drawing = json.loads(raw)
+            steps = drawing.get("steps")
+            if not isinstance(steps, list):
+                return
+            drawing["steps"] = [
+                step
+                for step in steps
+                if not (
+                    isinstance(step, dict)
+                    and step.get("id") == step_id
+                    and step.get("extension")
+                )
+            ]
+            if check_drawing(drawing).whiteboard is None:
+                return
+
+            def write(conn: sqlite3.Connection) -> None:
+                conn.execute(
+                    "UPDATE whiteboards SET drawing_json = ? WHERE id = ?",
+                    (json.dumps(drawing), whiteboard_id),
+                )
+
+            self._with_db(write)
 
     def whiteboards_for_reply(self, session_id: str) -> list[Whiteboard]:
         boards: list[Whiteboard] = []
@@ -1145,13 +1270,16 @@ class Chat:
             raise MissingQuiz()
         return self._public_from_row(row)
 
-    def grade_quiz(
-        self, quiz_id: str, choices: dict[str, str]
+    def answer_quiz(
+        self, quiz_id: str, question_id: str, choice_id: str
     ) -> dict[str, object]:
+        """Check one pick against the stored key and keep it (QZ-14, QZ-15). The
+        score is kept when the last question is checked (QZ-08)."""
+
         def write(conn: sqlite3.Connection) -> dict[str, object] | None:
             row = conn.execute(
                 """
-                SELECT a.id, a.session_id, q.questions_json, q.score_total
+                SELECT a.id, a.session_id, q.questions_json, q.submitted_json
                 FROM artifacts a
                 JOIN quizzes q ON q.id = a.id
                 WHERE a.id = ? AND a.kind = 'quiz'
@@ -1160,20 +1288,23 @@ class Chat:
             ).fetchone()
             if row is None:
                 return None
-            if row["score_total"] is not None:
-                raise AlreadyGraded()
             stored = json.loads(row["questions_json"])
-            score, submitted = grade(stored, choices)
-            updated = conn.execute(
+            raw = row["submitted_json"]
+            before = json.loads(raw) if raw else {}
+            submitted, score = check_answer(stored, before, question_id, choice_id)
+            conn.execute(
                 """
                 UPDATE quizzes
                 SET score_correct = ?, score_total = ?, submitted_json = ?
-                WHERE id = ? AND score_total IS NULL
+                WHERE id = ?
                 """,
-                (score["earned"], score["total"], json.dumps(submitted), quiz_id),
+                (
+                    score["earned"] if score else None,
+                    score["total"] if score else None,
+                    json.dumps(submitted),
+                    quiz_id,
+                ),
             )
-            if updated.rowcount == 0:
-                raise AlreadyGraded()
             return public_payload(
                 quiz_id,
                 row["session_id"],
@@ -1307,6 +1438,7 @@ class Chat:
                     """
                     UPDATE artifacts SET turn_id = ?
                     WHERE id = ? AND session_id = ? AND turn_id IS NULL
+                      AND learner_made = 0
                     """,
                     (turn_id, artifact_id, session_id),
                 )
@@ -1314,6 +1446,7 @@ class Chat:
         self._with_db(write)
         with self._lock:
             self._mark_rollbacks.pop(session_id, None)
+            self._extension_rollbacks.pop(session_id, None)
 
     def _take_pending(self, session_id: str) -> list[dict[str, object]]:
         with self._lock:
@@ -1322,6 +1455,9 @@ class Chat:
     def _discard_unattached(self, session_id: str) -> None:
         with self._lock:
             rollbacks = list(self._mark_rollbacks.pop(session_id, []))
+            added = list(self._extension_rollbacks.pop(session_id, []))
+        for whiteboard_id, step_id in reversed(added):
+            self._remove_added_step(session_id, whiteboard_id, step_id)
 
         def write(conn: sqlite3.Connection) -> None:
             for whiteboard_id, previous in reversed(rollbacks):
@@ -1334,7 +1470,7 @@ class Chat:
                 DELETE FROM quizzes
                 WHERE id IN (
                     SELECT id FROM artifacts
-                    WHERE session_id = ? AND turn_id IS NULL
+                    WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
                 )
                 """,
                 (session_id,),
@@ -1344,7 +1480,7 @@ class Chat:
                 DELETE FROM whiteboards
                 WHERE id IN (
                     SELECT id FROM artifacts
-                    WHERE session_id = ? AND turn_id IS NULL
+                    WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
                 )
                 """,
                 (session_id,),
@@ -1354,7 +1490,7 @@ class Chat:
                 DELETE FROM animation_jobs
                 WHERE id IN (
                     SELECT id FROM artifacts
-                    WHERE session_id = ? AND turn_id IS NULL
+                    WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
                 )
                 """,
                 (session_id,),
@@ -1362,7 +1498,7 @@ class Chat:
             conn.execute(
                 """
                 DELETE FROM artifacts
-                WHERE session_id = ? AND turn_id IS NULL
+                WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
                 """,
                 (session_id,),
             )
@@ -1373,11 +1509,10 @@ class Chat:
     def _public_from_row(self, row: sqlite3.Row) -> dict[str, object]:
         stored = json.loads(row["questions_json"])
         score = None
-        submitted = None
         if row["score_total"] is not None:
             score = {"earned": row["score_correct"], "total": row["score_total"]}
-            raw = row["submitted_json"]
-            submitted = json.loads(raw) if raw else {}
+        raw = row["submitted_json"]
+        submitted = json.loads(raw) if raw else {}
         return public_payload(
             row["id"],
             row["session_id"],
@@ -1486,10 +1621,19 @@ class Chat:
                     session_id TEXT NOT NULL REFERENCES sessions(id),
                     turn_id TEXT REFERENCES turns(id),
                     kind TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    learner_made INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            artifact_columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(artifacts)").fetchall()
+            }
+            if "learner_made" not in artifact_columns:
+                conn.execute(
+                    "ALTER TABLE artifacts ADD COLUMN learner_made INTEGER NOT NULL DEFAULT 0"
+                )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS quizzes (

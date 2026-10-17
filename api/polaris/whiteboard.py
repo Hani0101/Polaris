@@ -679,6 +679,16 @@ class Step(DrawingModel):
     id: RequiredId
     reply_part: BoundedText
     elements: list[Element]
+    # Version 7. Marks a step the agent added beside the learner's drawing on a
+    # pinned board (WB-20). Left out of the stored form when absent.
+    extension: Literal[True] | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_absent_extension(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("extension") is None:
+            data.pop("extension", None)
+        return data
 
     @model_validator(mode="after")
     def reply_part_names_this_step(self) -> Self:
@@ -855,6 +865,25 @@ class Whiteboard(DrawingModel):
                     )
         return self
 
+    @model_validator(mode="after")
+    def extension_steps_hold_agent_parts(self) -> Self:
+        """A step the agent added beside the learner's drawing holds only its own parts."""
+
+        for step in self.steps:
+            if not step.extension:
+                continue
+            if self.version != CURRENT_DRAWING_VERSION:
+                raise ValueError("an added step needs version 7")
+            if not step.elements:
+                raise ValueError(f"step '{step.id}' needs at least one part")
+            for element in step.elements:
+                if element.author != "agent" or isinstance(element, MarkElement):
+                    raise ValueError(
+                        f"step '{step.id}' can only hold the agent's own parts, "
+                        f"not '{element.id}'"
+                    )
+        return self
+
 
 class MissingWhiteboard(Exception):
     def __init__(self) -> None:
@@ -913,8 +942,30 @@ def _keep_stored_description(stored: Whiteboard, incoming: object) -> object:
     return payload
 
 
+BLANK_WHITEBOARD_DESCRIPTION = "Blank whiteboard"
+# The step a blank board starts with, so the learner's parts have a step to join.
+BLANK_STEP_ID = "learner"
+
+
+def blank_whiteboard(whiteboard_id: str, session_id: str) -> Whiteboard:
+    """An empty version 7 board the learner creates from the Whiteboard tab (WB-18)."""
+
+    return Whiteboard(
+        version=CURRENT_DRAWING_VERSION,
+        id=whiteboard_id,
+        session_id=session_id,
+        description=BLANK_WHITEBOARD_DESCRIPTION,
+        steps=[Step(id=BLANK_STEP_ID, reply_part=step_marker(BLANK_STEP_ID), elements=[])],
+    )
+
+
 def check_learner_drawing(stored: Whiteboard, incoming: object) -> DrawingCheck:
-    """Check a learner's copy. Agent elements and agent comments stay as stored."""
+    """Check a learner's copy and merge it into the stored board (WB-21).
+
+    The save replaces only the learner's parts and comments. Every agent part,
+    agent comment, and step already stored is kept, so a copy loaded before
+    the agent added a step loses nothing. Changing an agent part is refused.
+    """
 
     checked = check_drawing(_keep_stored_description(stored, incoming))
     if checked.whiteboard is None:
@@ -923,7 +974,41 @@ def check_learner_drawing(stored: Whiteboard, incoming: object) -> DrawingCheck:
     errors = _learner_change_errors(stored, updated)
     if errors:
         return DrawingCheck(whiteboard=None, errors=errors)
-    return checked
+    return check_drawing(_merged_learner_drawing(stored, updated))
+
+
+def _merged_learner_drawing(stored: Whiteboard, updated: Whiteboard) -> dict[str, object]:
+    updated_steps = {step.id: step for step in updated.steps}
+    steps: list[dict[str, object]] = []
+    for step in stored.steps:
+        dumped = step.model_dump(mode="json")
+        # Agent parts as stored, in their order, then the copy's learner parts.
+        # A copy that predates this step has no learner parts for it.
+        elements = [
+            element.model_dump(mode="json")
+            for element in step.elements
+            if element.author == "agent"
+        ]
+        copy = updated_steps.get(step.id)
+        if copy is not None:
+            elements.extend(
+                element.model_dump(mode="json")
+                for element in copy.elements
+                if element.author == "learner"
+            )
+        dumped["elements"] = elements
+        steps.append(dumped)
+    comments = [comment.model_dump(mode="json") for comment in updated.comments]
+    present_comments = {comment.id for comment in updated.comments}
+    comments.extend(
+        comment.model_dump(mode="json")
+        for comment in stored.comments
+        if comment.author == "agent" and comment.id not in present_comments
+    )
+    drawing = stored.model_dump(mode="json")
+    drawing["steps"] = steps
+    drawing["comments"] = comments
+    return drawing
 
 
 def apply_marks(stored: Whiteboard, incoming: object) -> DrawingCheck:
@@ -1172,14 +1257,21 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
         errors.append("whiteboard id cannot change")
     if updated.session_id != stored.session_id:
         errors.append("session_id cannot change")
+    stored_steps = {step.id: step for step in stored.steps}
     stored_step_ids = [step.id for step in stored.steps]
     updated_step_ids = [step.id for step in updated.steps]
-    if updated_step_ids != stored_step_ids:
-        errors.append("steps cannot be added, removed, or reordered")
+    # A copy loaded before the agent added a step lacks it, so the copy's steps
+    # are the stored steps with some left out, in the same order (WB-21).
+    if not _in_order_within(updated_step_ids, stored_step_ids):
+        errors.append("steps cannot be added or reordered")
     else:
-        for left, right in zip(stored.steps, updated.steps, strict=True):
-            if left.reply_part != right.reply_part:
+        for step in updated.steps:
+            stored_step = stored_steps[step.id]
+            if step.reply_part != stored_step.reply_part:
                 errors.append("a step's reply text cannot change")
+                break
+            if step.extension != stored_step.extension:
+                errors.append(f"step '{step.id}' cannot change who added it")
                 break
 
     stored_agents = {
@@ -1191,7 +1283,7 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
     for element_id, element in stored_agents.items():
         found = updated_by_id.get(element_id)
         if found is None:
-            errors.append(f"agent element '{element_id}' was removed")
+            # Kept from the stored board (WB-21).
             continue
         if found.model_dump(mode="json") != element.model_dump(mode="json"):
             errors.append(f"agent element '{element_id}' was changed")
@@ -1208,14 +1300,24 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
     updated_comments = {comment.id: comment for comment in updated.comments}
     for comment_id, comment in stored_agent_comments.items():
         found = updated_comments.get(comment_id)
-        if found is None:
-            errors.append(f"agent comment '{comment_id}' was removed")
-        elif found.model_dump(mode="json") != comment.model_dump(mode="json"):
+        if found is not None and found.model_dump(mode="json") != comment.model_dump(mode="json"):
             errors.append(f"agent comment '{comment_id}' was changed")
     for comment in updated.comments:
         if comment.id not in stored_agent_comments and comment.author != "learner":
             errors.append(f"comment '{comment.id}' must be authored by the learner")
     return errors
+
+
+def _in_order_within(items: list[str], within: list[str]) -> bool:
+    """True when every item is in within, once, and in within's order."""
+
+    position = 0
+    for item in items:
+        try:
+            position = within.index(item, position) + 1
+        except ValueError:
+            return False
+    return True
 
 
 def describe_pointed(whiteboard: Whiteboard, element_ids: Sequence[str]) -> str:

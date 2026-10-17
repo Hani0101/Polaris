@@ -10,7 +10,7 @@ import {
 import type { Point, Style, Whiteboard } from '../api.ts'
 import { GRAPH_SHAPE_TYPE } from './graphShapes.tsx'
 import { CODE_SHAPE_TYPE, MATH_SHAPE_TYPE } from './mathCodeShapes.tsx'
-import { agentMarkLook, mapStyle, whiteboardMarks } from './style.ts'
+import { agentAddedLook, agentMarkLook, mapStyle, whiteboardMarks } from './style.ts'
 
 const KNOWN_KINDS = new Set([
   'rectangle',
@@ -62,6 +62,7 @@ export type DrawingWhiteboard = {
     id: string
     reply_part: string
     elements: DrawingElement[]
+    extension?: true
   }>
 }
 
@@ -457,6 +458,16 @@ function arrowBindings(
   return bindings
 }
 
+// An added step is drawn in the agent-added look, whatever stroke it stored.
+function withAgentAddedLook(shape: TLShapePartial): TLShapePartial {
+  const props = shape.props as Record<string, unknown> | undefined
+  if (!props) return shape
+  const next: Record<string, unknown> = { ...props }
+  if ('color' in props) next.color = agentAddedLook.color
+  if ('dash' in props) next.dash = agentAddedLook.dash
+  return { ...shape, props: next } as TLShapePartial
+}
+
 export function whiteboardToShapes(whiteboard: DrawingWhiteboard | Whiteboard): WhiteboardShapes {
   const shapes: TLShapePartial[] = []
   const skipped: SkippedElement[] = []
@@ -471,7 +482,7 @@ export function whiteboardToShapes(whiteboard: DrawingWhiteboard | Whiteboard): 
       }
       const shape = shapeFor(element, step.id, stepIndex, elementIndex)
       if (isSkipped(shape)) skipped.push(shape)
-      else shapes.push(shape)
+      else shapes.push(step.extension ? withAgentAddedLook(shape) : shape)
     })
   })
 

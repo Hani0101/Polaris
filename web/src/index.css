@@ -318,11 +318,13 @@ button {
     border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-button:hover:not(:disabled) {
+/* The filled-button states are not for the whiteboard editor: its menus and panels draw their
+   own hover highlight, and a light fill under its light text fails contrast. */
+button:hover:not(:disabled, .tl-container *) {
   background: var(--color-action-primary-hover);
 }
 
-button:active:not(:disabled) {
+button:active:not(:disabled, .tl-container *) {
   background: var(--color-action-primary-active);
 }
 
@@ -352,7 +354,7 @@ button.ghost:active:not(:disabled) {
   background: var(--color-action-secondary-hover);
 }
 
-button:disabled {
+button:disabled:not(.tl-container *) {
   background: var(--color-action-primary-disabled);
   border: var(--border-width-default) solid var(--color-border-subtle);
   color: var(--color-text-disabled);
@@ -924,6 +926,13 @@ button:disabled {
   line-height: var(--font-line-height-tight);
 }
 
+/* DS-GAP: score line on a finished quiz's chip, used typography.small in secondary text */
+.quiz-chip-score {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -949,7 +958,7 @@ button:disabled {
     position: relative;
     top: auto;
     bottom: auto;
-    width: var(--layout-panel-left);
+    width: var(--panel-left-width, var(--layout-panel-left));
     flex: none;
     transform: none;
     transition: none;
@@ -1101,10 +1110,15 @@ a.whiteboard-original {
   position: relative;
 }
 
+/* Centered under the selection, kept inside the board. It never wraps: the half width in the
+   clamp is room for the label (about 9rem), so near an edge the button slides in. */
 .whiteboard-ask {
   position: absolute;
   z-index: var(--z-index-modal);
-  transform: translate(-50%, 0);
+  left: clamp(5rem, var(--ask-left), calc(100% - 5rem));
+  top: clamp(var(--space-xs), calc(var(--ask-top) + var(--space-sm)), calc(100% - 3rem));
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .whiteboard-surface > .tl-container {

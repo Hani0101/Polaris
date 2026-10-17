@@ -90,6 +90,9 @@ function renderPanel(
     onOpenAnimation: (sessionId: string, jobId: string) => void
     onClose: () => void
     onAskAboutStep: (ask: AskAboutStep) => void
+    whiteboards: WhiteboardArtifact[]
+    pinnedWhiteboardId: string | null
+    onNewWhiteboard: () => void
   }> = {},
 ) {
   return render(
@@ -100,8 +103,11 @@ function renderPanel(
       onOpenQuiz={callbacks.onOpenQuiz ?? noop}
       onOpenWhiteboard={callbacks.onOpenWhiteboard ?? noop}
       onOpenAnimation={callbacks.onOpenAnimation ?? noop}
-      onQuizGraded={noop}
+      onQuizChecked={noop}
       onAskAboutStep={callbacks.onAskAboutStep}
+      whiteboards={callbacks.whiteboards}
+      pinnedWhiteboardId={callbacks.pinnedWhiteboardId}
+      onNewWhiteboard={callbacks.onNewWhiteboard}
     />,
   )
 }
@@ -182,7 +188,7 @@ test('the animation tab shows a running job and a failed one', () => {
       onOpenQuiz={noop}
       onOpenWhiteboard={noop}
       onOpenAnimation={noop}
-      onQuizGraded={noop}
+      onQuizChecked={noop}
     />,
   )
   expect(screen.getByRole('alert').textContent).toBe(
@@ -212,12 +218,36 @@ test('a running job in the animation tab shows its stage (AN-19)', () => {
   expect(screen.getByRole('status').textContent).toBe('Checking the animation')
 })
 
-test('the whiteboard tab shows the most recent whiteboard and opens it', () => {
+test('the whiteboard tab lists every board, newest first, and opening one pins it', () => {
+  // WB-18, WB-19
   const onOpenWhiteboard = vi.fn()
-  renderPanel([olderBoard, quiz, board], { onOpenWhiteboard })
-  expect(screen.getByTestId('whiteboard').textContent).toBe('board-new')
-  fireEvent.click(screen.getByRole('button', { name: 'Open whiteboard' }))
+  renderPanel([quiz], {
+    onOpenWhiteboard,
+    whiteboards: [olderBoard, board],
+    pinnedWhiteboardId: 'board-old',
+  })
+  const list = screen.getByRole('list', { name: 'Whiteboards in this session' })
+  const cards = Array.from(list.querySelectorAll('button'))
+  expect(cards.map((card) => card.textContent)).toEqual([
+    'WhiteboardA pie cut into four parts.',
+    'WhiteboardPinnedAn older drawing.',
+  ])
+  expect(cards[1].getAttribute('aria-current')).toBe('true')
+  expect(cards[0].getAttribute('aria-current')).toBeNull()
+  fireEvent.click(cards[0])
   expect(onOpenWhiteboard).toHaveBeenCalledWith('board-new')
+})
+
+test('New whiteboard makes a board, with or without boards already', () => {
+  // WB-18
+  const onNewWhiteboard = vi.fn()
+  const { unmount } = renderPanel([], { onNewWhiteboard })
+  expect(screen.getByRole('heading', { name: 'No whiteboard yet' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'New whiteboard' }))
+  unmount()
+  renderPanel([], { onNewWhiteboard, whiteboards: [board] })
+  fireEvent.click(screen.getByRole('button', { name: 'New whiteboard' }))
+  expect(onNewWhiteboard).toHaveBeenCalledTimes(2)
 })
 
 test('the quiz tab shows the most recent quiz', () => {

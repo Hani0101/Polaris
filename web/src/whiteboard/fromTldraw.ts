@@ -222,6 +222,8 @@ export function applyLearnerShapes(
     else fresh.push(shape)
   }
 
+  // New learner parts join the last step that is not one the agent added (WB-20).
+  const learnerStep = whiteboard.steps.findLastIndex((step) => !step.extension)
   const steps = whiteboard.steps.map((step, index) => {
     const elements: WhiteboardElement[] = []
     for (const element of step.elements) {
@@ -233,7 +235,7 @@ export function applyLearnerShapes(
       if (!shape) continue
       elements.push(elementFromShape(shape, element) ?? element)
     }
-    if (index === whiteboard.steps.length - 1) {
+    if (index === learnerStep) {
       for (const shape of fresh) {
         const created = elementFromShape(shape, null)
         if (created) elements.push(created)

@@ -33,6 +33,30 @@ export function visibleReply(raw: string, streaming: boolean, markers: readonly 
   return hideIncompleteMarker(text)
 }
 
+/**
+ * The pinned board while a reply adds to it (WB-20). The steps it had when the
+ * turn began stay. A step added in this turn appears once its marker has
+ * arrived in the reply text (WB-06).
+ */
+export function revealAddedSteps<T extends Whiteboard>(
+  whiteboard: T,
+  knownStepIds: ReadonlySet<string>,
+  rawReply: string,
+): T {
+  const steps = whiteboard.steps.filter(
+    (step) => knownStepIds.has(step.id) || (step.reply_part !== '' && rawReply.includes(step.reply_part)),
+  )
+  if (steps.length === whiteboard.steps.length) return whiteboard
+  const shown = new Set(steps.flatMap((step) => step.elements.map((element) => element.id)))
+  return {
+    ...whiteboard,
+    steps,
+    comments: whiteboard.comments.filter(
+      (comment) => !comment.element_id || shown.has(comment.element_id),
+    ),
+  }
+}
+
 function stepsUnlockedBy(steps: WhiteboardStep[], rawReply: string): WhiteboardStep[] {
   const unlocked: WhiteboardStep[] = []
   for (const step of steps) {

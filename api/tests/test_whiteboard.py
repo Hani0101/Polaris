@@ -353,7 +353,7 @@ def test_a_learner_element_is_kept_with_author_learner():
     assert (added.position.x, added.position.y) == (120, 40)
 
 
-def test_a_learner_cannot_change_or_remove_an_agent_element():
+def test_a_learner_cannot_change_an_agent_element_and_a_missing_one_is_kept():
     moved = valid_whiteboard()
     moved["steps"][0]["elements"][0]["position"] = {"x": 400, "y": 400}
     removed = valid_whiteboard()
@@ -366,10 +366,10 @@ def test_a_learner_cannot_change_or_remove_an_agent_element():
     assert any(
         "rect-1" in error and "changed" in error for error in moved_result.errors
     )
-    assert removed_result.whiteboard is None
-    assert any(
-        "rect-1" in error and "removed" in error for error in removed_result.errors
-    )
+    # A copy without the agent element is stale; the stored element is kept (WB-21).
+    assert removed_result.errors == []
+    assert removed_result.whiteboard is not None
+    assert removed_result.whiteboard.steps[0].elements[0].id == "rect-1"
 
 
 def test_bad_learner_data_is_refused_by_the_check():
@@ -659,7 +659,7 @@ def test_arrow_and_note_marks_name_their_target():
     )
 
 
-def test_a_learner_cannot_change_or_remove_a_mark():
+def test_a_learner_cannot_change_a_mark_and_a_missing_one_is_kept():
     stored_result = apply_marks(
         check_drawing(_answer_drawing()).whiteboard, _mark_action()
     )
@@ -674,8 +674,9 @@ def test_a_learner_cannot_change_or_remove_a_mark():
     removed = stored.model_dump(mode="json")
     removed["steps"][-1]["elements"] = []
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("mark-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert [element.id for element in gone.whiteboard.steps[-1].elements] == ["mark-1"]
 
 
 def _described_drawing() -> dict[str, object]:
@@ -1197,8 +1198,9 @@ def test_a_learner_save_cannot_change_agent_math_or_code():
     removed = stored.model_dump(mode="json")
     removed["steps"][0]["elements"] = [removed["steps"][0]["elements"][1]]
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("formula-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert "formula-1" in [element.id for element in gone.whiteboard.steps[0].elements]
 
     rewritten = stored.model_dump(mode="json")
     rewritten["version"] = DESCRIBED_DRAWING_VERSION
@@ -1556,8 +1558,9 @@ def test_a_learner_save_cannot_change_an_agent_graph():
     removed = stored.model_dump(mode="json")
     removed["steps"][0]["elements"] = []
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("graph-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert [element.id for element in gone.whiteboard.steps[0].elements] == ["graph-1"]
 
     rewritten = stored.model_dump(mode="json")
     rewritten["version"] = 4
