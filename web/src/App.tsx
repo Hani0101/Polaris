@@ -280,7 +280,7 @@ function App() {
   const switching = useRef(false)
   const toastTimer = useRef<number | null>(null)
   const titleTimers = useRef<number[]>([])
-  // The session whose agent was started in this visit, once the learner began typing.
+  // The session whose agent was started in this visit.
   const warmedFor = useRef<string | null>(null)
 
   const sendablePicture = picture && picture.whiteboard_id === pinnedId ? picture : null
@@ -491,8 +491,17 @@ function App() {
     setSendError(null)
   }
 
-  // Typing starts the agent, so the first reply does not wait for it. Opening a
-  // session to read it does not. A failure only loses the head start.
+  // Opening or starting a session starts its agent, so the first reply does not
+  // wait for the CLI to start. A failure only loses the head start. A draft left
+  // unsent closes the agent it warmed (CH-19).
+  const warmableId = open && !open.ended ? open.id : null
+  useEffect(() => {
+    if (!warmableId || warmedFor.current === warmableId) return
+    warmedFor.current = warmableId
+    warmSession(warmableId).catch(() => {})
+  }, [warmableId])
+
+  // Typing warms again after the conversation was reset in the same session.
   function warmOnTyping(value: string) {
     if (!open || open.ended || !value.trim() || warmedFor.current === open.id) return
     warmedFor.current = open.id
