@@ -10,7 +10,7 @@ import shutil
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -62,6 +62,7 @@ from polaris.quiz import (
     public_payload,
 )
 from polaris.extend import ExtensionCheck, apply_extension
+from polaris.resources import ResourceStore, create_resource_tables
 from polaris.whiteboard import (
     MissingWhiteboard,
     Whiteboard,
@@ -253,6 +254,7 @@ class Chat:
         self._animation_threads: dict[str, threading.Thread] = {}
         self._conn: sqlite3.Connection | None = None
         self._open_db()
+        self.resources = ResourceStore(data_dir, self._with_db, _now)
         self._init_db()
         self._fail_interrupted_jobs()
         binder = getattr(agent, "bind_store", None)
@@ -265,6 +267,7 @@ class Chat:
                 extend_whiteboard=self.extend_whiteboard,
                 preview_extension=self.preview_extension,
                 start_animation_job=self.start_animation_job,
+                read_resource=self.read_resource,
             )
 
     def list_sessions(self) -> list[dict[str, object]]:
@@ -444,6 +447,7 @@ class Chat:
             job_ids = await asyncio.to_thread(self._delete_rows, session_id)
             for job_id in job_ids:
                 shutil.rmtree(self.data_dir / "animation" / job_id, ignore_errors=True)
+            self.resources.delete_session_files(session_id)
             if sdk_session_id:
                 try:
                     delete_session(sdk_session_id)
@@ -490,6 +494,7 @@ class Chat:
                 conn.execute(f"DELETE FROM {table} WHERE id IN ({artifacts})", (session_id,))
             conn.execute("DELETE FROM artifacts WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
+            self.resources.delete_session(session_id, conn)
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return job_ids
 
@@ -603,6 +608,12 @@ class Chat:
             if pinned is not None:
                 extra["pinned"] = pinned
             animations = await asyncio.to_thread(self.animations_for_reply, session_id)
+            # The agent sees the resource list as it stands now (RS-17).
+            resource_lines = await asyncio.to_thread(
+                self.resources.prompt_lines, session_id
+            )
+            if resource_lines:
+                extra["resources"] = tuple(resource_lines)
             async for item in self.agent.reply(
                 session_id=session_id,
                 profile=profile,
@@ -652,6 +663,81 @@ class Chat:
                     )
             else:
                 await asyncio.to_thread(self._discard_unattached, session_id)
+
+    def _require_open_for_resource(self, session_id: str) -> None:
+        """A resource for a session being deleted, or gone, is dropped (RS-18, CH-14)."""
+
+        if session_id in self._deleting:
+            raise MissingSession()
+        self._require(session_id)
+
+    def list_resources(self, session_id: str) -> list[dict[str, object]]:
+        self._require(session_id)
+        return self.resources.list_all(session_id)
+
+    def add_resource_file(
+        self, session_id: str, filename: str, data: bytes
+    ) -> dict[str, object]:
+        self._require_open_for_resource(session_id)
+        return self._guard_late_resource(
+            session_id, lambda: self.resources.add_file(session_id, filename, data)
+        )
+
+    def add_resource_note(
+        self, session_id: str, name: str, text: str
+    ) -> dict[str, object]:
+        self._require_open_for_resource(session_id)
+        return self._guard_late_resource(
+            session_id, lambda: self.resources.add_note(session_id, name, text)
+        )
+
+    def _guard_late_resource(
+        self, session_id: str, add: Callable[[], dict[str, object]]
+    ) -> dict[str, object]:
+        try:
+            added = add()
+        except sqlite3.IntegrityError:
+            raise MissingSession() from None
+        if session_id in self._deleting:
+            self.resources.remove(session_id, str(added["id"]))
+            raise MissingSession()
+        return added
+
+    def get_resource(self, session_id: str, resource_id: str) -> dict[str, object]:
+        self._require(session_id)
+        return self.resources.get(session_id, resource_id)
+
+    def resource_file(self, session_id: str, resource_id: str):
+        self._require(session_id)
+        return self.resources.original(session_id, resource_id)
+
+    def rename_resource(
+        self, session_id: str, resource_id: str, name: str
+    ) -> dict[str, object]:
+        self._require(session_id)
+        return self.resources.rename(session_id, resource_id, name)
+
+    def edit_resource_note(
+        self, session_id: str, resource_id: str, text: str
+    ) -> dict[str, object]:
+        self._require(session_id)
+        return self.resources.edit_note(session_id, resource_id, text)
+
+    def remove_resource(self, session_id: str, resource_id: str) -> None:
+        self._require(session_id)
+        self.resources.remove(session_id, resource_id)
+
+    def read_resource(
+        self,
+        session_id: str,
+        resource_id: str,
+        first: int | None = None,
+        last: int | None = None,
+    ) -> dict[str, Any]:
+        """What the agent's read_resource tool returns (RS-07)."""
+
+        self._require(session_id)
+        return self.resources.read_for_agent(session_id, resource_id, first, last)
 
     def create_quiz(self, session_id: str, spec: dict[str, Any]) -> dict[str, object]:
         self._require(session_id)
@@ -1765,6 +1851,7 @@ class Chat:
                 """
             )
             create_profile_tables(conn)
+            create_resource_tables(conn)
 
         self._with_db(write)
 

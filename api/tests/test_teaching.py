@@ -42,6 +42,7 @@ from polaris.teaching import (
     START_ANIMATION_JOB_DESCRIPTION,
     START_ANIMATION_JOB_SCHEMA,
     START_ANIMATION_JOB_TOOL,
+    READ_RESOURCE_TOOL,
     TEACHING_MAX_TURNS,
     ClaudeTeachingAgent,
     TeachingFailed,
@@ -118,6 +119,7 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
         SIMPLIFY_WHITEBOARD_TOOL,
         EXTEND_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
+        READ_RESOURCE_TOOL,
     ]
     assert options.include_partial_messages is True
     assert options.verbatim_prompts is True
@@ -704,6 +706,7 @@ def test_create_quiz_tool_stores_for_the_open_session(
         SIMPLIFY_WHITEBOARD_TOOL,
         EXTEND_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
+        READ_RESOURCE_TOOL,
     ]
     assert created[0].options.max_turns == TEACHING_MAX_TURNS
 
@@ -946,6 +949,7 @@ def test_start_animation_job_tool_stores_for_the_open_session(
         SIMPLIFY_WHITEBOARD_TOOL,
         EXTEND_WHITEBOARD_TOOL,
         START_ANIMATION_JOB_TOOL,
+        READ_RESOURCE_TOOL,
     ]
 
 

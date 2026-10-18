@@ -6,7 +6,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import Body, FastAPI
+from urllib.parse import unquote
+
+from fastapi import Body, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -32,6 +34,7 @@ from polaris.login import ApiKeyPresent, assert_claude_login
 from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import AlreadyChecked, InvalidSubmission, MissingQuiz
+from polaris.resources import MAX_FILE_BYTES, MissingResource, ResourceRefused, too_big
 from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
 from polaris.teaching import ClaudeTeachingAgent, TeachingFailed, reply_error_message
 
@@ -64,6 +67,16 @@ class TurnBody(BaseModel):
     animation_step: AnimationStepBody | None = None
     # The board pinned above the conversation. The turn is about it (WB-19).
     pinned_whiteboard_id: str | None = None
+
+
+class NoteBody(BaseModel):
+    name: str = ""
+    text: str
+
+
+class ResourceEditBody(BaseModel):
+    name: str | None = None
+    text: str | None = None
 
 
 class AnswerBody(BaseModel):
@@ -216,6 +229,17 @@ def create_app(
         _request, exc: InvalidAnimationStep
     ) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(MissingResource)
+    async def missing_resource(_request, exc: MissingResource) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(ResourceRefused)
+    async def resource_refused(_request, exc: ResourceRefused) -> JSONResponse:
+        status = 413 if exc.code == "too_big" else 422
+        return JSONResponse(
+            status_code=status, content={"detail": str(exc), "code": exc.code}
+        )
 
     @app.exception_handler(AlreadyChecked)
     async def already_checked(_request, exc: AlreadyChecked) -> JSONResponse:
@@ -375,6 +399,65 @@ def create_app(
         drawing: dict[str, Any] = Body(),
     ) -> dict[str, object]:
         return chat.update_whiteboard(session_id, whiteboard_id, drawing)
+
+    @app.get("/api/sessions/{session_id}/resources")
+    def list_resources(session_id: str) -> dict[str, list[dict[str, object]]]:
+        return {"resources": chat.list_resources(session_id)}
+
+    @app.post("/api/sessions/{session_id}/resources", status_code=201)
+    async def add_resource(session_id: str, request: Request) -> dict[str, object]:
+        """Add a file. The body is the file and X-Filename is its name (RS-04)."""
+
+        await asyncio.to_thread(chat.list_resources, session_id)
+        declared = request.headers.get("content-length")
+        if declared is not None and declared.isdigit() and int(declared) > MAX_FILE_BYTES:
+            raise too_big()
+        data = bytearray()
+        async for piece in request.stream():
+            data.extend(piece)
+            if len(data) > MAX_FILE_BYTES:
+                raise too_big()
+        filename = unquote(request.headers.get("x-filename", ""))
+        return await asyncio.to_thread(
+            chat.add_resource_file, session_id, filename, bytes(data)
+        )
+
+    @app.post("/api/sessions/{session_id}/resources/notes", status_code=201)
+    def add_resource_note(session_id: str, body: NoteBody) -> dict[str, object]:
+        return chat.add_resource_note(session_id, body.name, body.text)
+
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}")
+    def read_resource(session_id: str, resource_id: str) -> dict[str, object]:
+        return chat.get_resource(session_id, resource_id)
+
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}/file")
+    def read_resource_file(session_id: str, resource_id: str) -> FileResponse:
+        path, media_type = chat.resource_file(session_id, resource_id)
+        return FileResponse(
+            path,
+            media_type=media_type,
+            headers={
+                "Content-Security-Policy": "sandbox; default-src 'none'",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Disposition": "inline",
+            },
+        )
+
+    @app.patch("/api/sessions/{session_id}/resources/{resource_id}")
+    def edit_resource(
+        session_id: str, resource_id: str, body: ResourceEditBody
+    ) -> dict[str, object]:
+        result: dict[str, object] = chat.get_resource(session_id, resource_id)
+        if body.name is not None:
+            result = chat.rename_resource(session_id, resource_id, body.name)
+        if body.text is not None:
+            result = chat.edit_resource_note(session_id, resource_id, body.text)
+        return {key: value for key, value in result.items() if key != "text_pages"}
+
+    @app.delete("/api/sessions/{session_id}/resources/{resource_id}")
+    def remove_resource(session_id: str, resource_id: str) -> dict[str, str]:
+        chat.remove_resource(session_id, resource_id)
+        return {"id": resource_id}
 
     @app.get("/api/sessions/{session_id}/jobs/{job_id}")
     def read_job(session_id: str, job_id: str) -> dict[str, object]:
