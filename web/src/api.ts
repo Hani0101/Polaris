@@ -1,3 +1,6 @@
+import { accessHeader, refreshSignIn } from './auth.ts'
+import { ApiError, readDetail } from './httpError.ts'
+
 export type Choice = {
   id: string
   text: string
@@ -283,30 +286,16 @@ export function sessionLabel(session: SessionSummary | undefined): string {
   return session?.name || session?.preview || 'New session'
 }
 
-export class ApiError extends Error {
-  status: number
+export { ApiError }
 
-  constructor(status: number, message: string) {
-    super(message)
-    this.status = status
-  }
-}
-
-async function readDetail(response: Response): Promise<string> {
-  try {
-    const body = (await response.json()) as { detail?: unknown }
-    if (typeof body.detail === 'string') return body.detail
-  } catch {
-    // The body was not JSON.
-  }
-  return response.statusText || 'The request failed.'
-}
-
+// A signed-in page sends its access token on every request (AU-08). Only the
+// profile needs it (AU-12); everything else works without one.
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     headers: {
       Accept: 'application/json',
+      ...(await accessHeader()),
       ...init?.headers,
     },
   })
@@ -337,8 +326,17 @@ export function deleteSession(
   )
 }
 
-export function readProfile(signal?: AbortSignal): Promise<string[]> {
-  return request<{ facts: string[] }>('/api/profile', { signal }).then((body) => body.facts)
+/** The profile needs a valid access token (AU-12). A refused token is refreshed once. */
+export async function readProfile(signal?: AbortSignal): Promise<string[]> {
+  const read = () =>
+    request<{ facts: string[] }>('/api/profile', { signal }).then((body) => body.facts)
+  try {
+    return await read()
+  } catch (caught) {
+    if (!(caught instanceof ApiError) || caught.status !== 401) throw caught
+    if (!(await refreshSignIn())) throw caught
+    return read()
+  }
 }
 
 export function startSession(): Promise<Session> {
@@ -472,6 +470,7 @@ export async function sendTurn(
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
+      ...(await accessHeader()),
     },
     body: JSON.stringify(
       turnBody(

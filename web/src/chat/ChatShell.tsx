@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } f
 import type { CSSProperties, FormEvent } from 'react'
 import type { Artifact, BoardPicture, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
+import type { SignInState } from '../auth.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
 import { useSteady } from '../useSteady.ts'
@@ -52,6 +53,10 @@ type ChatShellProps = {
   onDelete: (sessionId: string) => Promise<void>
   onOpenSettings: () => void
   onLeave: () => void
+  /** Sign-in state for the top bar (AU-01, AU-02). */
+  account?: SignInState
+  onSignIn?: () => void
+  onSignOut?: () => void
   turns: ViewTurn[]
   draft: Draft
   sending: boolean
@@ -116,6 +121,9 @@ export function ChatShell({
   onDelete,
   onOpenSettings,
   onLeave,
+  account,
+  onSignIn,
+  onSignOut,
   turns,
   draft,
   sending,
@@ -214,6 +222,9 @@ export function ChatShell({
           onToggleSessions={onToggleSessions}
           onLeave={onLeave}
           canLeave={sessionOpen}
+          account={account}
+          onSignIn={onSignIn}
+          onSignOut={onSignOut}
           showToolsToggle={sessionOpen && !phone}
           toolsOpen={toolsOpen}
           onToggleTools={onToggleTools}

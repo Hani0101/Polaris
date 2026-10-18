@@ -39,6 +39,9 @@ import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
 import { QuizPage } from './QuizPage.tsx'
 import { SettingsPage } from './SettingsPage.tsx'
 import { SETTINGS_PATH, isSettingsPath } from './settingsPath.ts'
+import { restoreSignIn, signOut, useSignIn } from './auth.ts'
+import { SignInPage } from './SignInPage.tsx'
+import { SIGN_IN_PATH, isSignInPath } from './signInPath.ts'
 import { useSteadyHandlers } from './useSteady.ts'
 import { WhiteboardPage } from './WhiteboardPage.tsx'
 
@@ -230,6 +233,7 @@ function mergeTurns(saved: ViewTurn[], extras: PlacedTurn[]): ViewTurn[] {
 
 function App() {
   const [path, setPath] = useState(window.location.pathname)
+  const account = useSignIn()
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [open, setOpen] = useState<Session | null>(null)
   // Kept outside React state, so a typed key draws the composer and not the app.
@@ -332,6 +336,12 @@ function App() {
       animationStatusRef.current(jobId, status)
     })
   }, [artifacts])
+
+  // A refresh cookie from an earlier visit signs the learner back in quietly.
+  // Without one the app opens anonymous (AU-01).
+  useEffect(() => {
+    void restoreSignIn()
+  }, [])
 
   useEffect(() => {
     function onPop() {
@@ -544,6 +554,15 @@ function App() {
     setToast(message)
     if (toastTimer.current !== null) window.clearTimeout(toastTimer.current)
     toastTimer.current = window.setTimeout(() => setToast(null), TOAST_MS)
+  }
+
+  async function onSignOut() {
+    setError(null)
+    try {
+      await signOut()
+    } catch {
+      setError("Couldn't sign out. Check your connection and try again.")
+    }
   }
 
   async function onCopy(text: string) {
@@ -778,6 +797,8 @@ function App() {
       if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
     },
     onLeave: () => void onLeave(),
+    onSignIn: () => goTo(SIGN_IN_PATH),
+    onSignOut: () => void onSignOut(),
     onDraftChange: (value: string) => {
       if (sendError) setSendError(null)
       warmOnTyping(value)
@@ -829,7 +850,10 @@ function App() {
   const whiteboardRoute = pathWhiteboard(path)
   const animationRoute = pathAnimation(path)
   const settingsRoute = isSettingsPath(path)
-  const covering = Boolean(quizId || whiteboardRoute || animationRoute || settingsRoute)
+  const signInRoute = isSignInPath(path)
+  const covering = Boolean(
+    quizId || whiteboardRoute || animationRoute || settingsRoute || signInRoute,
+  )
 
   async function onBackFromCover() {
     goTo('/')
@@ -852,6 +876,12 @@ function App() {
   return (
     <>
       {settingsRoute ? <SettingsPage onBack={() => void onBackFromCover()} /> : null}
+      {signInRoute ? (
+        <SignInPage
+          onBack={() => void onBackFromCover()}
+          onSignedIn={() => void onBackFromCover()}
+        />
+      ) : null}
       {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromCover()} /> : null}
       {whiteboardRoute ? (
         <WhiteboardPage
@@ -900,6 +930,7 @@ function App() {
           loading={loading}
           error={error}
           sessionListOpen={sessionListOpen}
+          account={account}
           turns={turns}
           draft={draft}
           sending={pending?.status === 'streaming' || pending?.status === 'done'}

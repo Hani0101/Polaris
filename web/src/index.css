@@ -114,6 +114,7 @@
   --component-progress-height: 8px;
   --component-checkbox-size: 24px;
   --component-radio-mark-size: 10px;
+  --component-avatar-size: 32px;
   --component-drawer-width: 80%;
   --component-bottom-sheet-start-height: 33%;
   --component-bottom-sheet-handle-width: 32px;
@@ -499,6 +500,44 @@ button:disabled:not(.tl-container *) {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
   line-height: var(--font-line-height-normal);
+}
+
+/* Avatar (DESIGN.md 7, Avatar): the account button. The 44px tap area holds a 32px circle. */
+button.avatar-btn {
+  width: var(--component-tap-target-min);
+  height: var(--component-tap-target-min);
+  min-height: var(--component-tap-target-min);
+  padding: 0;
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+
+button.avatar-btn:hover:not(:disabled),
+button.avatar-btn:active:not(:disabled) {
+  background: transparent;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--component-avatar-size);
+  height: var(--component-avatar-size);
+  border-radius: var(--radius-full);
+  background: var(--color-action-secondary-default);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.avatar-btn:hover .avatar {
+  background: var(--color-action-secondary-hover);
+}
+
+.avatar-btn:active .avatar {
+  background: var(--color-action-secondary-active);
 }
 
 .shell-alert {
