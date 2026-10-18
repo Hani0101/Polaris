@@ -65,6 +65,7 @@ from polaris.quiz import (
 )
 from polaris.extend import ExtensionCheck, apply_extension
 from polaris.resources import ResourceStore, create_resource_tables
+from polaris.sign_in import SignIn
 from polaris.whiteboard import (
     MissingWhiteboard,
     Whiteboard,
@@ -286,6 +287,7 @@ class Chat:
         self._conn: sqlite3.Connection | None = None
         self._open_db()
         self.resources = ResourceStore(data_dir, self._with_db, _now)
+        self.sign_in = SignIn(data_dir, self._with_db)
         self._init_db()
         self._fail_interrupted_jobs()
         binder = getattr(agent, "bind_store", None)

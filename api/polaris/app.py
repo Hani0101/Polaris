@@ -8,7 +8,7 @@ from typing import Any
 
 from urllib.parse import unquote
 
-from fastapi import Body, FastAPI, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -35,6 +35,17 @@ from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.quiz import AlreadyChecked, InvalidSubmission, MissingQuiz
 from polaris.resources import MAX_FILE_BYTES, MissingResource, ResourceRefused, too_big
+from polaris.sign_in import (
+    REFRESH_COOKIE,
+    REFRESH_PATH,
+    NoPairStored,
+    PairAlreadyStored,
+    PairRefused,
+    RefreshRefused,
+    SignInBlocked,
+    Tokens,
+    WrongPair,
+)
 from polaris.whiteboard import MissingWhiteboard, WhiteboardUnreadable
 from polaris.teaching import ClaudeTeachingAgent, TeachingFailed, reply_error_message
 
@@ -84,6 +95,15 @@ class AnswerBody(BaseModel):
     choice_id: str
 
 
+class PairBody(BaseModel):
+    username: str
+    password: str
+
+
+class ChosenPairBody(PairBody):
+    password_again: str
+
+
 # HTML from a job that finished before decision 0006 runs in its own
 # opaque origin, even when opened directly, so it cannot call this API. It
 # cannot load anything from the network either. New jobs store JSON data,
@@ -99,8 +119,56 @@ PLAYBACK_HEADERS = {
 }
 
 
+# v1 is one learner on one machine (decision 0001, AU-14). Most routes are open
+# and the first use chooses the pair, so a request from another machine, or
+# for a host name that is not this machine (DNS rebinding), is refused.
+LOCAL_NAMES = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _from_this_machine(request: Request) -> bool:
+    # No client address means a local socket, not the network.
+    if request.client is not None and request.client.host not in LOCAL_NAMES:
+        return False
+    host = request.headers.get("host", "")
+    if host.startswith("["):
+        name = host[1:].partition("]")[0]
+    else:
+        name = host.rpartition(":")[0] if ":" in host else host
+    return name.lower() in LOCAL_NAMES
+
+
 def _sse(payload: dict[str, object]) -> str:
     return "data: " + json.dumps(payload) + "\n\n"
+
+
+def _signed_in_response(tokens: Tokens) -> JSONResponse:
+    """The access token goes to page memory; the refresh token only to a cookie (AU-08, AU-09)."""
+
+    response = JSONResponse(
+        {
+            "access_token": tokens.access_token,
+            "expires_in": tokens.access_expires_in,
+            "username": tokens.username,
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+    # Not Secure: v1 is served over plain http on this machine (decision 0001).
+    response.set_cookie(
+        REFRESH_COOKIE,
+        tokens.refresh_token,
+        max_age=tokens.refresh_max_age,
+        path=REFRESH_PATH,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
+def _signed_out_response(status_code: int, detail: str | None = None) -> JSONResponse:
+    content = {"detail": detail} if detail is not None else {}
+    response = JSONResponse(status_code=status_code, content=content)
+    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_PATH, httponly=True, samesite="strict")
+    return response
 
 
 def create_app(
@@ -169,6 +237,16 @@ def create_app(
                         "v1 uses the Claude login on this machine."
                     )
                 },
+            )
+        return await call_next(request)
+
+    # Added last, so it runs first.
+    @app.middleware("http")
+    async def answer_this_machine_only(request, call_next):
+        if not _from_this_machine(request):
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Polaris answers only on this machine."},
             )
         return await call_next(request)
 
@@ -260,7 +338,71 @@ def create_app(
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/api/profile")
+    @app.exception_handler(PairRefused)
+    async def pair_refused(_request, exc: PairRefused) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(PairAlreadyStored)
+    async def pair_already_stored(_request, exc: PairAlreadyStored) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(NoPairStored)
+    async def no_pair_stored(_request, exc: NoPairStored) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+    @app.exception_handler(WrongPair)
+    async def wrong_pair(_request, exc: WrongPair) -> JSONResponse:
+        return JSONResponse(status_code=401, content={"detail": str(exc)})
+
+    @app.exception_handler(SignInBlocked)
+    async def sign_in_blocked(_request, exc: SignInBlocked) -> JSONResponse:
+        return JSONResponse(
+            status_code=429,
+            content={"detail": str(exc), "blocked_seconds": exc.seconds_left},
+            headers={"Retry-After": str(exc.seconds_left)},
+        )
+
+    def require_sign_in(request: Request) -> None:
+        """AU-12: only the profile and its evidence need a valid access token."""
+
+        if not chat.sign_in.signed_in(request.headers.get("authorization")):
+            raise HTTPException(
+                status_code=401,
+                detail="Sign in to see your profile.",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    @app.get("/api/sign-in")
+    def sign_in_status() -> dict[str, object]:
+        return chat.sign_in.status()
+
+    @app.post("/api/sign-in/pair")
+    async def choose_pair(body: ChosenPairBody) -> JSONResponse:
+        tokens = await asyncio.to_thread(
+            chat.sign_in.choose_pair, body.username, body.password, body.password_again
+        )
+        return _signed_in_response(tokens)
+
+    @app.post("/api/sign-in")
+    async def sign_in(body: PairBody) -> JSONResponse:
+        tokens = await asyncio.to_thread(chat.sign_in.sign_in, body.username, body.password)
+        return _signed_in_response(tokens)
+
+    @app.post(REFRESH_PATH)
+    def refresh_sign_in(request: Request) -> JSONResponse:
+        try:
+            tokens = chat.sign_in.refresh(request.cookies.get(REFRESH_COOKIE))
+        except RefreshRefused:
+            return _signed_out_response(401, "Sign in again.")
+        return _signed_in_response(tokens)
+
+    # Sign-out lives on the refresh path, the only path the cookie is sent to (AU-11).
+    @app.delete(REFRESH_PATH)
+    def sign_out(request: Request) -> JSONResponse:
+        chat.sign_in.sign_out(request.cookies.get(REFRESH_COOKIE))
+        return _signed_out_response(200)
+
+    @app.get("/api/profile", dependencies=[Depends(require_sign_in)])
     def read_profile() -> dict[str, list[str]]:
         # The profile includes facts from a pass still running (PR-05).
         chat.wait_for_session_ends()

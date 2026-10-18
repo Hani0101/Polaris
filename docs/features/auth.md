@@ -17,6 +17,7 @@ AU-10  The page refreshes the access token without the learner doing anything. W
 AU-11  Signing out revokes the refresh token and clears the access token. It does not delete the profile.
 AU-12  The profile and its evidence are reachable only with a valid access token. Without one the request is refused with 401. Everything else works without sign-in.
 AU-13  Five wrong tries in a row block sign-in for 10 minutes, and the correct pair is refused during that time. The count is stored, so a restart does not reset it, and a successful sign-in resets it. The page says how long is left.
+AU-14  Polaris answers only on this machine. A request from another address, or for a host name that is not this machine, is refused with 403. This covers every route, since most routes are open (AU-12) and the first use chooses the pair (AU-05).
 
 ## Scenarios
 
@@ -109,6 +110,12 @@ Scenario: a restart does not clear the lockout  [AU-13]
   Given sign-in is blocked
   When the server restarts
   Then sign-in is still blocked until the 10 minutes end
+
+Scenario: a request from elsewhere is refused  [AU-14]
+  Given Polaris is running on the learner's machine
+  When a request comes from another machine, or names a host that is not this machine
+  Then it is refused with 403
+  And no pair can be chosen and no session can be read through it
 
 Scenario: sign-in is not the Claude login  [AU-03]
   Given the learner is on the sign-in page

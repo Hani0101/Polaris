@@ -26,6 +26,7 @@ from test_chat import (
     make_client,
     parse_sse,
     post_turn,
+    read_profile,
     reply_text,
 )
 
@@ -464,7 +465,7 @@ def test_empty_profile_does_not_create_a_quiz(make_client):
             "artifacts": [],
         }
     ]
-    assert client.get("/api/profile").json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
 
 
 def test_a_checked_question_is_locked(make_client):

@@ -148,6 +148,20 @@ def reply_text(events: list[dict]) -> str:
     return "".join(event["text"] for event in events if "text" in event)
 
 
+def read_profile(client) -> dict:
+    """The profile needs a valid access token (AU-12), so sign in first."""
+
+    pair = {"username": "learner", "password": "a long password"}
+    if client.get("/api/sign-in").json()["pair_stored"]:
+        signed_in = client.post("/api/sign-in", json=pair)
+    else:
+        signed_in = client.post(
+            "/api/sign-in/pair", json={**pair, "password_again": pair["password"]}
+        )
+    token = signed_in.json()["access_token"]
+    return client.get("/api/profile", headers={"Authorization": f"Bearer {token}"}).json()
+
+
 @pytest.fixture
 def make_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -337,7 +351,7 @@ def test_leaving_a_session_stores_profile_facts(make_client):
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
     assert left.status_code == 200
-    assert client.get("/api/profile").json() == {
+    assert read_profile(client) == {
         "facts": ["likes step-by-step walkthroughs"]
     }
 
@@ -365,7 +379,7 @@ def test_switching_sessions_stores_facts_from_the_one_left(make_client):
 
     client.post("/api/sessions")
 
-    assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
+    assert read_profile(client) == {"facts": ["struggles with fractions"]}
 
 
 def test_switching_sessions_does_not_wait_for_the_profile_pass(make_client):  # CH-05, PR-05
@@ -379,7 +393,7 @@ def test_switching_sessions_does_not_wait_for_the_profile_pass(make_client):  # 
     assert second.status_code == 200
     assert not writer.finished.is_set()
     writer.release.set()
-    assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
+    assert read_profile(client) == {"facts": ["struggles with fractions"]}
 
 
 def test_a_reply_waits_for_a_pass_still_running(make_client):  # PR-01, PR-05
@@ -419,7 +433,7 @@ def test_a_later_ending_runs_the_profile_pass_again(make_client):
     client.app.state.chat.wait_for_session_ends()
 
     assert writer.calls == 2
-    assert client.get("/api/profile").json() == {
+    assert read_profile(client) == {
         "facts": ["likes diagrams", "comfortable with Python"]
     }
 
@@ -433,7 +447,7 @@ def test_a_repeated_fact_is_not_stored_twice(make_client):
     post_turn(client, session["id"], "I still suck at math")
     client.post(f"/api/sessions/{session['id']}/leave")
 
-    assert client.get("/api/profile").json() == {"facts": ["I suck at math"]}
+    assert read_profile(client) == {"facts": ["I suck at math"]}
 
 
 def test_profile_pass_api_key_stops_the_app(make_client):
@@ -471,7 +485,7 @@ def test_a_failed_profile_pass_does_not_block_leaving(make_client):
 
     assert left.status_code == 200
     assert left.json()["ended"] is True
-    assert client.get("/api/profile").json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
 
 
 def _passes(client) -> list[dict[str, object]]:
@@ -528,7 +542,7 @@ def test_a_stored_pass_records_its_changes_and_evidence(make_client):
 
     client.post(f"/api/sessions/{session['id']}/leave")
 
-    assert client.get("/api/profile").json() == {"facts": ["Likes diagrams"]}
+    assert read_profile(client) == {"facts": ["Likes diagrams"]}
     (run,) = _passes(client)
     assert run["status"] == "stored"
     changes = json.loads(run["changes_json"])
@@ -557,7 +571,7 @@ def test_empty_profile_asks_and_does_not_teach(make_client, tmp_path):
     assert "part of a whole" not in first
     assert "part of a whole" not in second
     assert not (tmp_path / "profile.json").exists()
-    assert client.get("/api/profile").json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
 
 
 def test_profile_has_no_write_route(make_client):
@@ -837,7 +851,7 @@ def test_deleting_keeps_the_profile(make_client):  # CH-12
     deleted = client.delete(f"/api/sessions/{session['id']}")
 
     assert deleted.json() == {"id": session["id"], "facts_saved": True}
-    assert client.get("/api/profile").json() == {"facts": ["likes step-by-step walkthroughs"]}
+    assert read_profile(client) == {"facts": ["likes step-by-step walkthroughs"]}
     assert _rows(client, "SELECT id FROM fact_evidence") == []
     assert _rows(client, "SELECT id FROM profile_passes") == []
 
