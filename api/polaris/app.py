@@ -38,7 +38,15 @@ from polaris.chat import (
     SessionEnded,
 )
 from polaris.login import ApiKeyPresent, assert_claude_login
-from polaris.profile import ProfilePass, ProfileUnreadable
+from polaris.models import Fact
+from polaris.profile import (
+    BlankFact,
+    FactRepeats,
+    FactTooLong,
+    MissingFact,
+    ProfilePass,
+    ProfileUnreadable,
+)
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.session_title import ClaudeTitleWriter, TitleWriter
 from polaris.flashcards import InvalidRating, MissingDeck
@@ -133,6 +141,19 @@ class PairBody(BaseModel):
 
 class ChosenPairBody(PairBody):
     password_again: str
+
+
+class FactBody(BaseModel):
+    text: StrictStr
+
+
+def _fact_payload(fact: Fact) -> dict[str, str]:
+    return {
+        "id": fact.id,
+        "kind": fact.kind,
+        "text": fact.text,
+        "written_by": fact.written_by,
+    }
 
 
 # HTML from a job that finished before decision 0006 runs in its own
@@ -304,6 +325,19 @@ def create_app(
     async def name_too_long(_request, exc: NameTooLong) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(MissingFact)
+    async def missing_fact(_request, exc: MissingFact) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(BlankFact)
+    @app.exception_handler(FactTooLong)
+    async def fact_refused(_request, exc: Exception) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(FactRepeats)
+    async def fact_repeats(_request, exc: FactRepeats) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
+
     @app.exception_handler(BlankMessage)
     async def blank_message(_request, exc: BlankMessage) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
@@ -473,6 +507,33 @@ def create_app(
         # The profile includes facts from a pass still running (PR-05).
         chat.wait_for_session_ends()
         return {"facts": list(chat.read_profile().facts)}
+
+    # PR-11: the learner sees and changes the profile in Settings. The teaching
+    # agent cannot reach these routes (PR-04, CH-26); a write is read by the
+    # next reply (PR-01). Every write returns the whole list, in read order.
+    def facts_payload() -> list[dict[str, str]]:
+        return [_fact_payload(fact) for fact in chat.list_facts()]
+
+    @app.get("/api/profile/facts", dependencies=[Depends(require_sign_in)])
+    def list_facts() -> dict[str, object]:
+        # Include facts from a pass still running, as the profile read does.
+        chat.wait_for_session_ends()
+        return {"facts": facts_payload()}
+
+    @app.post("/api/profile/facts", dependencies=[Depends(require_sign_in)])
+    def add_fact(body: FactBody) -> dict[str, object]:
+        fact = chat.add_fact(body.text)
+        return {"fact": _fact_payload(fact), "facts": facts_payload()}
+
+    @app.patch("/api/profile/facts/{fact_id}", dependencies=[Depends(require_sign_in)])
+    def edit_fact(fact_id: str, body: FactBody) -> dict[str, object]:
+        fact = chat.edit_fact(fact_id, body.text)
+        return {"fact": _fact_payload(fact), "facts": facts_payload()}
+
+    @app.delete("/api/profile/facts/{fact_id}", dependencies=[Depends(require_sign_in)])
+    def remove_fact(fact_id: str) -> dict[str, object]:
+        chat.remove_fact(fact_id)
+        return {"facts": facts_payload()}
 
     def close_discarded() -> None:
         """A draft left unsent is gone; close the agent it may have warmed (CH-19)."""

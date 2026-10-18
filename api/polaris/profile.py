@@ -1,9 +1,11 @@
 """Read and write the shared profile.
 
 The teaching agent reads the profile and does not write it. The session-end
-pass writes fact changes (PR-05 to PR-08). Facts live in the session database
-with a kind, a basis, times, and the turns they rest on. See research note
-0001 and decision 0006 (proposed).
+pass writes fact changes (PR-05 to PR-08). The learner can add, change, and
+remove facts from Settings (PR-11), and the pass does not bring back what the
+learner took out (PR-12). Facts live in the session database with a kind, a
+basis, times, and the turns they rest on. See research note 0001, decision
+0006 (proposed), and decision 0014.
 """
 
 import json
@@ -23,6 +25,7 @@ FACT_KINDS = ("goal", "taught", "struggle", "can_do", "milestone", "unsorted")
 FACT_BASES = ("stated", "observed", "inferred")
 PASS_TRIGGERS = ("end",)
 PASS_STATUSES = ("running", "stored", "no_change", "failed")
+MAX_FACT_LENGTH = 300
 
 
 class ProfileUnreadable(RuntimeError):
@@ -32,6 +35,26 @@ class ProfileUnreadable(RuntimeError):
 
 class ProfilePassFailed(RuntimeError):
     """The pass ran but returned no usable result."""
+
+
+class MissingFact(Exception):
+    def __init__(self) -> None:
+        super().__init__("That is no longer on your profile.")
+
+
+class BlankFact(Exception):
+    def __init__(self) -> None:
+        super().__init__("Type something to keep on your profile.")
+
+
+class FactTooLong(Exception):
+    def __init__(self) -> None:
+        super().__init__(f"Keep it to {MAX_FACT_LENGTH} characters.")
+
+
+class FactRepeats(Exception):
+    def __init__(self) -> None:
+        super().__init__("Your profile already says this.")
 
 
 class ProfilePass(Protocol):
@@ -71,10 +94,18 @@ def create_profile_tables(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             retired_at TEXT,
-            replaced_by TEXT REFERENCES facts(id)
+            replaced_by TEXT REFERENCES facts(id),
+            retired_by TEXT CHECK (retired_by IN ('pass', 'learner'))
         )
         """
     )
+    # A database from before learner edits has no retired_by column.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(facts)").fetchall()}
+    if "retired_by" not in columns:
+        conn.execute(
+            "ALTER TABLE facts ADD COLUMN retired_by TEXT "
+            "CHECK (retired_by IN ('pass', 'learner'))"
+        )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS fact_evidence (
@@ -139,7 +170,7 @@ def active_facts(conn: sqlite3.Connection) -> tuple[Fact, ...]:
     order = " ".join(f"WHEN '{kind}' THEN {rank}" for rank, kind in enumerate(FACT_KINDS))
     rows = conn.execute(
         f"""
-        SELECT id, kind, text, basis, created_at, updated_at
+        SELECT id, kind, text, basis, created_at, updated_at, written_by
         FROM facts
         WHERE retired_at IS NULL
         ORDER BY CASE kind {order} END, created_at ASC, rowid ASC
@@ -153,6 +184,7 @@ def active_facts(conn: sqlite3.Connection) -> tuple[Fact, ...]:
             basis=row["basis"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            written_by=row["written_by"],
         )
         for row in rows
     )
@@ -169,7 +201,8 @@ def apply_changes(
     """Apply ADD, UPDATE, DELETE, and IGNORE. A repeated fact stays once.
 
     A change that names no stored fact is refused. Nothing is added in its
-    place (PR-07).
+    place (PR-07). A change whose text the learner removed or reworded is
+    refused unless a turn after that edit backs it (PR-12).
     """
 
     accepted: list[dict[str, object]] = []
@@ -203,7 +236,10 @@ def apply_changes(
                 refuse(change, "names no stored fact")
                 continue
             conn.execute(
-                "UPDATE facts SET retired_at = ?, updated_at = ? WHERE id = ?",
+                """
+                UPDATE facts SET retired_at = ?, retired_by = 'pass', updated_at = ?
+                WHERE id = ?
+                """,
                 (now, now, change.id),
             )
             del active[change.id]
@@ -212,33 +248,22 @@ def apply_changes(
         if not text:
             refuse(change, "no text")
             continue
+        if _learner_took_out(conn, text, evidence):
+            refuse(change, "the learner took this fact out")
+            continue
         if action == "UPDATE":
             old = active.get(change.id) if change.id is not None else None
             if old is None:
                 refuse(change, "names no stored fact")
                 continue
-            new = _insert_fact(
+            new = _replace_fact(
                 conn,
+                old,
                 kind=change.kind or old.kind,
                 text=text,
                 basis=change.basis or old.basis,
+                writer="pass",
                 now=now,
-                created_at=old.created_at,
-            )
-            conn.execute(
-                """
-                UPDATE facts SET retired_at = ?, replaced_by = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (now, new.id, now, old.id),
-            )
-            conn.execute(
-                """
-                INSERT INTO fact_evidence (fact_id, session_id, turn_id, artifact_id)
-                SELECT ?, session_id, turn_id, artifact_id
-                FROM fact_evidence WHERE fact_id = ?
-                """,
-                (new.id, old.id),
             )
             _add_evidence(conn, new.id, session_id, evidence)
             del active[old.id]
@@ -259,6 +284,53 @@ def apply_changes(
         active[new.id] = new
         accepted.append(_record(change, None, action="ADD", stored_id=new.id))
     return AppliedChanges(tuple(accepted), tuple(refused))
+
+
+def add_learner_fact(conn: sqlite3.Connection, text: str, now: str) -> Fact:
+    """PR-11: the learner adds a fact in Settings. It is stated, and unsorted."""
+
+    text = _learner_text(text)
+    if _repeats(text, active_facts(conn)):
+        raise FactRepeats()
+    return _insert_fact(
+        conn, kind="unsorted", text=text, basis="stated", now=now, writer="learner"
+    )
+
+
+def edit_learner_fact(
+    conn: sqlite3.Connection, fact_id: str, text: str, now: str
+) -> Fact:
+    """PR-11: the learner rewords a fact. The old wording is kept, retired.
+
+    The kind and evidence carry over. The new wording is stated by the learner.
+    """
+
+    text = _learner_text(text)
+    active = active_facts(conn)
+    old = next((fact for fact in active if fact.id == fact_id), None)
+    if old is None:
+        raise MissingFact()
+    if text == old.text:
+        return old
+    if _repeats(text, [fact for fact in active if fact.id != fact_id]):
+        raise FactRepeats()
+    return _replace_fact(
+        conn, old, kind=old.kind, text=text, basis="stated", writer="learner", now=now
+    )
+
+
+def remove_learner_fact(conn: sqlite3.Connection, fact_id: str, now: str) -> None:
+    """PR-11: the learner takes a fact off the profile. The row is kept, retired."""
+
+    cursor = conn.execute(
+        """
+        UPDATE facts SET retired_at = ?, retired_by = 'learner', updated_at = ?
+        WHERE id = ? AND retired_at IS NULL
+        """,
+        (now, now, fact_id),
+    )
+    if cursor.rowcount == 0:
+        raise MissingFact()
 
 
 def start_pass(
@@ -308,6 +380,7 @@ def _insert_fact(
     basis: str,
     now: str,
     created_at: str | None = None,
+    writer: str = "pass",
 ) -> Fact:
     fact = Fact(
         id=str(uuid.uuid4()),
@@ -316,15 +389,101 @@ def _insert_fact(
         basis=basis,
         created_at=created_at or now,
         updated_at=now,
+        written_by=writer,
     )
     conn.execute(
         """
         INSERT INTO facts (id, kind, text, basis, written_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, 'pass', ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (fact.id, fact.kind, fact.text, fact.basis, fact.created_at, fact.updated_at),
+        (
+            fact.id,
+            fact.kind,
+            fact.text,
+            fact.basis,
+            fact.written_by,
+            fact.created_at,
+            fact.updated_at,
+        ),
     )
     return fact
+
+
+def _replace_fact(
+    conn: sqlite3.Connection,
+    old: Fact,
+    *,
+    kind: str,
+    text: str,
+    basis: str,
+    writer: str,
+    now: str,
+) -> Fact:
+    """Store a new wording, retire the old one, and carry its evidence over."""
+
+    new = _insert_fact(
+        conn,
+        kind=kind,
+        text=text,
+        basis=basis,
+        now=now,
+        created_at=old.created_at,
+        writer=writer,
+    )
+    conn.execute(
+        """
+        UPDATE facts SET retired_at = ?, retired_by = ?, replaced_by = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (now, writer, new.id, now, old.id),
+    )
+    conn.execute(
+        """
+        INSERT INTO fact_evidence (fact_id, session_id, turn_id, artifact_id)
+        SELECT ?, session_id, turn_id, artifact_id
+        FROM fact_evidence WHERE fact_id = ?
+        """,
+        (new.id, old.id),
+    )
+    return new
+
+
+def _learner_text(text: str) -> str:
+    text = " ".join(text.split())
+    if not text:
+        raise BlankFact()
+    if len(text) > MAX_FACT_LENGTH:
+        raise FactTooLong()
+    return text
+
+
+def _learner_took_out(
+    conn: sqlite3.Connection, text: str, evidence: Sequence[str]
+) -> bool:
+    """PR-12: the learner removed or reworded this text after every turn behind it.
+
+    A pass reads the whole session again each time it ends, so without this
+    an old turn would put back what the learner took out. A turn sent after
+    that edit can still store it. The match is on wording, as for repeats.
+    """
+
+    key = _normalized(text)
+    taken_out = [
+        row["retired_at"]
+        for row in conn.execute(
+            "SELECT text, retired_at FROM facts WHERE retired_by = 'learner'"
+        ).fetchall()
+        if _normalized(row["text"]) == key
+    ]
+    if not taken_out:
+        return False
+    if not evidence:
+        return True
+    marks = ", ".join("?" for _ in evidence)
+    newest = conn.execute(
+        f"SELECT MAX(created_at) FROM turns WHERE id IN ({marks})", tuple(evidence)
+    ).fetchone()[0]
+    return newest is None or newest <= max(taken_out)
 
 
 def _add_evidence(

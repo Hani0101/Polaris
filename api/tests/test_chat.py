@@ -148,7 +148,7 @@ def reply_text(events: list[dict]) -> str:
     return "".join(event["text"] for event in events if "text" in event)
 
 
-def read_profile(client) -> dict:
+def signed_in_headers(client) -> dict[str, str]:
     """The profile needs a valid access token (AU-12), so sign in first."""
 
     pair = {"username": "learner", "password": "a long password"}
@@ -158,8 +158,11 @@ def read_profile(client) -> dict:
         signed_in = client.post(
             "/api/sign-in/pair", json={**pair, "password_again": pair["password"]}
         )
-    token = signed_in.json()["access_token"]
-    return client.get("/api/profile", headers={"Authorization": f"Bearer {token}"}).json()
+    return {"Authorization": f"Bearer {signed_in.json()['access_token']}"}
+
+
+def read_profile(client) -> dict:
+    return client.get("/api/profile", headers=signed_in_headers(client)).json()
 
 
 @pytest.fixture
@@ -656,6 +659,121 @@ def test_profile_has_no_write_route(make_client):
     client, _agent = make_client()
     response = client.post("/api/profile", json={"facts": ["stored by the agent"]})
     assert response.status_code == 405
+
+
+def fact_texts(body: dict) -> list[str]:
+    return [fact["text"] for fact in body["facts"]]
+
+
+def test_settings_lists_the_facts_with_their_ids(make_client):  # PR-11
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "struggles with fractions", kind="struggle"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I struggle with fractions")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    body = client.get("/api/profile/facts", headers=signed_in_headers(client)).json()
+
+    assert [
+        {key: fact[key] for key in ("kind", "text", "written_by")} for fact in body["facts"]
+    ] == [{"kind": "struggle", "text": "struggles with fractions", "written_by": "pass"}]
+    assert body["facts"][0]["id"]
+
+
+def test_fact_routes_need_sign_in(make_client):  # PR-11, AU-12
+    client, _agent = make_client()
+
+    assert client.get("/api/profile/facts").status_code == 401
+    assert client.post("/api/profile/facts", json={"text": "likes maps"}).status_code == 401
+    assert client.patch("/api/profile/facts/x", json={"text": "likes maps"}).status_code == 401
+    assert client.delete("/api/profile/facts/x").status_code == 401
+
+
+def test_a_fact_the_learner_adds_is_read_by_the_next_reply(make_client):  # PR-11, PR-01
+    client, _agent = make_client()
+    headers = signed_in_headers(client)
+
+    added = client.post(
+        "/api/profile/facts", headers=headers, json={"text": "  likes   diagrams "}
+    )
+
+    assert added.status_code == 200
+    assert added.json()["fact"]["text"] == "likes diagrams"
+    assert added.json()["fact"]["written_by"] == "learner"
+    assert fact_texts(added.json()) == ["likes diagrams"]
+    session = client.post("/api/sessions").json()
+    reply = reply_text(post_turn(client, session["id"], "What is recursion?"))
+    assert reply == "Noted likes diagrams. What is recursion?"
+
+
+def test_a_fact_the_learner_rewords_is_read_by_the_next_reply(make_client):  # PR-11, PR-01
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+
+    edited = client.patch(
+        f"/api/profile/facts/{fact_id}", headers=headers, json={"text": "likes diagrams"}
+    )
+
+    assert edited.status_code == 200
+    assert fact_texts(edited.json()) == ["likes diagrams"]
+    assert edited.json()["fact"]["id"] != fact_id
+    session = client.post("/api/sessions").json()
+    reply = reply_text(post_turn(client, session["id"], "What is recursion?"))
+    assert reply == "Noted likes diagrams. What is recursion?"
+
+
+def test_a_fact_the_learner_removes_is_not_read_again(make_client):  # PR-11, PR-01
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+
+    removed = client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+
+    assert removed.status_code == 200
+    assert removed.json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
+    again = client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+    assert again.status_code == 404
+
+
+def test_the_learner_cannot_store_a_blank_long_or_repeated_fact(make_client):  # PR-11
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+
+    blank = client.post("/api/profile/facts", headers=headers, json={"text": "   "})
+    long = client.post("/api/profile/facts", headers=headers, json={"text": "x" * 301})
+    repeat = client.post("/api/profile/facts", headers=headers, json={"text": "Likes videos."})
+    missing = client.patch("/api/profile/facts/nope", headers=headers, json={"text": "a"})
+
+    assert blank.status_code == 422
+    assert long.status_code == 422
+    assert repeat.status_code == 409
+    assert repeat.json()["detail"] == "Your profile already says this."
+    assert missing.status_code == 404
+    assert fact_texts(client.get("/api/profile/facts", headers=headers).json()) == [
+        "likes videos"
+    ]
+
+
+def test_the_pass_does_not_put_back_what_the_learner_removed(make_client):  # PR-12
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes videos"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like videos")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+    client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+
+    # The pass reads the whole session again when it ends with a new turn.
+    client.post(f"/api/sessions/{session['id']}/open")
+    post_turn(client, session["id"], "What is recursion?")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert read_profile(client) == {"facts": []}
 
 
 def test_blank_message_is_not_a_turn(make_client):

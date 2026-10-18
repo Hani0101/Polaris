@@ -10,7 +10,11 @@ class Profile:
 
 @dataclass(frozen=True)
 class Fact:
-    """One stored fact on the profile, with its kind and basis."""
+    """One stored fact on the profile, with its kind and basis.
+
+    `written_by` is "pass" for the session-end pass, "learner" for an edit in
+    Settings (PR-11).
+    """
 
     id: str
     kind: str
@@ -18,6 +22,7 @@ class Fact:
     basis: str
     created_at: str
     updated_at: str
+    written_by: str = "pass"
 
 
 @dataclass(frozen=True)

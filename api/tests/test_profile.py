@@ -11,12 +11,17 @@ from claude_agent_sdk import ResultMessage, SystemMessage
 from polaris.login import ApiKeyPresent
 from polaris.models import Fact, FactChange, Turn
 from polaris.profile import (
+    FactRepeats,
+    MissingFact,
     ProfilePassFailed,
     ProfileUnreadable,
     active_facts,
+    add_learner_fact,
     apply_changes,
     create_profile_tables,
+    edit_learner_fact,
     import_profile_json,
+    remove_learner_fact,
 )
 from polaris.profile_pass import (
     CHANGE_SCHEMA,
@@ -35,10 +40,13 @@ def conn():
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys = ON")
     db.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
-    db.execute("CREATE TABLE turns (id TEXT PRIMARY KEY, session_id TEXT)")
+    db.execute("CREATE TABLE turns (id TEXT PRIMARY KEY, session_id TEXT, created_at TEXT)")
     db.execute("CREATE TABLE artifacts (id TEXT PRIMARY KEY)")
     db.execute("INSERT INTO sessions (id) VALUES ('s1')")
-    db.execute("INSERT INTO turns (id, session_id) VALUES ('t1', 's1'), ('t2', 's1')")
+    db.execute(
+        "INSERT INTO turns (id, session_id, created_at) VALUES ('t1', 's1', ?), ('t2', 's1', ?)",
+        (NOW, NOW),
+    )
     create_profile_tables(db)
     yield db
     db.close()
@@ -376,3 +384,83 @@ def test_profile_pass_rejects_an_api_key(tmp_path: Path):
                 facts=(),
             )
         )
+
+
+def test_a_learner_edit_keeps_the_old_wording_retired(conn):  # PR-11
+    _apply(conn, FactChange("ADD", "likes videos", kind="taught", evidence=("t1",)))
+    old = active_facts(conn)[0]
+
+    new = edit_learner_fact(conn, old.id, "likes diagrams", LATER)
+
+    assert _texts(conn) == ("likes diagrams",)
+    assert (new.kind, new.basis, new.written_by) == ("taught", "stated", "learner")
+    row = conn.execute(
+        "SELECT retired_by, replaced_by FROM facts WHERE id = ?", (old.id,)
+    ).fetchone()
+    assert (row["retired_by"], row["replaced_by"]) == ("learner", new.id)
+    evidence = conn.execute(
+        "SELECT turn_id FROM fact_evidence WHERE fact_id = ?", (new.id,)
+    ).fetchall()
+    assert [item["turn_id"] for item in evidence] == ["t1"]
+
+
+def test_learner_writes_refuse_repeats_and_missing_facts(conn):  # PR-11, PR-08
+    add_learner_fact(conn, "likes videos", NOW)
+    other = add_learner_fact(conn, "likes maps", NOW)
+
+    with pytest.raises(FactRepeats):
+        add_learner_fact(conn, "Likes videos.", NOW)
+    with pytest.raises(FactRepeats):
+        edit_learner_fact(conn, other.id, "likes videos", NOW)
+    with pytest.raises(MissingFact):
+        edit_learner_fact(conn, "nope", "likes trees", NOW)
+    remove_learner_fact(conn, other.id, NOW)
+    with pytest.raises(MissingFact):
+        remove_learner_fact(conn, other.id, NOW)
+    assert _texts(conn) == ("likes videos",)
+
+
+def test_the_pass_does_not_bring_back_a_fact_from_turns_before_its_removal(conn):  # PR-12
+    added = add_learner_fact(conn, "likes videos", NOW)
+    remove_learner_fact(conn, added.id, LATER)
+
+    applied = _apply(conn, FactChange("ADD", "Likes videos", evidence=("t1",)))
+
+    assert _texts(conn) == ()
+    assert [item["why"] for item in applied.refused] == ["the learner took this fact out"]
+
+
+def test_the_pass_does_not_reword_a_fact_back(conn):  # PR-12
+    fact = add_learner_fact(conn, "likes videos", NOW)
+    new = edit_learner_fact(conn, fact.id, "likes diagrams", LATER)
+
+    _apply(conn, FactChange("UPDATE", "likes videos", id=new.id, evidence=("t1",)))
+
+    assert _texts(conn) == ("likes diagrams",)
+
+
+def test_a_turn_after_the_removal_can_store_the_fact_again(conn):  # PR-12
+    added = add_learner_fact(conn, "likes videos", NOW)
+    remove_learner_fact(conn, added.id, NOW)
+    conn.execute(
+        "INSERT INTO turns (id, session_id, created_at) VALUES ('t3', 's1', ?)", (LATER,)
+    )
+
+    apply_changes(
+        conn,
+        (FactChange("ADD", "likes videos", evidence=("t3",)),),
+        session_id="s1",
+        turn_ids={"t3"},
+        now=LATER,
+    )
+
+    assert _texts(conn) == ("likes videos",)
+
+
+def test_an_old_database_gains_the_retired_by_column(conn):
+    conn.execute("ALTER TABLE facts DROP COLUMN retired_by")
+
+    create_profile_tables(conn)
+
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(facts)").fetchall()}
+    assert "retired_by" in columns

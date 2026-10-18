@@ -59,10 +59,13 @@ from polaris.models import AnimationStep, Fact, Pointing, Profile, Turn
 from polaris.profile import (
     ProfilePass,
     active_facts,
+    add_learner_fact,
     apply_changes,
     create_profile_tables,
+    edit_learner_fact,
     finish_pass,
     import_profile_json,
+    remove_learner_fact,
     start_pass,
 )
 from polaris.quiz import (
@@ -633,6 +636,36 @@ class Chat:
     def _read_facts(self, conn: sqlite3.Connection) -> tuple[Fact, ...]:
         import_profile_json(conn, self.profile_path, _now())
         return active_facts(conn)
+
+    def list_facts(self) -> tuple[Fact, ...]:
+        """The facts the learner sees in Settings (PR-11), in the order they are read."""
+
+        return self._with_db(self._read_facts)
+
+    def add_fact(self, text: str) -> Fact:
+        """PR-11: a fact the learner adds. The next reply reads it (PR-01)."""
+
+        return self._write_facts(lambda conn: add_learner_fact(conn, text, _now()))
+
+    def edit_fact(self, fact_id: str, text: str) -> Fact:
+        """PR-11: the learner rewords a fact. Returns the fact now stored."""
+
+        return self._write_facts(lambda conn: edit_learner_fact(conn, fact_id, text, _now()))
+
+    def remove_fact(self, fact_id: str) -> None:
+        """PR-11: the learner takes a fact off the profile."""
+
+        self._write_facts(lambda conn: remove_learner_fact(conn, fact_id, _now()))
+
+    def _write_facts(self, write):
+        """A learner write sees the old profile.json facts, as a read does.
+
+        The import commits on its own: a refused write rolls back, and the
+        file is already renamed by then.
+        """
+
+        self._with_db(lambda conn: import_profile_json(conn, self.profile_path, _now()))
+        return self._with_db(write)
 
     def leave(self, session_id: str) -> bool:
         """Mark the session ended. Return whether it was open and needs the agent closed."""

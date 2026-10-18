@@ -17,7 +17,7 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 ## MVP scope
 
 - Chat, as sessions made of turns. The learner can keep more than one session, reopen any of them, and give each a name.
-- Profile, shared across sessions and kept only for a signed-in learner. The teaching agent reads it before every reply in a signed-in session and does not write it. A separate pass writes it when a session ends, from the turns sent while signed in. During a signed-in session with an empty profile, every reply asks and does not teach. The pass design still needs research. See [Profile pass](decisions/0003-profile-pass-is-a-proposal.md) and [An empty profile keeps being asked](decisions/0005-empty-profile-keeps-asking.md).
+- Profile, shared across sessions and kept only for a signed-in learner. The teaching agent reads it before every reply in a signed-in session and does not write it. A separate pass writes it when a session ends, from the turns sent while signed in. The learner can also change it in Settings. During a signed-in session with an empty profile, every reply asks and does not teach. The pass design still needs research. See [Profile pass](decisions/0003-profile-pass-is-a-proposal.md) and [An empty profile keeps being asked](decisions/0005-empty-profile-keeps-asking.md).
 - Whiteboard, which the agent and the learner can both draw on
 - Quiz, graded against a stored answer key. It starts in the chat, and the learner can expand it onto its own page.
 - Animation. A later long-running job uses the same notice rules as animation (AN-02, AN-03, AN-07, AN-08).
@@ -25,7 +25,7 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 - Artifacts: a stored whiteboard, quiz, animation, or flashcard deck, reopened from the session that created it
 - Resources: PDFs, Word documents, text files, typed notes, images, and web pages added by their link that the learner gives a session, which the agent explains from and cites. See [Resources](features/resources.md).
 - Web mode, a toggle in the chat input. Only a message sent with it on lets the agent search and read public web pages, and the reply links what it used. See [Chat](features/chat.md) and [The web is used only on request](decisions/0013-web-only-on-request-and-public.md).
-- Settings, with one section for now: the appearance mode (System, Light, or Dark), kept in the browser. See [Settings](features/settings.md).
+- Settings, a menu at the bottom of the left panel with two items, each opening a dialog: the appearance mode (System, Light, or Dark), kept in the browser, and the profile, where a signed-in learner sees what Polaris knows about them and changes it. See [Settings](features/settings.md) and [The learner can edit the profile](decisions/0014-the-learner-can-edit-the-profile.md).
 
 Success for this scope is a correct explanation, an animation that plays, a quiz whose score matches the stored key, and evals that pass.
 
