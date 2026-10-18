@@ -7,9 +7,13 @@ type ModalProps = {
   open: boolean
   title: string
   children: ReactNode
-  /** The main action, a verb such as "Clear board". */
-  mainLabel: string
-  onMain: () => void
+  /**
+   * The main action, a verb such as "Clear board". Leave it out for a dialog
+   * whose choices apply at once, such as Appearance: it then has only the
+   * cancel button, labelled by cancelLabel.
+   */
+  mainLabel?: string
+  onMain?: () => void
   /** Called for Cancel, the close button, Escape, and the dim layer. Closing always means cancel. */
   onCancel: () => void
   /** confirm: before a destructive action, the main button is destructive. */
@@ -73,6 +77,8 @@ export function Modal({
     const keepInside = (event: FocusEvent) => {
       const panel = panelRef.current
       if (!panel || !(event.target instanceof Node) || panel.contains(event.target)) return
+      // A dialog opened from this one, such as a confirm, holds focus while it is open.
+      if (event.target instanceof Element && event.target.closest('.modal-layer')) return
       ;(focusables(panel)[0] ?? panel).focus()
     }
     document.addEventListener('focusin', keepInside)
@@ -133,13 +139,15 @@ export function Modal({
           <button ref={cancelRef} type="button" className="secondary" onClick={onCancel}>
             {cancelLabel}
           </button>
-          <button
-            type="button"
-            className={variant === 'confirm' ? 'destructive' : undefined}
-            onClick={onMain}
-          >
-            {mainLabel}
-          </button>
+          {mainLabel && onMain ? (
+            <button
+              type="button"
+              className={variant === 'confirm' ? 'destructive' : undefined}
+              onClick={onMain}
+            >
+              {mainLabel}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>,

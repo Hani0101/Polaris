@@ -59,7 +59,6 @@ type ChatShellProps = {
   onOpen: (sessionId: string) => void
   onRename: (sessionId: string, name: string) => Promise<void>
   onDelete: (sessionId: string) => Promise<void>
-  onOpenSettings: () => void
   onLeave: () => void
   /** Sign-in state for the top bar (AU-01, AU-02). */
   account?: SignInState
@@ -135,7 +134,6 @@ export function ChatShell({
   onOpen,
   onRename,
   onDelete,
-  onOpenSettings,
   onLeave,
   account,
   onSignIn,
@@ -201,6 +199,8 @@ export function ChatShell({
   if (sheetOpen && (!phone || !sessionOpen)) setSheetOpen(false)
 
   // On a phone the sheet closes, so the board pinned above the chat is in view.
+  // Steady, so the memoized session list does not draw again on every render.
+  const signInFromPanel = useSteady(() => onSignIn?.())
   const openBoard = useSteady((whiteboardId: string) => {
     setSheetOpen(false)
     onOpenWhiteboard(whiteboardId)
@@ -289,7 +289,7 @@ export function ChatShell({
             onOpen={onOpen}
             onRename={onRename}
             onDelete={onDelete}
-            onOpenSettings={onOpenSettings}
+            onSignIn={signInFromPanel}
           />
           {sessionListOpen ? (
             <ResizeHandle

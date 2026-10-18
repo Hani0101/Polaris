@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { SettingsPage } from './SettingsPage.tsx'
+import { AppearanceDialog } from './AppearanceDialog.tsx'
 import { MODE_KEY, setMode } from './theme.ts'
 
 beforeEach(() => {
@@ -13,10 +13,10 @@ afterEach(() => {
 })
 
 test('Appearance offers System, Light, and Dark with one chosen [ST-02, ST-04]', () => {
-  render(<SettingsPage onBack={() => {}} />)
+  render(<AppearanceDialog open onClose={() => {}} />)
 
-  const group = screen.getByRole('group', { name: 'Colors' })
-  expect(group).toBeTruthy()
+  expect(screen.getByRole('dialog', { name: 'Appearance' })).toBeTruthy()
+  expect(screen.getByRole('group', { name: 'Colors' })).toBeTruthy()
   const radios = screen.getAllByRole('radio') as HTMLInputElement[]
   expect(radios.map((radio) => radio.value)).toEqual(['system', 'light', 'dark'])
   expect(radios.filter((radio) => radio.checked).map((radio) => radio.value)).toEqual(['system'])
@@ -24,7 +24,7 @@ test('Appearance offers System, Light, and Dark with one chosen [ST-02, ST-04]',
 })
 
 test('choosing a mode applies it and keeps it [ST-05]', () => {
-  render(<SettingsPage onBack={() => {}} />)
+  render(<AppearanceDialog open onClose={() => {}} />)
 
   fireEvent.click(screen.getByRole('radio', { name: /^Dark/ }))
 
@@ -33,11 +33,13 @@ test('choosing a mode applies it and keeps it [ST-05]', () => {
   expect((screen.getByRole('radio', { name: /^Dark/ }) as HTMLInputElement).checked).toBe(true)
 })
 
-test('Back returns to the conversation [ST-01]', () => {
-  const onBack = vi.fn()
-  render(<SettingsPage onBack={onBack} />)
+test('the dialog has only a Close button, since the choice already applied [ST-01]', () => {
+  const onClose = vi.fn()
+  render(<AppearanceDialog open onClose={onClose} />)
 
-  fireEvent.click(screen.getByRole('button', { name: /Back to the conversation/ }))
+  const buttons = screen.getAllByRole('button').map((button) => button.textContent)
+  expect(buttons.filter((text) => text)).toEqual(['Close'])
+  fireEvent.click(screen.getByText('Close'))
 
-  expect(onBack).toHaveBeenCalled()
+  expect(onClose).toHaveBeenCalled()
 })

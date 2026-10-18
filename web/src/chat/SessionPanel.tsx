@@ -1,7 +1,9 @@
 import { memo, useCallback, useState } from 'react'
-import { Ellipsis, Pencil, Settings, Trash2 } from 'lucide-react'
+import { Ellipsis, Pencil, Settings, SunMoon, Trash2, UserRound } from 'lucide-react'
 import { ApiError, sessionLabel } from '../api.ts'
 import type { SessionSummary } from '../api.ts'
+import { AppearanceDialog } from '../AppearanceDialog.tsx'
+import { ProfileDialog } from '../ProfileDialog.tsx'
 import { DeleteDialog } from './DeleteDialog.tsx'
 import { DropdownMenu } from './Menu.tsx'
 import { RenameDialog } from './RenameDialog.tsx'
@@ -17,7 +19,8 @@ type SessionPanelProps = {
   onOpen: (sessionId: string) => void
   onRename: (sessionId: string, name: string) => Promise<void>
   onDelete: (sessionId: string) => Promise<void>
-  onOpenSettings: () => void
+  /** Opens the sign-in page from the Profile dialog (AU-02). */
+  onSignIn: () => void
 }
 
 /** The session list. Memoized, so a streamed chunk does not draw every row again. */
@@ -31,7 +34,7 @@ export const SessionPanel = memo(function SessionPanel({
   onOpen,
   onRename,
   onDelete,
-  onOpenSettings,
+  onSignIn,
 }: SessionPanelProps) {
   // The session being renamed stays set while the dialog fades out.
   const [target, setTarget] = useState<SessionSummary | null>(null)
@@ -41,6 +44,7 @@ export const SessionPanel = memo(function SessionPanel({
   const [deleting, setDeleting] = useState(false)
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [settingsDialog, setSettingsDialog] = useState<'appearance' | 'profile' | null>(null)
 
   const startRename = useCallback((session: SessionSummary) => {
     setTarget(session)
@@ -129,11 +133,43 @@ export const SessionPanel = memo(function SessionPanel({
         </ul>
       ) : null}
       <div className="session-panel-footer">
-        <button type="button" className="ghost" onClick={onOpenSettings}>
+        {/* ST-01: Settings opens upward from the bottom of the panel; each item opens a dialog. */}
+        <DropdownMenu
+          label="Settings"
+          triggerClassName="ghost"
+          overDrawer
+          placement="above"
+          items={[
+            {
+              id: 'appearance',
+              label: 'Appearance',
+              icon: <SunMoon size={20} strokeWidth={2} aria-hidden="true" />,
+              onSelect: () => setSettingsDialog('appearance'),
+            },
+            {
+              id: 'profile',
+              label: 'Profile',
+              icon: <UserRound size={20} strokeWidth={2} aria-hidden="true" />,
+              onSelect: () => setSettingsDialog('profile'),
+            },
+          ]}
+        >
           <Settings size={20} strokeWidth={2} aria-hidden="true" />
           Settings
-        </button>
+        </DropdownMenu>
       </div>
+      <AppearanceDialog
+        open={settingsDialog === 'appearance'}
+        onClose={() => setSettingsDialog(null)}
+      />
+      <ProfileDialog
+        open={settingsDialog === 'profile'}
+        onClose={() => setSettingsDialog(null)}
+        onSignIn={() => {
+          setSettingsDialog(null)
+          onSignIn()
+        }}
+      />
       <RenameDialog
         open={renaming}
         value={value}

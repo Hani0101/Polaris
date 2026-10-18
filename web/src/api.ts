@@ -386,16 +386,71 @@ export function deleteSession(
 }
 
 /** The profile needs a valid access token (AU-12). A refused token is refreshed once. */
-export async function readProfile(signal?: AbortSignal): Promise<string[]> {
-  const read = () =>
-    request<{ facts: string[] }>('/api/profile', { signal }).then((body) => body.facts)
+async function signedIn<T>(run: () => Promise<T>): Promise<T> {
   try {
-    return await read()
+    return await run()
   } catch (caught) {
     if (!(caught instanceof ApiError) || caught.status !== 401) throw caught
     if (!(await refreshSignIn())) throw caught
-    return read()
+    return run()
   }
+}
+
+export function readProfile(signal?: AbortSignal): Promise<string[]> {
+  return signedIn(() =>
+    request<{ facts: string[] }>('/api/profile', { signal }).then((body) => body.facts),
+  )
+}
+
+export type FactKind = 'goal' | 'taught' | 'struggle' | 'can_do' | 'milestone' | 'unsorted'
+
+/** One fact on the profile, as Settings shows it (PR-11). */
+export type ProfileFact = {
+  id: string
+  kind: FactKind
+  text: string
+  written_by: 'pass' | 'learner'
+}
+
+/** Matches MAX_FACT_LENGTH in api/polaris/profile.py. */
+export const MAX_FACT_LENGTH = 300
+
+type FactsBody = { facts: ProfileFact[] }
+type FactWritten = FactsBody & { fact: ProfileFact }
+
+export function listFacts(signal?: AbortSignal): Promise<ProfileFact[]> {
+  return signedIn(() =>
+    request<FactsBody>('/api/profile/facts', { signal }).then((body) => body.facts),
+  )
+}
+
+/** PR-11: every write returns the whole list, in the order the agent reads it. */
+export function addFact(text: string): Promise<FactWritten> {
+  return signedIn(() =>
+    request<FactWritten>('/api/profile/facts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }),
+  )
+}
+
+export function editFact(factId: string, text: string): Promise<FactWritten> {
+  return signedIn(() =>
+    request<FactWritten>(`/api/profile/facts/${encodeURIComponent(factId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    }),
+  )
+}
+
+export function removeFact(factId: string): Promise<FactsBody> {
+  return signedIn(() =>
+    request<FactsBody>(`/api/profile/facts/${encodeURIComponent(factId)}`, {
+      method: 'DELETE',
+    }),
+  )
 }
 
 export function startSession(): Promise<Session> {

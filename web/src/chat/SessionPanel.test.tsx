@@ -27,7 +27,7 @@ function panel(
       onOpen={() => {}}
       onRename={onRename}
       onDelete={onDelete}
-      onOpenSettings={() => {}}
+      onSignIn={() => {}}
     />,
   )
 }
@@ -147,4 +147,33 @@ test('a failed delete keeps the dialog open and says so', async () => {
 
   expect((await screen.findByRole('alert')).textContent).toContain("Couldn't delete the session")
   expect(screen.getByRole('alertdialog', { name: 'Delete this session?' })).toBeTruthy()
+})
+
+test('Settings opens a menu upward with Appearance and Profile [ST-01]', async () => {
+  panel(async () => {})
+
+  const trigger = screen.getByRole('button', { name: 'Settings' })
+  fireEvent.click(trigger)
+
+  const menu = await screen.findByRole('menu', { name: 'Settings' })
+  expect(trigger.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
+    'Appearance',
+    'Profile',
+  ])
+  expect(menu).toBeTruthy()
+})
+
+test('Appearance and Profile each open a dialog [ST-01]', async () => {
+  panel(async () => {})
+
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Appearance' }))
+  expect(await screen.findByRole('dialog', { name: 'Appearance' })).toBeTruthy()
+  fireEvent.keyDown(screen.getByRole('dialog', { name: 'Appearance' }), { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Appearance' })).toBeNull())
+
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  fireEvent.click(await screen.findByRole('menuitem', { name: 'Profile' }))
+  expect(await screen.findByRole('dialog', { name: 'Profile' })).toBeTruthy()
 })

@@ -4,7 +4,7 @@ status: accepted
 
 # Appearance mode stays in the browser
 
-Polaris has a Light and a Dark palette in the design system. Until now the app picked one from the operating system and gave the learner no say. The learner can now choose System, Light, or Dark on the Settings page (ST-02).
+Polaris has a Light and a Dark palette in the design system. Until now the app picked one from the operating system and gave the learner no say. The learner can now choose System, Light, or Dark in Settings (ST-02).
 
 The choice is kept in the browser, under one key, and nowhere else. It is not sent to the server and not tied to sign-in. Sign-in is optional ([decision 0008](0008-optional-sign-in-protects-the-profile.md)) and protects the profile only, and the mode is something the learner wants before they have signed in, including on a first visit. The profile is what Polaris knows about the learner, not how the screen looks, so the mode does not belong there either.
 

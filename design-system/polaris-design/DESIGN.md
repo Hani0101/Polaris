@@ -192,7 +192,7 @@ Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), 
 - With a picked pen or board color, the learner is responsible for visibility. Nothing changes automatically. Why: not given.
 - The amber accent is never a pen color. Why: keeps the accent for the app's own highlights, and `#f08a4b` is 2.4:1 on the light board.
 - Parts the agent adds beside the learner's drawing on a pinned board are drawn in pen box 1 (the tutor's pen) with a dashed line, whatever stroke they were sent with. Marks stay red and dashed. Why: the learner's pens are always solid, so the dash tells the agent's parts from theirs, and an explanation does not look like a correction (WB-20).
-- The learner chooses the mode on the Settings page: System, Light, or Dark. System follows the operating system. Every token has both a Light and a Dark value, so no screen is built for one mode only. Why: the learner decides how the screen looks, and both palettes are checked in 2.2 (ST-02, ST-03).
+- The learner chooses the mode in the Appearance dialog, opened from the Settings menu: System, Light, or Dark. System follows the operating system. Every token has both a Light and a Dark value, so no screen is built for one mode only. Why: the learner decides how the screen looks, and both palettes are checked in 2.2 (ST-02, ST-03).
 - Whiteboard tokens do not change with the mode. A new board opens on `color.whiteboard.board.default`, which is the one board token that differs by mode, and a board that exists is never recolored. Why: recoloring a board would change what the learner drew (WB-22).
 - `color.code.*` is used only for syntax colors inside code blocks in tutor replies, on `color.bg.subtle`. Inline code and the rest of the app never use it. Why: the code colors carry no meaning outside code, so they stay out of the way of the accent and the state colors.
 - Syntax color is never the only cue in code: keywords are also bold. Why: color alone fails people with color blindness.
@@ -356,7 +356,7 @@ Shadows allowed: no
 ### 6.5 Layout rules
 - The app is three panels: the session list on the left (`layout.panel.left`), the chat in the middle, tools on the right (`layout.panel.right`). The left and right panels can be closed. The chat is always visible and stops at `layout.maxWidth.chat`. Why: not given.
 - The 12-column grid is used for full pages (settings), which stop at `layout.maxWidth.content`. Why: not given.
-- The Settings page is a full page with a Back button (ghost, with a back icon) and the title "Settings" in `typography.label` at the top, and one column below at `layout.maxWidth.chat`, centered, text left-aligned, with `space.section.gap` between sections. Each section has a heading and its controls. Below `breakpoint.sm` the margins are `layout.page.marginPhone`. Why: one section today, so the 12-column grid has nothing to divide; the column matches the quiz page (ST-01, ST-11).
+- Settings is not a page. Each item of the Settings menu opens a Modal (default variant) over the current screen, titled with the item's name. Its choices apply at once, so it has no main button, only a secondary "Close". A confirm opened from inside it sits over it and holds focus until it closes. Why: the learner changes a setting without leaving the conversation (ST-01, ST-11).
 - The expanded quiz page is one column at `layout.maxWidth.chat`, centered, with the title above the card in the same column and the card kept at the top of the page, not centered vertically. Text stays left-aligned. Why: a column that hugs the left edge leaves the page feeling empty, and a vertically centered card would jump when the feedback opens.
 - From `breakpoint.md` up: all three panels. From `breakpoint.lg` up, the tools panel is `layout.panel.rightWide`. Why: not given.
 - From `breakpoint.sm` to below `breakpoint.md`: chat plus the tools panel. The session list is the menu button, as on phones. Why: not given.
@@ -1024,7 +1024,7 @@ States:
 
 #### Side panel rules
 - Closing a panel gives its space to the chat. A button in the top bar opens it again. Why: not given.
-- The left panel ends with a footer: a 1px subtle line above it, then a Settings button (ghost, with the Lucide settings icon at `component.icon.size.md` and the label "Settings"), full width, at least `component.tapTarget.min` tall. The footer stays at the bottom while the session list scrolls. On phones it is the bottom of the drawer. Why: Settings is reachable from every screen without a new top bar item (ST-01).
+- The left panel ends with a footer: a 1px subtle line above it, then a Settings button (ghost, with the Lucide settings icon at `component.icon.size.md` and the label "Settings"), full width, at least `component.tapTarget.min` tall. The footer stays at the bottom while the session list scrolls. On phones it is the bottom of the drawer. The button opens a Dropdown menu upward, above the button, with Appearance (Lucide sun-moon) and Profile (Lucide user-round). Why: Settings is reachable from every screen without a new top bar item, and a menu at the bottom of the panel has room only above it (ST-01).
 
 ### Tabs
 Purpose: switches between views in the same place, such as Whiteboard, Quiz, and Artifacts in the tools panel.

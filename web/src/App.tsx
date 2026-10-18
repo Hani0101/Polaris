@@ -43,8 +43,6 @@ import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
 import { deckPath, pathDeckId } from './deck.ts'
 import { DeckPage } from './DeckPage.tsx'
 import { QuizPage } from './QuizPage.tsx'
-import { SettingsPage } from './SettingsPage.tsx'
-import { SETTINGS_PATH, isSettingsPath } from './settingsPath.ts'
 import { restoreSignIn, signOut, useSignIn } from './auth.ts'
 import { SignInPage } from './SignInPage.tsx'
 import { SIGN_IN_PATH, isSignInPath } from './signInPath.ts'
@@ -894,10 +892,6 @@ function App() {
     onOpen: (sessionId: string) => void oneAtATime(() => onOpen(sessionId)),
     onRename,
     onDelete,
-    onOpenSettings: () => {
-      goTo(SETTINGS_PATH)
-      if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
-    },
     onLeave: () => void onLeave(),
     onSignIn: () => goTo(SIGN_IN_PATH),
     onSignOut: () => void onSignOut(),
@@ -960,10 +954,9 @@ function App() {
   const deckId = pathDeckId(path)
   const whiteboardRoute = pathWhiteboard(path)
   const animationRoute = pathAnimation(path)
-  const settingsRoute = isSettingsPath(path)
   const signInRoute = isSignInPath(path)
   const covering = Boolean(
-    quizId || deckId || whiteboardRoute || animationRoute || settingsRoute || signInRoute,
+    quizId || deckId || whiteboardRoute || animationRoute || signInRoute,
   )
 
   async function onBackFromCover() {
@@ -986,7 +979,6 @@ function App() {
 
   return (
     <>
-      {settingsRoute ? <SettingsPage onBack={() => void onBackFromCover()} /> : null}
       {signInRoute ? (
         <SignInPage
           onBack={() => void onBackFromCover()}

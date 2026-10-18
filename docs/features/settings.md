@@ -1,13 +1,15 @@
 # Settings
 
-Settings is a page of choices about how Polaris looks and behaves for this learner on this browser. In v1 it has one section, Appearance. Later sections (the agent's memory of the learner, sign-in) are parked in `later.md`.
+Settings is a menu of choices about how Polaris looks and behaves for this learner. It opens upward from the Settings button at the bottom of the left panel. In v1 it has two items, Appearance and Profile, and each opens a dialog. A sign-in item is parked in `later.md`.
 
 The appearance mode is how the app picks light or dark colors. See [Appearance mode stays in the browser](../decisions/0010-appearance-mode-stays-in-the-browser.md).
 
+The Profile dialog shows what Polaris knows about the learner and lets them change it (PR-11). Unlike the mode, it lives on the server and needs sign-in (AU-12). See [The learner can edit the profile](../decisions/0014-the-learner-can-edit-the-profile.md).
+
 ## Rules
 
-ST-01  The learner can open Settings from the left panel, on every screen size. A Back control returns them to the screen they came from.
-ST-02  Settings has an Appearance section with three choices: System, Light, and Dark. Exactly one is chosen.
+ST-01  The Settings button sits at the bottom of the left panel, on every screen size. It opens a menu upward with Appearance and Profile, and each item opens its own dialog over the screen the learner is on. Settings is not a page. A dialog's choices apply at once, so it has only a Close button. Closing returns focus to the Settings button.
+ST-02  The Appearance dialog has three choices: System, Light, and Dark. Exactly one is chosen.
 ST-03  System follows the operating system's light or dark setting and changes with it while Polaris is open. Light and Dark ignore the operating system.
 ST-04  The first time the app opens in a browser, the mode is System.
 ST-05  The chosen mode is kept in the browser and applies at once, with no reload. It is not sent to the server and not tied to sign-in.
@@ -16,18 +18,31 @@ ST-07  If the browser cannot keep the choice, the app still works and uses Syste
 ST-08  The mode changes every color in the app from the design system's Light or Dark column, including code blocks in replies and the whiteboard's own menus and toolbar.
 ST-09  Switching the mode never changes a whiteboard that exists. It decides only the color of a board made after the switch (WB-22).
 ST-10  A finished video animation keeps its own colors in either mode (AN-22).
-ST-11  Settings fits a phone from 320px wide with no horizontal scroll, every control is at least 44px, and it is reachable and usable by keyboard and screen reader (WCAG AA). The choices are a group with a name, and the chosen one is announced.
+ST-11  The Settings menu and both dialogs fit a phone from 320px wide with no horizontal scroll, every control is at least 44px, and they are reachable and usable by keyboard and screen reader (WCAG AA). The appearance choices are a group with a name, and the chosen one is announced.
+ST-12  The Profile dialog loads the profile each time it opens. For a signed-in learner it lists every fact on the profile as a bullet point, under a heading for its kind, in the order the agent reads them. A kind with no fact shows no heading.
+ST-13  A learner who is not signed in sees no facts, only a sentence that the profile needs sign-in and a Sign in button that opens the sign-in page (AU-02).
+ST-14  Each fact has a Change and a Remove control. Change turns the bullet into a text field holding the fact, with Save change and Cancel. Escape cancels. After saving or cancelling, focus returns to that fact's Change control.
+ST-15  Remove asks first in a confirm dialog over the Profile dialog, naming the fact. Nothing is removed until the learner confirms. Afterwards focus is on the add field.
+ST-16  Below the list, a text field adds a fact. A fact is one line of at most 300 characters. A blank fact, or one the profile already holds, is refused with a message under the field, and nothing is stored.
+ST-17  The dialog says that Polaris reads the profile before every reply, so a change applies from the next message. A saved change is announced to screen readers.
+ST-18  An empty profile shows an empty state that says the profile fills when the learner leaves a session, with the add field below it. A profile that fails to load shows an error with Try again.
 
 ## Scenarios
 
-Scenario: Settings opens from the left panel  [ST-01]
+Scenario: Settings opens a menu upward  [ST-01]
   Given the learner is in a chat
-  When they choose Settings in the left panel
-  Then the Settings page is showing
-  And Back returns them to that chat
+  When they choose Settings at the bottom of the left panel
+  Then a menu opens above the button with Appearance and Profile
+  And the chat stays where it was
+
+Scenario: each Settings item opens a dialog  [ST-01]
+  Given the Settings menu is open
+  When the learner chooses Appearance
+  Then the Appearance dialog opens over the chat
+  And Close returns focus to the Settings button
 
 Scenario: Settings offers three modes  [ST-02]
-  Given the Settings page is showing
+  Given the Appearance dialog is open
   When the learner looks at Appearance
   Then it offers System, Light, and Dark
   And exactly one is chosen
@@ -84,11 +99,42 @@ Scenario: a finished video stays dark  [ST-10, AN-22]
 
 Scenario: Settings fits a phone  [ST-11]
   Given a phone screen 320px wide
-  When the learner opens Settings
-  Then the page and its controls fit without horizontal scroll
+  When the learner opens the Settings menu, then the Profile dialog
+  Then the menu, the dialog, and their controls fit without horizontal scroll
   And every control is at least 44px
 
 Scenario: a screen reader hears the choice  [ST-11]
-  Given a screen reader is on the Settings page
-  When it reaches Appearance
+  Given a screen reader is in the Appearance dialog
+  When it reaches the choices
   Then it reads the group's name and which choice is chosen
+
+Scenario: the profile is listed as bullet points  [ST-12]
+  Given a signed-in learner whose profile says they like worked examples and struggle with fractions
+  When they open Profile from the Settings menu
+  Then "likes worked examples" is a bullet under "How you like to be taught"
+  And "struggles with fractions" is a bullet under "Where you find it hard"
+
+Scenario: a signed-out learner is asked to sign in  [ST-13]
+  Given the learner is not signed in
+  When they open Profile from the Settings menu
+  Then the Profile dialog shows no facts
+  And Sign in opens the sign-in page
+
+Scenario: a fact is changed in place  [ST-14, PR-11]
+  Given the Profile dialog lists "struggles with fractions"
+  When the learner chooses Change, types "finds fractions hard", and chooses Save change
+  Then the bullet reads "finds fractions hard"
+  And focus is on its Change control
+  And the next reply is written with "finds fractions hard" in hand
+
+Scenario: a fact is removed after a confirmation  [ST-15, PR-11]
+  Given the Profile dialog lists "likes videos"
+  When the learner chooses Remove
+  Then a dialog asks "Remove this from your profile?" and names the fact
+  And the fact is removed only after they choose Remove from profile
+
+Scenario: a repeated fact is refused  [ST-16]
+  Given the profile already says "likes worked examples"
+  When the learner adds "Likes worked examples."
+  Then the field says "Your profile already says this."
+  And the profile still holds that fact once

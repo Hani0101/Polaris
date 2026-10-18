@@ -1,52 +1,4 @@
-/* Settings page (DESIGN.md 6.5), Checkbox and radio: radio variant, and the left panel footer. */
-
-.st-page {
-  display: flex;
-  flex-direction: column;
-  min-height: 100dvh;
-  background: var(--color-bg-page);
-  color: var(--color-text-primary);
-}
-
-.st-page .top-bar {
-  position: sticky;
-  top: 0;
-}
-
-.st-main {
-  flex: 1;
-  /* DS-GAP: space above and below the page content under the top bar, used space.xl */
-  padding: var(--space-xl) var(--layout-page-margin-phone);
-}
-
-.st-column {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-section-gap);
-  max-width: var(--layout-max-width-chat);
-  margin: 0 auto;
-}
-
-.st-title {
-  font-family: var(--font-family-heading);
-  font-size: var(--font-size-2xl);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--font-line-height-tight);
-  letter-spacing: var(--font-letter-spacing-normal);
-}
-
-.st-section {
-  display: flex;
-  flex-direction: column;
-  /* DS-GAP: gap between a section heading and its controls, used space.md */
-  gap: var(--space-md);
-}
-
-.st-heading {
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--font-line-height-tight);
-}
+/* Settings dialogs (DESIGN.md 6.5), Checkbox and radio: radio variant, and the left panel footer. */
 
 .st-group {
   display: flex;
@@ -133,6 +85,112 @@
   color: var(--color-text-secondary);
 }
 
+/* Profile section (PR-11): facts as bullet points, Text input, Button, Icon button. */
+.st-profile {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between the intro, the list, and the add field in a modal, used space.lg */
+  gap: var(--space-lg);
+}
+
+.st-intro {
+  color: var(--color-text-secondary);
+}
+
+.st-signed-out {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.st-facts {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between groups of facts, used space.lg */
+  gap: var(--space-lg);
+}
+
+.st-fact-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.st-subheading {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+}
+
+.st-fact-list {
+  margin: 0;
+  /* DS-GAP: indent for a bulleted list, used space.lg */
+  padding-left: var(--space-lg);
+  list-style: disc;
+}
+
+.st-fact::marker {
+  color: var(--color-text-secondary);
+}
+
+.st-fact.is-editing {
+  list-style: none;
+  padding: var(--space-xs) 0;
+}
+
+.st-fact-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  min-height: var(--component-tap-target-min);
+}
+
+.st-fact-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.st-fact-edit {
+  flex: none;
+  display: flex;
+}
+
+.st-fact-form,
+.st-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+}
+
+.st-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inline-default);
+}
+
+/* Button loading (DESIGN.md 7, Button): the spinner replaces the text and the width is kept. */
+.st-busy {
+  position: relative;
+}
+
+.st-busy-label.is-hidden {
+  visibility: hidden;
+}
+
+.st-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.st-skeleton-line {
+  height: var(--component-tap-target-min);
+}
+
 /* Left panel footer: a subtle line above, then the Settings button. */
 .session-panel-footer {
   padding-top: var(--space-xs);
@@ -143,15 +201,4 @@
   width: 100%;
   justify-content: flex-start;
   min-height: var(--component-tap-target-min);
-}
-
-@media (min-width: 640px) {
-  .st-main {
-    padding-left: var(--layout-page-margin);
-    padding-right: var(--layout-page-margin);
-  }
-
-  .st-title {
-    font-size: var(--font-size-3xl);
-  }
 }
