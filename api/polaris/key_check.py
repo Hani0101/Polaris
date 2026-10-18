@@ -31,6 +31,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import ApiKeyPresent, reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -133,6 +134,7 @@ def key_check_options(*, cwd: Path) -> ClaudeAgentOptions:
         strict_mcp_config=True,
         model="haiku",
         output_format={"type": "json_schema", "schema": ANSWER_SCHEMA},
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=3,
         cwd=cwd,

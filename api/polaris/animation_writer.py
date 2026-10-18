@@ -34,6 +34,7 @@ from claude_agent_sdk import (
 
 from polaris.animation_format import ANIMATION_LIMITS, Animation
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -217,6 +218,7 @@ def animation_writer_options(*, cwd: Path) -> ClaudeAgentOptions:
         setting_sources=[],
         strict_mcp_config=True,
         output_format={"type": "json_schema", "schema": writer_schema()},
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=3,
         cwd=cwd,

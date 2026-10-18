@@ -25,6 +25,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.profile_pass import _cli_loop, _off_loop_required
 
 QueryFn = Callable[..., AsyncIterator[object]]
@@ -65,6 +66,7 @@ def title_options(*, cwd: Path) -> ClaudeAgentOptions:
         setting_sources=[],
         strict_mcp_config=True,
         model="haiku",
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=1,
         cwd=cwd,

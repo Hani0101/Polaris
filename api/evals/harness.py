@@ -33,6 +33,7 @@ from claude_agent_sdk import (
 
 from polaris.chat import Chat
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.teaching import ClaudeTeachingAgent
 
 API_DIR = Path(__file__).resolve().parent.parent
@@ -272,6 +273,7 @@ async def judge(question: str, material: str, *, cwd: Path, sample: Sample) -> t
         strict_mcp_config=True,
         model="haiku",
         output_format={"type": "json_schema", "schema": JUDGE_SCHEMA},
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=3,
         cwd=cwd,

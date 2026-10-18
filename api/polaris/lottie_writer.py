@@ -33,6 +33,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.lottie_video import (
     BACKGROUND,
     FORMAT,
@@ -674,6 +675,7 @@ def lottie_writer_options(store: SceneStore) -> ClaudeAgentOptions:
         mcp_servers={SERVER: server},
         strict_mcp_config=True,
         allowed_tools=[f"mcp__{SERVER}__{name}" for name in TOOL_NAMES],
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=int(os.environ.get("POLARIS_ANIMATION_MAX_TURNS", "80")),
         model=model,

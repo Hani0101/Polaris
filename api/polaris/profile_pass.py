@@ -26,6 +26,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.models import Fact, FactChange, Turn
 from polaris.profile import FACT_BASES, FACT_KINDS, ProfilePassFailed
 
@@ -142,6 +143,7 @@ def profile_pass_options(*, cwd: Path) -> ClaudeAgentOptions:
         strict_mcp_config=True,
         model="haiku",
         output_format={"type": "json_schema", "schema": CHANGE_SCHEMA},
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=3,
         cwd=cwd,

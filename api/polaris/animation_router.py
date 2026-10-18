@@ -30,6 +30,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -131,6 +132,7 @@ def router_options(*, cwd: Path, model: str | None = None) -> ClaudeAgentOptions
         strict_mcp_config=True,
         allowed_tools=[],
         output_format={"type": "json_schema", "schema": ROUTE_SCHEMA},
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=3,
         cwd=cwd,

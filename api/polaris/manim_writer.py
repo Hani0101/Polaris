@@ -34,6 +34,7 @@ from claude_agent_sdk import (
 )
 
 from polaris.login import reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.manim_render import PREVIEW, RenderResult, render
 
 QueryFn = Callable[..., AsyncIterator[object]]
@@ -419,6 +420,7 @@ class ClaudeManimWriter:
             mcp_servers={"manim": server} if previewing else {},
             allowed_tools=[PREVIEW_TOOL] if previewing else [],
             output_format={"type": "json_schema", "schema": OUTPUT_SCHEMA},
+            disallowed_tools=DISALLOWED_TOOLS,
             permission_mode="dontAsk",
             max_turns=4 * self._max_previews + 4,
             cwd=self.work_dir,
