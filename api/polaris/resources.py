@@ -284,15 +284,18 @@ def create_resource_tables(conn: sqlite3.Connection) -> None:
     )
 
 
+# SQLite counts the pages, so a listing does not load the extracted text.
+_PAGE_COUNT = "json_array_length(pages_json) AS pages"
+
+
 def _summary(row: sqlite3.Row) -> dict[str, object]:
-    pages = json.loads(row["pages_json"])
     return {
         "id": row["id"],
         "kind": row["kind"],
         "name": row["name"],
         "media_type": row["media_type"],
         "size": row["size"],
-        "pages": len(pages),
+        "pages": row["pages"],
     }
 
 
@@ -315,8 +318,8 @@ class ResourceStore:
     def list_all(self, session_id: str) -> list[dict[str, object]]:
         def read(conn: sqlite3.Connection) -> list[dict[str, object]]:
             rows = conn.execute(
-                """
-                SELECT id, kind, name, media_type, size, pages_json
+                f"""
+                SELECT id, kind, name, media_type, size, {_PAGE_COUNT}
                 FROM resources WHERE session_id = ?
                 ORDER BY created_at ASC, id ASC
                 """,
@@ -388,7 +391,7 @@ class ResourceStore:
     def _row(self, session_id: str, resource_id: str) -> sqlite3.Row:
         def read(conn: sqlite3.Connection) -> sqlite3.Row | None:
             return conn.execute(
-                "SELECT * FROM resources WHERE id = ? AND session_id = ?",
+                f"SELECT *, {_PAGE_COUNT} FROM resources WHERE id = ? AND session_id = ?",
                 (resource_id, session_id),
             ).fetchone()
 

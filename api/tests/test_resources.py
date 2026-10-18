@@ -470,6 +470,7 @@ def test_the_profile_pass_ignores_resource_content(make_client):  # RS-21, PR-10
     send(client, session, "Teach me cells")
 
     client.post(f"/api/sessions/{session}/leave")
+    client.app.state.chat.wait_for_session_ends()
 
     assert stub.calls
     assert "TEXTBOOK-ONLY-SENTENCE" not in json.dumps(stub.calls)
@@ -525,3 +526,27 @@ def test_a_pdf_that_needs_a_password_says_so(make_client):  # RS-06
     assert response.status_code == 422
     assert "password" in response.json()["detail"]
     assert listed(client, session) == []
+
+
+def test_the_list_counts_pages_without_the_text(make_client):  # RS-07
+    client, _agent = make_client()
+    session = new_session(client)
+    pdf = upload(client, session, "book.pdf", make_pdf(["One", "Two", "Three"])).json()
+    image = upload(client, session, "pic.png", PNG).json()
+    note = add_note(client, session, "Mine", "old").json()
+    edited = client.patch(
+        f"/api/sessions/{session}/resources/{note['id']}", json={"text": "new"}
+    ).json()
+    renamed = client.patch(
+        f"/api/sessions/{session}/resources/{pdf['id']}", json={"name": "Book"}
+    ).json()
+
+    items = listed(client, session)
+    previews = [
+        client.get(f"/api/sessions/{session}/resources/{item['id']}").json() for item in items
+    ]
+
+    assert [item["pages"] for item in items] == [3, image["pages"], 1]
+    assert [item["pages"] for item in items] == [len(p["text_pages"]) for p in previews]
+    assert [pdf["pages"], edited["pages"], renamed["pages"]] == [3, 1, 3]
+    assert "text_pages" not in items[0]
