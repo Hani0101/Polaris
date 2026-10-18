@@ -7,11 +7,11 @@ A session is the conversation. A turn is one typed message and the reply that fo
 CH-01  The learner's side of a turn is a typed message. Resources the learner adds to the session are not part of a turn (RS-17).
 CH-02  The reply can include text and any artifacts created in that turn: a whiteboard, a quiz, or an animation job.
 CH-03  The learner sees the reply as it is produced.
-CH-04  The learner can start a new session and reopen an earlier one.
+CH-04  The learner can start a new session and reopen an earlier one. A new session is a draft until its first message is sent (CH-18).
 CH-05  A session ends when the learner leaves it, including when they switch to another session.
-CH-06  The learner can give a session a name, and change it later, from the session list. A session without a name is labelled with its first message.
-CH-07  A name is trimmed and at most 80 characters. A blank name removes it.
-CH-08  Naming a session changes its label only. It does not open or end the session, add a turn, or stop a reply in progress. The agent and the profile pass never read it.
+CH-06  The learner can give a session a name, and change it later, from the session list. A session is labelled with its name; without one, its generated title (CH-20); without that, its first message.
+CH-07  A name is trimmed and at most 80 characters. A blank name removes the name, so the label falls back as in CH-06.
+CH-08  Naming a session changes its label only. It does not open or end the session, add a turn, or stop a reply in progress. The agent and the profile pass never read the name or the generated title.
 CH-09  The reply text is drawn from a small Markdown subset: headings, numbered and bulleted lists, paragraphs, bold, key terms (`==term==`), struck text (`~~text~~`), inline code, code blocks with syntax colors when they name a language, tables, quotes, callouts (`> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`), maths (`$...$` and `$$...$$`), and web links. Anything else is shown as plain text, and italic is never shown.
 CH-10  Raw HTML in a reply is shown as text and never rendered. Only http and https links become links. Maths that cannot be read is shown as its source.
 CH-11  The learner can delete a session from its row in the session list, after one confirmation. The confirmation names the session, says it cannot be undone, and says the profile keeps what it learned.
@@ -21,6 +21,11 @@ CH-14  A reply or animation job still running in the session is stopped before i
 CH-15  A learner can delete only their own sessions. An anonymous session can be deleted too.
 CH-16  In a signed-in session, deleting waits for the profile pass on it to finish (PR-05). If the pass fails, the session is still deleted and the learner is told that its facts were not saved.
 CH-17  Opening a session that no longer exists tells the learner so and opens a new empty session.
+CH-18  A new session is a draft. A draft is not in the session list, has no rename control, and its top bar says "New session". A draft opens when the learner starts a new session, deletes the open one (CH-13), or opens a missing one (CH-17).
+CH-19  Leaving a draft, including by switching to another session or starting a new one, discards it. A draft left by reloading or closing the tab is discarded the next time a session is started, opened, or left. It never ends, and no profile pass runs on it. A resource added to a draft (RS-17) is held with it and goes into the session on the first send, or is dropped with the draft.
+CH-20  The first send lists the session at once, labelled with its first message, while the reply is still being produced. If the send fails, the typed message stays in the composer. A separate cheap model then writes a generated title from the text of that first message only. It runs once per session, for anonymous sessions too, and never on later turns, on reopening, or after a failure.
+CH-21  A generated title is plain text of at most 80 characters, about six words, in the language of the message. It never delays the reply. If it fails, the label stays as it is, with no retry and no error shown. If the session was deleted first, the write is dropped (CH-14). A title that arrives after the learner has named the session is stored but does not replace the name.
+CH-22  Sessions made before generated titles existed are not given one.
 
 Profile rules PR-01, PR-02, and PR-03 apply before a teaching reply. While an animation job runs, AN-02 and AN-03 apply in the chat.
 
@@ -57,9 +62,9 @@ Scenario: an unnamed session shows its first message  [CH-06]
   Then it is labelled with the first message
 
 Scenario: a blank name removes the name  [CH-07]
-  Given a session named "Fractions"
+  Given a session named "Fractions" with the generated title "Adding fractions"
   When the learner saves a blank name
-  Then the session is labelled with its first message again
+  Then the session is labelled "Adding fractions"
 
 Scenario: a long name is refused  [CH-07]
   Given the learner types a name of 81 characters
@@ -135,3 +140,64 @@ Scenario: opening a deleted session  [CH-17]
   When the learner opens it from a stale list
   Then they are told it no longer exists
   And a new empty session opens
+
+Scenario: a new session is not in the list  [CH-18]
+  Given the learner starts a new session
+  When they have not sent a message
+  Then the session list has no row for it
+  And the top bar says "New session"
+
+Scenario: leaving a draft discards it  [CH-19]
+  Given an unsent draft
+  When the learner switches to another session
+  Then the draft is gone, no profile pass ran, and the list is unchanged
+
+Scenario: a draft left by closing the tab is discarded later  [CH-19]
+  Given an unsent draft whose tab was closed
+  When the learner starts or opens a session
+  Then the old draft is gone and no profile pass ran
+
+Scenario: a resource waits with the draft  [CH-19]
+  Given a draft with a resource added
+  When the learner sends the first message
+  Then the session appears with that resource
+
+Scenario: the first send adds the session to the list  [CH-20]
+  Given an unsent draft
+  When the learner sends a message
+  Then the session appears in the list labelled with that message
+
+Scenario: a failed send keeps the message  [CH-20]
+  Given an unsent draft
+  When the first send fails before any reply text
+  Then the typed message is still in the composer
+
+Scenario: the title is generated from the first message  [CH-20, CH-21]
+  Given a session whose first message has been sent
+  When the title is generated
+  Then the list and the top bar show the generated title
+
+Scenario: the title is generated once  [CH-20]
+  Given a session with a generated title
+  When the learner sends more messages or reopens it
+  Then no new title is generated
+
+Scenario: a failed title keeps the label  [CH-21]
+  Given the title cannot be generated
+  When the first reply finishes
+  Then the session is labelled with its first message and no error is shown
+
+Scenario: a name beats a late title  [CH-21]
+  Given the learner named the session "Fractions"
+  When the generated title arrives
+  Then the label is still "Fractions"
+
+Scenario: a title for a deleted session is dropped  [CH-21, CH-14]
+  Given a session deleted before its title arrives
+  When the title arrives
+  Then nothing is stored
+
+Scenario: an older session gets no title  [CH-22]
+  Given a session made before generated titles
+  When the session list loads
+  Then it is labelled with its name or its first message

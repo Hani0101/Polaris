@@ -12,9 +12,17 @@ _Avoid_: user, student, account
 One conversation between the learner and the agent.
 _Avoid_: thread, sign-in
 
+**Draft**:
+A new session that has no message yet. It is not in the session list, and it is discarded if the learner leaves it.
+_Avoid_: empty session, pending session
+
 **Session name**:
-The label the learner gives a session. A session without one is labelled with its first message.
-_Avoid_: title, chat name, topic
+The label the learner gives a session. Without one, a session is labelled with its generated title, then with its first message.
+_Avoid_: chat name, topic
+
+**Generated title**:
+A short title a cheap model writes once from a session's first message. The learner's session name wins over it.
+_Avoid_: auto-name, summary
 
 **Sign-in**:
 The local page where the learner enters a username and a password so that Polaris keeps and uses their profile. It is optional.
