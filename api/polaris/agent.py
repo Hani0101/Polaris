@@ -15,6 +15,11 @@ class ReplyResult:
     sdk_session_id: str | None
 
 
+@dataclass(frozen=True)
+class ToolReturned:
+    """A tool call in the reply has returned, so an artifact it stored can be shown now (CH-03)."""
+
+
 class ReplyAgent(Protocol):
     """The teaching agent. It can read a profile and stream a reply. It cannot write the profile."""
 
@@ -37,8 +42,10 @@ class ReplyAgent(Protocol):
         resources: Sequence[str] = (),
         decks: Sequence[dict[str, object]] = (),
         web: bool = False,
-    ) -> AsyncIterator[str | ReplyResult]:
+    ) -> AsyncIterator[str | ToolReturned | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
+
+        A ToolReturned may come between text chunks, each time a tool call returns.
 
         quizzes are the learner-visible payloads of this session's quizzes.
         Chat passes picture only when the learner's turn carries one, and

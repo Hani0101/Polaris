@@ -32,6 +32,7 @@ CH-25  One web-mode reply makes at most 4 searches and page reads together. Past
 CH-26  The agent reads only public web pages. Code checks the address of every page it reads and refuses one on this machine or its local network, so a page cannot steer it to Polaris's own API.
 CH-27  Web content reaches the agent as data. A command written in a page cannot change its instructions or tools, and it never reads an address because a page told it to (RS-11).
 CH-28  While web mode is on, the composer says so in words, and the toggle reads as on or off to a screen reader. The learner can turn it off from either place.
+CH-29  A reply starts with text before the agent uses any tool, so the learner has something to read while a whiteboard, quiz, deck, or animation job is made, or a resource or web page is read. The explanation comes before a quiz, deck, or animation job is made, and those are made at the end of the reply. No text announces an artifact before it is stored. A whiteboard is still drawn before the text its steps belong to (WB-06).
 
 Profile rules PR-01, PR-02, and PR-03 apply before a teaching reply. While an animation job runs, AN-02 and AN-03 apply in the chat.
 
@@ -56,6 +57,16 @@ Scenario: the reply appears while it is still being produced  [CH-03]
   Given the learner has sent a message
   When the agent is still producing the reply
   Then the learner can see the part of the reply already produced
+
+Scenario: an artifact appears once it is stored  [CH-02, CH-03]
+  Given the agent has stored a quiz and has written no text since
+  When the learner looks at the reply still being produced
+  Then the quiz is already there
+
+Scenario: a reply opens with text before its tools  [CH-29]
+  Given a session whose profile is already filled
+  When the learner asks about a new topic and the reply makes a quiz
+  Then the explanation appears before the agent starts making the quiz
 
 Scenario: a session can be named  [CH-06]
   Given the learner has a session with a first message

@@ -18,12 +18,14 @@ from claude_agent_sdk import (
     StreamEvent,
     SystemMessage,
     TextBlock,
+    ToolResultBlock,
+    UserMessage,
 )
 
 from polaris.chat import Chat
 from polaris.login import ApiKeyPresent
 from polaris.models import Pointing, Profile, Turn
-from polaris.agent import ReplyResult
+from polaris.agent import ReplyResult, ToolReturned
 from polaris.key_check import KeyCheckFailed
 from polaris.quiz import normalize_spec
 from polaris.teaching import (
@@ -52,6 +54,7 @@ from polaris.teaching import (
     _OffLoopClient,
     reply_error_message,
     teaching_options,
+    teaching_prompt,
     turn_prompt,
 )
 from polaris.whiteboard import check_drawing, describe_whiteboard
@@ -267,6 +270,57 @@ def test_text_deltas_stream_without_duplicating_the_finished_block(tmp_path: Pat
     assert "Profile facts, read for this reply:" in created[0].prompts[0]
     assert "Do not teach the topic yet." not in created[0].prompts[0]
     assert "struggles with fractions" not in created[0].options.system_prompt
+
+
+def test_a_tool_result_is_passed_on_between_text_chunks(tmp_path: Path):  # CH-03
+    created: list[FakeClient] = []
+    agent = _agent(
+        tmp_path,
+        [
+            delta("Fractions are parts."),
+            UserMessage(content=[ToolResultBlock(tool_use_id="tool-1", content="Quiz stored.")]),
+            UserMessage(content="a replayed message"),
+            delta(" Try the quiz."),
+            result(),
+        ],
+        created,
+    )
+
+    async def items() -> list[object]:
+        return [
+            item
+            async for item in agent.reply(
+                session_id="session-1",
+                profile=Profile(("struggles with fractions",)),
+                learner_message="How do I add fractions?",
+                prior_turns=(),
+                sdk_session_id=None,
+            )
+        ]
+
+    assert asyncio.run(items()) == [
+        "Fractions are parts.",
+        ToolReturned(),
+        " Try the quiz.",
+        ReplyResult(sdk_session_id="sdk-1"),
+    ]
+
+
+def test_the_prompt_opens_with_text_before_any_tool():  # CH-29, WB-06
+    prompt = teaching_prompt()
+
+    assert "Start each reply with text before you call any tool" in prompt
+    assert "not a greeting" in prompt
+    assert "When you will draw, keep that opening to a sentence or two." in prompt
+    assert (
+        "Call a whiteboard tool before the text that holds its [[step:...]] markers, "
+        "then write that text." in prompt
+    )
+    assert (
+        "Call create_quiz, create_flashcards, and start_animation_job after your "
+        "explanation, at the end of the reply." in prompt
+    )
+    assert "coming until its tool has returned" in prompt
 
 
 def test_a_later_reply_on_the_same_client_reads_the_profile_again(tmp_path: Path):

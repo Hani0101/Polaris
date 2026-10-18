@@ -1,15 +1,18 @@
-"""Quiz scenarios: QZ-01 through QZ-16, CH-02, and decisions 0002, 0007, and 0009.
+"""Quiz scenarios: QZ-01 through QZ-16, CH-02, CH-03, and decisions 0002, 0007, and 0009.
 
 A filled profile is seeded so a quiz can be created without teaching on an
 empty profile. Nothing here writes the profile.
 """
 
+import asyncio
 import copy
 import json
 import random
+import threading
 
 import pytest
 
+from polaris.agent import ToolReturned
 from polaris.models import Profile
 from polaris.quiz import (
     InvalidQuiz,
@@ -98,6 +101,22 @@ class QuizCreatingStub:
         self.closed.append(session_id)
 
 
+class QuizBeforeTextStub(QuizCreatingStub):
+    """Stores a quiz and says its tool returned, then waits before writing more."""
+
+    def __init__(self, spec: dict) -> None:
+        super().__init__(spec)
+        self.release = threading.Event()
+
+    async def reply(self, *, session_id: str, **_extra):
+        yield "Fractions are parts of a whole."
+        assert self.chat is not None
+        self.chat.create_quiz(session_id, self.spec)
+        yield ToolReturned()
+        await asyncio.to_thread(self.release.wait, 10)
+        yield " Try the quiz."
+
+
 def _forbidden_fields(value, *, in_question: bool) -> list[str]:
     found: list[str] = []
     if isinstance(value, dict):
@@ -170,6 +189,38 @@ def test_quiz_starts_in_the_chat_turn_that_created_it(make_client):
     assert artifacts[0]["kind"] == "quiz"
     assert saved["turns"][0]["artifacts"] == artifacts
     assert saved["turns"][0]["reply"] == "Here is a quiz to check what you understood."
+
+
+def test_a_stored_quiz_is_sent_before_the_next_text(make_client):  # CH-02, CH-03
+    stub = QuizBeforeTextStub(QUIZ_SPEC)
+    client, _agent = make_client(stub, profile=FILLED_PROFILE)
+    chat = client.app.state.chat
+    session = client.post("/api/sessions").json()
+
+    async def scenario() -> list[object]:
+        seen: list[object] = []
+
+        async def consume() -> None:
+            async for item in chat.stream_reply(session["id"], "Quiz me on fractions."):
+                seen.append(item)
+
+        reply = asyncio.create_task(consume())
+        for _ in range(200):
+            if len(seen) >= 2:
+                break
+            await asyncio.sleep(0.01)
+        early = list(seen)
+        stub.release.set()
+        await reply
+        return early
+
+    early = asyncio.run(scenario())
+
+    assert early[0] == "Fractions are parts of a whole."
+    assert len(early) == 2 and early[1]["kind"] == "quiz"
+    saved = client.get(f"/api/sessions/{session['id']}").json()
+    assert saved["turns"][0]["reply"] == "Fractions are parts of a whole. Try the quiz."
+    assert [artifact["kind"] for artifact in saved["turns"][0]["artifacts"]] == ["quiz"]
 
 
 def test_quiz_payload_has_no_answers(make_client):

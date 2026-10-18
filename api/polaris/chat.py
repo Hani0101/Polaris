@@ -19,7 +19,7 @@ from typing import Any
 
 from claude_agent_sdk import delete_session
 
-from polaris.agent import ReplyAgent, ReplyResult
+from polaris.agent import ReplyAgent, ReplyResult, ToolReturned
 from polaris.animation import (
     FAILED as JOB_FAILED,
     FAILURE_NOTICE,
@@ -890,6 +890,11 @@ class Chat:
                     return
                 if isinstance(item, ReplyResult):
                     captured = item.sdk_session_id
+                    continue
+                if isinstance(item, ToolReturned):
+                    # An artifact shows once it is stored, not with the next text (CH-03).
+                    for artifact in drain():
+                        yield artifact
                     continue
                 parts.append(item)
                 yield item

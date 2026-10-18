@@ -39,6 +39,7 @@ What it found: a board left alone costs almost nothing. With a board pinned and 
 | 16 | The shell around the conversation is not memoized | Done |
 | 17 | Each typed key forces a layout to size the message box | Done |
 | 18 | The phone check makes a new media query on every render | Done |
+| 19 | The first word of a reply waits for its tools | Done |
 
 ## 1. Starting, switching, or leaving a session waits for the profile pass
 
@@ -168,3 +169,11 @@ What it found: a board left alone costs almost nothing. With a board pinned and 
 - **Cost:** About 0.08 ms per render in the production build (9.5 ms over 121 renders). Small, and it goes with item 14.
 - **Fix:** Make the `MediaQueryList` once per query and read `.matches` from it.
 - **Done:** in `useMediaQuery`, once per query for each mounted shell, so a test that changes `matchMedia` still gets a new one on its next mount.
+
+## 19. The first word of a reply waits for its tools
+
+- **Where:** `teaching_prompt` and `ReplyWatch` in `api/polaris/teaching.py`, and `stream_reply` in `api/polaris/chat.py`.
+- **Cost:** Measured on 18 Oct from the Claude CLI's own transcripts of 31 first turns (15 to 18 Oct), which stamp when the CLI got the message, when it called the API, and when each block ended. When the model called a tool before any text, the first word came after a median 16.5 s (mean 28 s, max 128 s), against 2.8 s when it wrote text first. Later turns: 11.1 s and 2.4 s. A first message is usually a new topic, taught with an animation, a quiz, or a drawing, so it called tools first more often and called heavier ones. Before any text, the model writes the whole quiz, brief, or drawing as tool input, which streams slowly (a drawing took 4 to 10 s), and each round of tools starts a new model response that thinks again, hidden, for 1 to 9 s. A quiz also waits for its key check. A quiz or board stored before the text reached the browser only with the first text chunk. Starting the CLI is not the cause: CLI preparation is a median 0.5 s, and the warm-up hides the connect.
+- **Fix:** The prompt asks for text before any tool, a short opening when the reply draws, each drawing before the text that holds its markers, and the quiz, deck, and animation job at the end, after the explanation (CH-29). The text before the tools then shows after the first response's thinking alone. A tool result reaches Chat as `ToolReturned`, and Chat sends any artifact it stored at once (CH-03).
+- **Done:** Live runs through `Chat` with a warm client and three style facts. On "Teach me how photosynthesis works.", the old prompt showed its first text at 20.0 s, after a drawing and an animation job. With the opening rule, six runs on four topics showed it at 2.9, 3.7, 4.5, 5.3, 9.0, and 11.1 s; the slow two thought for 9 s and 7 s first. With the final wording, the photosynthesis reply opened at 4.5 s, showed the board at 10.5 s and its explanation at 19.6 s, and made the animation and the quiz after that. A whole reply takes as long as before, or longer when it makes a quiz, because the quiz and its key check come last while the learner reads. These are a few runs, not medians, and thinking time varies. New tests: `test_a_tool_result_is_passed_on_between_text_chunks` and `test_the_prompt_opens_with_text_before_any_tool` in `api/tests/test_teaching.py`, and `test_a_stored_quiz_is_sent_before_the_next_text` in `api/tests/test_quiz.py`.
+- **Still to do:** The teaching agent thinks at medium effort on Opus 5.5, and that thinking is most of the wait before each response. Lowering the effort trades quality for speed, so it is not changed. Connecting the CLI took 1.9 to 11.5 s in these runs. The warm-up on session open hides it only when the learner takes longer than that to send. The bundled CLI is in the venv on the E: hard disk, so moving the venv to the SSD (item 7) would shorten every cold start.

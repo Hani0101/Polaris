@@ -2,8 +2,10 @@
 
 Streaming input (ClaudeSDKClient) is the mode the SDK documents for a chat
 UI. include_partial_messages yields StreamEvent text deltas as the reply is
-produced. A custom system prompt is the documented choice for a non-coding
-agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz,
+produced. A tool result comes back as a UserMessage holding a ToolResultBlock
+(Python SDK reference); the reply then yields ToolReturned, so an artifact the
+tool stored is shown before the next text arrives. A custom system prompt is
+the documented choice for a non-coding agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz,
 create_flashcards, draw_whiteboard, mark_whiteboard, simplify_whiteboard,
 start_animation_job) are registered so a quiz, a flashcard deck, a whiteboard,
 or an animation job can be stored as an artifact; see
@@ -55,11 +57,13 @@ from claude_agent_sdk import (
     ResultMessage,
     StreamEvent,
     SystemMessage,
+    ToolResultBlock,
+    UserMessage,
     create_sdk_mcp_server,
     tool,
 )
 
-from polaris.agent import ReplyResult
+from polaris.agent import ReplyResult, ToolReturned
 from polaris.animation import StoredAnimation as Animation
 from polaris.animation_format import describe_animation as _describe_format_animation
 from polaris.animation_format import describe_step as _describe_format_step
@@ -684,6 +688,15 @@ def teaching_prompt() -> str:
         "Do not call mark_whiteboard, simplify_whiteboard, or extend_whiteboard.\n"
         "Do not call start_animation_job.\n"
         "When the turn lists facts, teach the topic in the learner message using those facts.\n"
+        "Start each reply with text before you call any tool, so the learner has something "
+        "to read while the tools run. Make it the start of your answer, not a greeting. "
+        "When you will draw, keep that opening to a sentence or two.\n"
+        "Call a whiteboard tool before the text that holds its [[step:...]] markers, "
+        "then write that text.\n"
+        "Call create_quiz, create_flashcards, and start_animation_job after your "
+        "explanation, at the end of the reply.\n"
+        "Do not say a whiteboard, quiz, deck, or animation is coming until its tool has "
+        "returned.\n"
         "Write the reply in Markdown so it is easy to follow: ## headings for parts, "
         "numbered lists for steps, short paragraphs, and **bold** for emphasis.\n"
         "Mark the one or two key terms of a reply with ==term==. Use ~~text~~ to strike "
@@ -1563,13 +1576,19 @@ class ReplyWatch:
     sdk_session_id: str | None = None
     reached_result: bool = False
 
-    async def text(self, messages: AsyncIterator[object]) -> AsyncIterator[str]:
+    async def text(self, messages: AsyncIterator[object]) -> AsyncIterator[str | ToolReturned]:
         saw_delta = False
         async for message in messages:
             if isinstance(message, SystemMessage) and message.subtype == "init":
                 source = message.data.get("apiKeySource")
                 if isinstance(source, str) and source:
                     reject_api_key_credential(source)
+                continue
+            if isinstance(message, UserMessage):
+                if isinstance(message.content, list) and any(
+                    isinstance(block, ToolResultBlock) for block in message.content
+                ):
+                    yield ToolReturned()
                 continue
             if isinstance(message, StreamEvent):
                 chunk = text_delta(message)
@@ -2133,7 +2152,7 @@ class ClaudeTeachingAgent:
         resources: Sequence[str] = (),
         decks: Sequence[dict[str, object]] = (),
         web: bool = False,
-    ) -> AsyncIterator[str | ReplyResult]:
+    ) -> AsyncIterator[str | ToolReturned | ReplyResult]:
         self._drawing_failures[session_id] = 0
         self._quiz_refusals[session_id] = 0
         self._deck_refusals[session_id] = 0
