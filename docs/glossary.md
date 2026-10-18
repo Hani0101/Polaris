@@ -53,7 +53,7 @@ A fact that the learner understood a concept.
 _Avoid_: achievement, badge, progress
 
 **Artifact**:
-A whiteboard, quiz, or animation kept so the learner can open it again.
+A whiteboard, quiz, animation, or flashcard deck kept so the learner can open it again.
 _Avoid_: file, attachment, output
 
 **Resource**:
@@ -79,6 +79,18 @@ _Avoid_: graded quiz, completed quiz
 **Wrong-choice note**:
 A short sentence stored with a wrong choice on a quiz. It says why a learner might pick that choice and why it is wrong. It is part of the answer key.
 _Avoid_: note, hint, distractor
+
+**Flashcard**:
+One concept for revision: a front, a back, and the source it comes from.
+_Avoid_: note, question, card (alone)
+
+**Deck**:
+The set of flashcards the agent made in one turn. It is an artifact.
+_Avoid_: set, collection, stack
+
+**Rating**:
+The learner's mark on a flashcard after flipping it: got it or again. It stays with the deck and never reaches the profile.
+_Avoid_: score, grade, mastery
 
 **Appearance mode**:
 The learner's choice of System, Light, or Dark colors. It is kept in the browser, not on the profile.

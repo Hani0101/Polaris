@@ -1,7 +1,7 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode, Ref, RefObject } from 'react'
 import { Plus } from 'lucide-react'
-import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import type { AnimationArtifact, Artifact, Deck, Quiz, WhiteboardArtifact } from '../api.ts'
 import { askedStepLabel } from '../animation/askedStep.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
 import { revealWhiteboard, visibleReply } from '../whiteboard/reveal.ts'
@@ -56,6 +56,7 @@ type ConversationProps = {
     animationStep?: AskedStep | null,
   ) => void
   onOpenQuiz: (quizId: string) => void
+  onOpenDeck?: (deckId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation?: (sessionId: string, jobId: string) => void
   onSimpler?: (whiteboardId: string) => void
@@ -130,6 +131,7 @@ export function Conversation({
   onCopy,
   onTryAgain,
   onOpenQuiz,
+  onOpenDeck,
   onOpenWhiteboard,
   onOpenAnimation,
   onSimpler,
@@ -151,6 +153,7 @@ export function Conversation({
   const copy = useSteady(onCopy)
   const tryAgain = useSteady(onTryAgain)
   const openQuiz = useSteady(onOpenQuiz)
+  const openDeck = useSteady(onOpenDeck ?? noHandler)
   const openWhiteboard = useSteady(onOpenWhiteboard)
   const openAnimation = useSteady(onOpenAnimation ?? noHandler)
   const simpler = useSteady(onSimpler ?? noHandler)
@@ -222,6 +225,7 @@ export function Conversation({
                 onCopy={copy}
                 onTryAgain={tryAgain}
                 onOpenQuiz={openQuiz}
+                onOpenDeck={openDeck}
                 onOpenWhiteboard={openWhiteboard}
                 onOpenAnimation={onOpenAnimation ? openAnimation : undefined}
                 onSimpler={onSimpler ? simpler : undefined}
@@ -452,6 +456,7 @@ const TurnBlock = memo(function TurnBlock({
   onCopy,
   onTryAgain,
   onOpenQuiz,
+  onOpenDeck,
   onOpenWhiteboard,
   onOpenAnimation,
   onSimpler,
@@ -468,6 +473,7 @@ const TurnBlock = memo(function TurnBlock({
     animationStep?: AskedStep | null,
   ) => void
   onOpenQuiz: (quizId: string) => void
+  onOpenDeck: (deckId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation?: (sessionId: string, jobId: string) => void
   onSimpler?: (whiteboardId: string) => void
@@ -477,6 +483,7 @@ const TurnBlock = memo(function TurnBlock({
   pinnedWhiteboardId: string | null
 }) {
   const quizzes = turn.artifacts.filter((artifact): artifact is Quiz => artifact.kind === 'quiz')
+  const decks = turn.artifacts.filter((artifact): artifact is Deck => artifact.kind === 'deck')
   const animations = turn.artifacts.filter(
     (artifact): artifact is AnimationArtifact => artifact.kind === 'animation',
   )
@@ -501,7 +508,11 @@ const TurnBlock = memo(function TurnBlock({
   const thinking = turn.streaming && reply === '' && whiteboards.length === 0 && !turn.failed
   const finished = !turn.streaming && !turn.failed && turn.reply !== ''
   const visible =
-    reply !== '' || quizzes.length > 0 || whiteboards.length > 0 || animations.length > 0
+    reply !== '' ||
+    quizzes.length > 0 ||
+    decks.length > 0 ||
+    whiteboards.length > 0 ||
+    animations.length > 0
 
   return (
     <article className="turn">
@@ -548,6 +559,19 @@ const TurnBlock = memo(function TurnBlock({
               </div>
               <button type="button" className="secondary" onClick={() => onOpenQuiz(quiz.id)}>
                 {quiz.score ? 'Review quiz' : 'Open quiz'}
+              </button>
+            </div>
+          ))}
+          {decks.map((deck) => (
+            <div className="quiz-chip" key={deck.id}>
+              <div>
+                <p className="quiz-chip-title">{deck.title}</p>
+                <p className="quiz-chip-score">
+                  {deck.cards.length === 1 ? '1 flashcard' : `${deck.cards.length} flashcards`}
+                </p>
+              </div>
+              <button type="button" className="secondary" onClick={() => onOpenDeck(deck.id)}>
+                Open flashcards
               </button>
             </div>
           ))}

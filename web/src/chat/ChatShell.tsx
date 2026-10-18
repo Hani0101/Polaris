@@ -1,6 +1,6 @@
 import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import type { Artifact, BoardPicture, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
+import type { Artifact, BoardPicture, Deck, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
 import type { SignInState } from '../auth.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
@@ -89,6 +89,10 @@ type ChatShellProps = {
   onToggleTools?: () => void
   onCloseTools?: () => void
   onQuizChecked?: (quiz: Quiz) => void
+  onOpenDeck?: (deckId: string) => void
+  onDeckChanged?: (deck: Deck) => void
+  /** Sends the learner turn that asks for a deck, from the Create flashcards dialog (FC-01). */
+  onAskForDeck?: (message: string) => void
   /** Every whiteboard in the session, for the Whiteboard tab (WB-18). */
   whiteboards?: WhiteboardArtifact[]
   onNewWhiteboard?: () => void
@@ -152,6 +156,9 @@ export function ChatShell({
   onToggleTools = noTools,
   onCloseTools = noTools,
   onQuizChecked = noTools,
+  onOpenDeck = noTools,
+  onDeckChanged = noTools,
+  onAskForDeck,
   whiteboards = noWhiteboards,
   onNewWhiteboard,
   creatingWhiteboard = false,
@@ -187,6 +194,11 @@ export function ChatShell({
     setSheetOpen(false)
     onNewWhiteboard?.()
   })
+  // On a phone the sheet closes, so the learner sees the turn that asks for the deck.
+  const askForDeck = useSteady((message: string) => {
+    setSheetOpen(false)
+    onAskForDeck?.(message)
+  })
   const closeSheet = useCallback(() => setSheetOpen(false), [])
   const openSheet = useCallback(() => setSheetOpen(true), [])
   const askPinned = useSteady((parts: PointedPart[]) => {
@@ -205,6 +217,10 @@ export function ChatShell({
     onQuizChecked,
     onAsk,
     onAskAboutStep,
+    onOpenDeck,
+    onDeckChanged,
+    onCreateFlashcards: onAskForDeck ? askForDeck : undefined,
+    sending,
   }
 
   // A chosen citation opens the tools where the Resources tab shows it (RS-09).
@@ -286,6 +302,7 @@ export function ChatShell({
             onCopy={onCopy}
             onTryAgain={onTryAgain}
             onOpenQuiz={onOpenQuiz}
+            onOpenDeck={onOpenDeck}
             onOpenWhiteboard={onOpenWhiteboard}
             onOpenAnimation={onOpenAnimation}
             onSimpler={onSimpler}

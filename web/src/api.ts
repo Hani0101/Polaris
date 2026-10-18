@@ -206,7 +206,40 @@ export type AnimationArtifact = {
   stage?: AnimationStage | null
 }
 
-export type Artifact = Quiz | WhiteboardArtifact | AnimationArtifact
+/** Where a flashcard comes from (FC-05). A removed resource keeps the card (FC-18). */
+export type CardSource =
+  | { kind: 'turn'; turn: number }
+  | {
+      kind: 'page'
+      resource_id: string
+      name: string
+      page: number
+      quote?: string
+      removed?: boolean
+    }
+  | { kind: 'quote'; resource_id: string; name: string; quote: string; removed?: boolean }
+
+export type CardRating = 'got_it' | 'again'
+
+export type Flashcard = {
+  id: string
+  front: string
+  back: string
+  source: CardSource
+  /** The latest rating, or null when unrated (FC-14). */
+  rating: CardRating | null
+}
+
+export type Deck = {
+  id: string
+  kind: 'deck'
+  session_id: string
+  title: string
+  cards: Flashcard[]
+  counts: { got_it: number; again: number; unrated: number }
+}
+
+export type Artifact = Quiz | WhiteboardArtifact | AnimationArtifact | Deck
 
 export type TurnPointing = {
   whiteboard_id: string
@@ -430,6 +463,24 @@ export function answerQuiz(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question_id: questionId, choice_id: choiceId }),
   })
+}
+
+export function getDeck(deckId: string, signal?: AbortSignal): Promise<Deck> {
+  return request<Deck>(`/api/decks/${encodeURIComponent(deckId)}`, { signal })
+}
+
+/** Keeps a card's latest rating (FC-14). */
+export function rateCard(deckId: string, cardId: string, rating: CardRating): Promise<Deck> {
+  return request<Deck>(`/api/decks/${encodeURIComponent(deckId)}/ratings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ card_id: cardId, rating }),
+  })
+}
+
+/** Every card back to unrated (FC-14). */
+export function resetRatings(deckId: string): Promise<Deck> {
+  return request<Deck>(`/api/decks/${encodeURIComponent(deckId)}/ratings`, { method: 'DELETE' })
 }
 
 type StreamEvent = {

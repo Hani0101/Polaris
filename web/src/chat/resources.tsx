@@ -24,6 +24,8 @@ export type ResourcesState = {
   busy: boolean
   focus: ResourceFocus | null
   add: (files: File[]) => Promise<void>
+  /** One file through the same checks as `add`. Throws the refusal (FC-03, RS-19). */
+  addFile: (file: File) => Promise<Resource>
   addNote: (name: string, text: string) => Promise<Resource>
   rename: (resourceId: string, name: string) => Promise<void>
   editNote: (resourceId: string, text: string) => Promise<void>
@@ -42,6 +44,9 @@ const EMPTY: ResourcesState = {
   busy: false,
   focus: null,
   add: none,
+  addFile: async () => {
+    throw new Error('Resources are not available here.')
+  },
   addNote: async () => {
     throw new Error('Resources are not available here.')
   },
@@ -151,6 +156,18 @@ export function ResourcesProvider({
     [resources.length, sessionId],
   )
 
+  const addFile = useCallback(
+    async (file: File) => {
+      if (!sessionId) throw new Error('Open a session first.')
+      const problem = fileProblem(file, resources.length)
+      if (problem) throw new Error(problem)
+      const added = await uploadResource(sessionId, file)
+      setResources((current) => [...current, added])
+      return added
+    },
+    [resources.length, sessionId],
+  )
+
   const addNote = useCallback(
     async (name: string, text: string) => {
       if (!sessionId) throw new Error('Open a session first.')
@@ -212,6 +229,7 @@ export function ResourcesProvider({
       busy,
       focus,
       add,
+      addFile,
       addNote,
       rename,
       editNote,
@@ -219,7 +237,7 @@ export function ResourcesProvider({
       open,
       clearError,
     }),
-    [sessionId, resources, loadedFor, error, busy, focus, add, addNote, rename, editNote, remove, open, clearError],
+    [sessionId, resources, loadedFor, error, busy, focus, add, addFile, addNote, rename, editNote, remove, open, clearError],
   )
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>

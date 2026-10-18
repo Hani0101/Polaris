@@ -35,6 +35,7 @@ class ReplyAgent(Protocol):
         animation_step: AnimationStep | None = None,
         pinned: Whiteboard | None = None,
         resources: Sequence[str] = (),
+        decks: Sequence[dict[str, object]] = (),
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
 
@@ -42,7 +43,8 @@ class ReplyAgent(Protocol):
         Chat passes picture only when the learner's turn carries one, and
         pinned only while a board is pinned above the conversation (WB-19).
         resources is one line per resource the learner gave the session, and is
-        empty when there are none (RS-07).
+        empty when there are none (RS-07). decks are the learner-visible payloads
+        of this session's flashcard decks, with their ratings (FC-15).
         """
 
     async def close_session(self, session_id: str) -> None:

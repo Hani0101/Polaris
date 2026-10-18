@@ -406,6 +406,20 @@ class ResourceStore:
         row = self._row(session_id, resource_id)
         return {**_summary(row), "text_pages": json.loads(row["pages_json"])}
 
+    def texts(self, session_id: str) -> list[tuple[str, str, str, tuple[str, ...]]]:
+        """(id, kind, name, pages) of every resource, for a deck's source check (FC-06)."""
+
+        def read(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+            return conn.execute(
+                "SELECT id, kind, name, pages_json FROM resources WHERE session_id = ?",
+                (session_id,),
+            ).fetchall()
+
+        return [
+            (row["id"], row["kind"], row["name"], tuple(json.loads(row["pages_json"])))
+            for row in self._with_db(read)
+        ]
+
     def original(self, session_id: str, resource_id: str) -> tuple[Path, str]:
         row = self._row(session_id, resource_id)
         path = self.folder(session_id, resource_id) / "original"

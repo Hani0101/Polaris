@@ -64,6 +64,13 @@ from polaris.quiz import (
     public_payload,
 )
 from polaris.extend import ExtensionCheck, apply_extension
+from polaris.flashcards import (
+    MissingDeck,
+    SourceResource,
+    normalize_deck,
+    public_payload as deck_payload,
+    rate as rate_card,
+)
 from polaris.resources import ResourceStore, create_resource_tables
 from polaris.session_title import TitleWriter, clean_title
 from polaris.sign_in import SignIn
@@ -214,6 +221,28 @@ def quizzes_for_reply(turns: tuple[Turn, ...]) -> list[dict[str, object]]:
     ]
 
 
+def decks_for_reply(turns: tuple[Turn, ...]) -> list[dict[str, object]]:
+    """Decks of earlier turns with their ratings, so the next reply reads them (FC-15)."""
+
+    return [
+        artifact
+        for turn in turns
+        for artifact in turn.artifacts
+        if artifact.get("kind") == "deck"
+    ]
+
+
+def _resource_names(conn: sqlite3.Connection, session_id: str) -> dict[str, str]:
+    """A session's resources now, so a deck names a renamed one and marks a removed one (FC-18)."""
+
+    return {
+        row["id"]: row["name"]
+        for row in conn.execute(
+            "SELECT id, name FROM resources WHERE session_id = ?", (session_id,)
+        ).fetchall()
+    }
+
+
 @functools.lru_cache(maxsize=128)
 def _checked_board(raw: str) -> bytes | None:
     """The drawing check of a stored board's JSON, or None when it fails.
@@ -306,6 +335,7 @@ class Chat:
                 preview_extension=self.preview_extension,
                 start_animation_job=self.start_animation_job,
                 read_resource=self.read_resource,
+                create_deck=self.create_deck,
             )
 
     def list_sessions(self) -> list[dict[str, object]]:
@@ -643,7 +673,7 @@ class Chat:
             artifacts = "SELECT id FROM artifacts WHERE session_id = ?"
             conn.execute("DELETE FROM fact_evidence WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM profile_passes WHERE session_id = ?", (session_id,))
-            for table in ("quizzes", "whiteboards", "animation_jobs"):
+            for table in ("quizzes", "decks", "whiteboards", "animation_jobs"):
                 conn.execute(f"DELETE FROM {table} WHERE id IN ({artifacts})", (session_id,))
             conn.execute("DELETE FROM artifacts WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM turns WHERE session_id = ?", (session_id,))
@@ -782,6 +812,7 @@ class Chat:
                 pointing=pointing,
                 simplify=simplify,
                 quizzes=quizzes_for_reply(prior),
+                decks=decks_for_reply(prior),
                 **extra,
                 animations=animations,
                 animation_step=animation_step,
@@ -963,6 +994,52 @@ class Chat:
                 VALUES (?, ?, ?, NULL, NULL, NULL)
                 """,
                 (quiz_id, stored["title"], json.dumps(stored)),
+            )
+
+        self._with_db(write)
+        with self._lock:
+            self._pending.setdefault(session_id, []).append(payload)
+        return payload
+
+    def create_deck(self, session_id: str, spec: dict[str, Any]) -> dict[str, object]:
+        """Check every card's source, then store the deck whole or not at all (FC-06, FC-12).
+
+        The sources are this session's earlier turns and its resources as they
+        stand now (FC-04). Raises InvalidDeck naming each card that fails.
+        """
+
+        self._require(session_id)
+        resources = [
+            SourceResource(id=id_, kind=kind, name=name, pages=pages)
+            for id_, kind, name, pages in self.resources.texts(session_id)
+        ]
+
+        def count(conn: sqlite3.Connection) -> int:
+            return conn.execute(
+                "SELECT COUNT(*) FROM turns WHERE session_id = ?", (session_id,)
+            ).fetchone()[0]
+
+        stored = normalize_deck(spec, resources=resources, turn_count=self._with_db(count))
+        deck_id = str(uuid.uuid4())
+        payload = deck_payload(
+            deck_id,
+            session_id,
+            stored,
+            {},
+            {resource.id: resource.name for resource in resources},
+        )
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                """
+                INSERT INTO artifacts (id, session_id, turn_id, kind, created_at)
+                VALUES (?, ?, NULL, 'deck', ?)
+                """,
+                (deck_id, session_id, _now()),
+            )
+            conn.execute(
+                "INSERT INTO decks (id, title, cards_json, ratings_json) VALUES (?, ?, ?, '{}')",
+                (deck_id, stored["title"], json.dumps(stored)),
             )
 
         self._with_db(write)
@@ -1691,6 +1768,75 @@ class Chat:
             raise MissingQuiz()
         return payload
 
+    def _deck_row(self, conn: sqlite3.Connection, deck_id: str) -> sqlite3.Row | None:
+        return conn.execute(
+            """
+            SELECT a.id, a.session_id, d.cards_json, d.ratings_json
+            FROM artifacts a
+            JOIN decks d ON d.id = a.id
+            WHERE a.id = ? AND a.kind = 'deck'
+            """,
+            (deck_id,),
+        ).fetchone()
+
+    def _deck_from_row(self, conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, object]:
+        return deck_payload(
+            row["id"],
+            row["session_id"],
+            json.loads(row["cards_json"]),
+            json.loads(row["ratings_json"]),
+            _resource_names(conn, row["session_id"]),
+        )
+
+    def get_deck(self, deck_id: str) -> dict[str, object]:
+        def read(conn: sqlite3.Connection) -> dict[str, object] | None:
+            row = self._deck_row(conn, deck_id)
+            return None if row is None else self._deck_from_row(conn, row)
+
+        payload = self._with_db(read)
+        if payload is None:
+            raise MissingDeck()
+        return payload
+
+    def rate_card(self, deck_id: str, card_id: str, rating: str) -> dict[str, object]:
+        """Keep a card's latest rating (FC-14). It stays with the deck (FC-16)."""
+
+        def write(conn: sqlite3.Connection) -> dict[str, object] | None:
+            row = self._deck_row(conn, deck_id)
+            if row is None:
+                return None
+            ratings = rate_card(
+                json.loads(row["cards_json"]),
+                json.loads(row["ratings_json"]),
+                card_id,
+                rating,
+            )
+            conn.execute(
+                "UPDATE decks SET ratings_json = ? WHERE id = ?",
+                (json.dumps(ratings), deck_id),
+            )
+            return self._deck_from_row(conn, self._deck_row(conn, deck_id))
+
+        payload = self._with_db(write)
+        if payload is None:
+            raise MissingDeck()
+        return payload
+
+    def reset_ratings(self, deck_id: str) -> dict[str, object]:
+        """Every card of the deck back to unrated (FC-14)."""
+
+        def write(conn: sqlite3.Connection) -> dict[str, object] | None:
+            row = self._deck_row(conn, deck_id)
+            if row is None:
+                return None
+            conn.execute("UPDATE decks SET ratings_json = '{}' WHERE id = ?", (deck_id,))
+            return self._deck_from_row(conn, self._deck_row(conn, deck_id))
+
+        payload = self._with_db(write)
+        if payload is None:
+            raise MissingDeck()
+        return payload
+
     def _payload(self, session_id: str) -> dict[str, object]:
         row = self._require(session_id)
         turns = self._turns(session_id)
@@ -1716,9 +1862,10 @@ class Chat:
                 SELECT a.turn_id, a.id, a.session_id, a.kind,
                        q.questions_json, q.score_correct, q.score_total,
                        q.submitted_json, w.drawing_json, j.status AS job_status,
-                       j.stage AS job_stage
+                       j.stage AS job_stage, d.cards_json, d.ratings_json
                 FROM artifacts a
                 LEFT JOIN quizzes q ON q.id = a.id AND a.kind = 'quiz'
+                LEFT JOIN decks d ON d.id = a.id AND a.kind = 'deck'
                 LEFT JOIN whiteboards w ON w.id = a.id AND a.kind = 'whiteboard'
                 LEFT JOIN animation_jobs j ON j.id = a.id AND a.kind = 'animation'
                 WHERE a.session_id = ?
@@ -1726,6 +1873,7 @@ class Chat:
                 """,
                 (session_id,),
             ).fetchall()
+            names = _resource_names(conn, session_id)
             by_turn: dict[str, list[dict[str, object]]] = {}
             for row in artifact_rows:
                 turn_id = row["turn_id"]
@@ -1738,6 +1886,17 @@ class Chat:
                     continue
                 if row["kind"] == "quiz":
                     by_turn.setdefault(turn_id, []).append(self._public_from_row(row))
+                    continue
+                if row["kind"] == "deck" and row["cards_json"] is not None:
+                    by_turn.setdefault(turn_id, []).append(
+                        deck_payload(
+                            row["id"],
+                            row["session_id"],
+                            json.loads(row["cards_json"]),
+                            json.loads(row["ratings_json"]),
+                            names,
+                        )
+                    )
                     continue
                 if row["kind"] == "animation" and row["job_status"] is not None:
                     by_turn.setdefault(turn_id, []).append(
@@ -1841,6 +2000,16 @@ class Chat:
             conn.execute(
                 """
                 DELETE FROM quizzes
+                WHERE id IN (
+                    SELECT id FROM artifacts
+                    WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
+                )
+                """,
+                (session_id,),
+            )
+            conn.execute(
+                """
+                DELETE FROM decks
                 WHERE id IN (
                     SELECT id FROM artifacts
                     WHERE session_id = ? AND turn_id IS NULL AND learner_made = 0
@@ -2053,6 +2222,16 @@ class Chat:
                     score_correct INTEGER,
                     score_total INTEGER,
                     submitted_json TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS decks (
+                    id TEXT PRIMARY KEY REFERENCES artifacts(id),
+                    title TEXT NOT NULL,
+                    cards_json TEXT NOT NULL,
+                    ratings_json TEXT NOT NULL
                 )
                 """
             )

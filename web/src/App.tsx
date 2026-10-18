@@ -18,6 +18,7 @@ import {
 import type {
   Artifact,
   BoardPicture,
+  Deck,
   Quiz,
   Session,
   SessionSummary,
@@ -36,6 +37,8 @@ import type { PinnedTurn } from './chat/PinnedWhiteboard.tsx'
 import { pointingFromTurn, type PointedPart, type Pointing } from './whiteboard/pointing.ts'
 import { prefetchWhiteboard } from './whiteboard/LazyWhiteboard.tsx'
 import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
+import { deckPath, pathDeckId } from './deck.ts'
+import { DeckPage } from './DeckPage.tsx'
 import { QuizPage } from './QuizPage.tsx'
 import { SettingsPage } from './SettingsPage.tsx'
 import { SETTINGS_PATH, isSettingsPath } from './settingsPath.ts'
@@ -136,6 +139,12 @@ function boardsIn(turns: Turn[]): WhiteboardArtifact[] {
 function withQuiz(artifacts: Artifact[], quiz: Quiz): Artifact[] {
   return artifacts.map((artifact) =>
     artifact.kind === 'quiz' && artifact.id === quiz.id ? quiz : artifact,
+  )
+}
+
+function withDeck(artifacts: Artifact[], deck: Deck): Artifact[] {
+  return artifacts.map((artifact) =>
+    artifact.kind === 'deck' && artifact.id === deck.id ? deck : artifact,
   )
 }
 
@@ -602,6 +611,27 @@ function App() {
     )
   }
 
+  // A rating changes the deck in place, so the chat and the panel show the same counts (FC-14).
+  function onDeckChanged(deck: Deck) {
+    setOpen((current) =>
+      current
+        ? {
+            ...current,
+            turns: current.turns.map((turn) => ({
+              ...turn,
+              artifacts: withDeck(turn.artifacts, deck),
+            })),
+          }
+        : current,
+    )
+    setKept((current) =>
+      current.map((item) => ({ ...item, artifacts: withDeck(item.artifacts, deck) })),
+    )
+    setPending((current) =>
+      current ? { ...current, artifacts: withDeck(current.artifacts, deck) } : current,
+    )
+  }
+
   function onStop() {
     sendAbort.current?.abort()
     sending.current = false
@@ -843,6 +873,10 @@ function App() {
     onToggleTools: () => setToolsOpen((current) => !current),
     onCloseTools: () => setToolsOpen(false),
     onQuizChecked,
+    onOpenDeck: (id: string) => goTo(deckPath(id)),
+    onDeckChanged,
+    // FC-01: the dialog's request is a visible learner turn, about nothing pinned or pointed at.
+    onAskForDeck: (message: string) => void sendMessage(message, null, null, null),
     onNewWhiteboard: () => void newBoard(),
     onClosePinned: unpinBoard,
     onPicture: (next: BoardPicture) => {
@@ -867,12 +901,13 @@ function App() {
   }
 
   const quizId = pathQuizId(path)
+  const deckId = pathDeckId(path)
   const whiteboardRoute = pathWhiteboard(path)
   const animationRoute = pathAnimation(path)
   const settingsRoute = isSettingsPath(path)
   const signInRoute = isSignInPath(path)
   const covering = Boolean(
-    quizId || whiteboardRoute || animationRoute || settingsRoute || signInRoute,
+    quizId || deckId || whiteboardRoute || animationRoute || settingsRoute || signInRoute,
   )
 
   async function onBackFromCover() {
@@ -903,6 +938,9 @@ function App() {
         />
       ) : null}
       {quizId ? <QuizPage quizId={quizId} onBack={() => void onBackFromCover()} /> : null}
+      {deckId ? (
+        <DeckPage key={deckId} deckId={deckId} onBack={() => void onBackFromCover()} />
+      ) : null}
       {whiteboardRoute ? (
         <WhiteboardPage
           key={`${whiteboardRoute.sessionId}/${whiteboardRoute.whiteboardId}`}

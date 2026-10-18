@@ -129,6 +129,9 @@ test('tabs switch with a click and with arrow keys', () => {
 
   const quizTab = screen.getByRole('tab', { name: 'Quiz' })
   fireEvent.keyDown(quizTab, { key: 'ArrowRight' })
+  expect(selectedTab()).toBe('Flashcards')
+
+  fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Animation')
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Animation' }))
 
@@ -148,7 +151,7 @@ test('tabs switch with a click and with arrow keys', () => {
   expect(selectedTab()).toBe('Whiteboard')
 
   const tabs = screen.getAllByRole('tab')
-  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1])
+  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1, -1])
 })
 
 test('each tab shows an empty state when the session has nothing yet', () => {
@@ -157,6 +160,9 @@ test('each tab shows an empty state when the session has nothing yet', () => {
 
   fireEvent.click(screen.getByRole('tab', { name: 'Quiz' }))
   expect(screen.getByText('No quiz yet')).toBeTruthy()
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Flashcards' }))
+  expect(screen.getByText('No flashcards yet')).toBeTruthy()
 
   fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
   expect(screen.getByText('No animation yet')).toBeTruthy()

@@ -34,6 +34,7 @@ from polaris.login import ApiKeyPresent, assert_claude_login
 from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
 from polaris.session_title import ClaudeTitleWriter, TitleWriter
+from polaris.flashcards import InvalidRating, MissingDeck
 from polaris.quiz import AlreadyChecked, InvalidSubmission, MissingQuiz
 from polaris.resources import MAX_FILE_BYTES, MissingResource, ResourceRefused, too_big
 from polaris.sign_in import (
@@ -94,6 +95,11 @@ class ResourceEditBody(BaseModel):
 class AnswerBody(BaseModel):
     question_id: str
     choice_id: str
+
+
+class RatingBody(BaseModel):
+    card_id: str
+    rating: str
 
 
 class PairBody(BaseModel):
@@ -333,6 +339,14 @@ def create_app(
         return JSONResponse(
             status_code=status, content={"detail": str(exc), "code": exc.code}
         )
+
+    @app.exception_handler(MissingDeck)
+    async def missing_deck(_request, exc: MissingDeck) -> JSONResponse:
+        return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(InvalidRating)
+    async def invalid_rating(_request, exc: InvalidRating) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
 
     @app.exception_handler(AlreadyChecked)
     async def already_checked(_request, exc: AlreadyChecked) -> JSONResponse:
@@ -660,5 +674,17 @@ def create_app(
     @app.post("/api/quizzes/{quiz_id}/answer")
     def answer_quiz(quiz_id: str, body: AnswerBody) -> dict[str, object]:
         return chat.answer_quiz(quiz_id, body.question_id, body.choice_id)
+
+    @app.get("/api/decks/{deck_id}")
+    def read_deck(deck_id: str) -> dict[str, object]:
+        return chat.get_deck(deck_id)
+
+    @app.post("/api/decks/{deck_id}/ratings")
+    def rate_card(deck_id: str, body: RatingBody) -> dict[str, object]:
+        return chat.rate_card(deck_id, body.card_id, body.rating)
+
+    @app.delete("/api/decks/{deck_id}/ratings")
+    def reset_ratings(deck_id: str) -> dict[str, object]:
+        return chat.reset_ratings(deck_id)
 
     return app

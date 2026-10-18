@@ -4,9 +4,9 @@ Streaming input (ClaudeSDKClient) is the mode the SDK documents for a chat
 UI. include_partial_messages yields StreamEvent text deltas as the reply is
 produced. A custom system prompt is the documented choice for a non-coding
 agent. tools=[] disables built-in tools. Custom in-process MCP tools (create_quiz,
-draw_whiteboard, mark_whiteboard, simplify_whiteboard, start_animation_job)
-are registered so a quiz, a whiteboard, or an animation job can be stored
-as an artifact; see
+create_flashcards, draw_whiteboard, mark_whiteboard, simplify_whiteboard,
+start_animation_job) are registered so a quiz, a flashcard deck, a whiteboard,
+or an animation job can be stored as an artifact; see
 custom-tools.md. start_animation_job takes only a plain-language brief.
 Its strict schema rejects any other argument, such as code, before the
 handler runs (custom-tools.md, jsonschema step). The job id is the artifact
@@ -76,6 +76,7 @@ def describe_step(animation: Animation, index: int) -> str:
     return _describe_format_step(animation, index)
 from polaris.chat import DuplicateWhiteboard, InvalidDrawing
 from polaris.login import ApiKeyPresent, reject_api_key_credential
+from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.models import AnimationStep, Pointing, Profile, Turn
 from polaris.key_check import ClaudeKeyCheck, KeyCheck, KeyCheckFailed
 from polaris.quiz import (
@@ -85,6 +86,7 @@ from polaris.quiz import (
     disagreements,
     normalize_spec,
 )
+from polaris.flashcards import MAX_CARDS, InvalidDeck, describe_deck
 from polaris.auto_layout import expand_layout
 from polaris.board_picture import BoardPicture
 from polaris.extend import ExtensionCheck
@@ -120,15 +122,20 @@ START_ANIMATION_JOB_TOOL = "mcp__polaris__start_animation_job"
 READ_RESOURCE_TOOL = "mcp__polaris__read_resource"
 # Reads of a learner's resource in one reply (RS-07).
 RESOURCE_READS_PER_REPLY = 4
+CREATE_FLASHCARDS_TOOL = "mcp__polaris__create_flashcards"
+# A deck the source check refuses may be sent once more in the same reply (FC-06).
+DECK_CHECK_ATTEMPTS = 2
 # Tool-use turns only, per agent-loop.md. Covers the original drawing,
 # each fix attempt, one animation job, the quiz and its key-check retry
-# (QZ-12), one quiz fix after a QZ-10 refusal, and one spare tool turn.
+# (QZ-12), one quiz fix after a QZ-10 refusal, the deck and its source-check
+# retry (FC-06), and one spare tool turn.
 TEACHING_MAX_TURNS = (
     1
     + WHITEBOARD_TOOL_LIMITS.max_fix_attempts
     + 1
     + QUIZ_CHECK_ATTEMPTS
     + 1
+    + DECK_CHECK_ATTEMPTS
     + 1
     + RESOURCE_READS_PER_REPLY
 )
@@ -541,8 +548,66 @@ READ_RESOURCE_DESCRIPTION = (
     "You cannot add, change, or remove a resource."
 )
 
+# Each card names exactly one kind of source. The handler and the store check
+# the rest, so a deck with a bad source reaches the FC-06 refusal and its retry.
+CREATE_FLASHCARDS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string", "description": "Short title for the deck."},
+        "cards": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": MAX_CARDS,
+            "description": "One concept per card. Never pad the deck.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "front": {
+                        "type": "string",
+                        "description": "A question or a term for one concept. Plain text.",
+                    },
+                    "back": {
+                        "type": "string",
+                        "description": "A summary of at most three sentences. Plain text.",
+                    },
+                    "source": {
+                        "type": "object",
+                        "description": (
+                            "Where the card comes from. Exactly one of: "
+                            "{turn} for an earlier turn of this session, by its number; "
+                            "{resource_id, page} for a PDF, with an optional quote from "
+                            "that page; {resource_id, quote} for any other resource, "
+                            "quoting words exactly as they appear in it."
+                        ),
+                        "properties": {
+                            "turn": {"type": "integer", "minimum": 1},
+                            "resource_id": {"type": "string"},
+                            "page": {"type": "integer", "minimum": 1},
+                            "quote": {"type": "string"},
+                        },
+                        "additionalProperties": False,
+                    },
+                },
+                "required": ["front", "back", "source"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["title", "cards"],
+    "additionalProperties": False,
+}
+CREATE_FLASHCARDS_DESCRIPTION = (
+    "Store a flashcard deck as an artifact of this session. Every card cites its "
+    "source: an earlier turn by number, a PDF resource by page, or another resource "
+    "by a phrase quoted exactly from it. Before the deck is stored, code checks every "
+    "source: the turn and the page must exist and the quote must be in the resource. "
+    "One failing card refuses the whole deck, and you may send it once more."
+)
+
 QuizHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 QuizStore = Callable[[str, dict[str, Any]], dict[str, Any]]
+DeckHandler = QuizHandler
+DeckStore = QuizStore
 WhiteboardHandler = QuizHandler
 AnimationHandler = QuizHandler
 AnimationJobStore = Callable[[str, str], dict[str, Any]]
@@ -594,6 +659,7 @@ def teaching_prompt() -> str:
         "When the turn lists no facts:\n"
         f"{_MISSING_PROFILE}\n"
         "Do not call create_quiz.\n"
+        "Do not call create_flashcards.\n"
         "Do not call draw_whiteboard.\n"
         "Do not call mark_whiteboard, simplify_whiteboard, or extend_whiteboard.\n"
         "Do not call start_animation_job.\n"
@@ -627,6 +693,28 @@ def teaching_prompt() -> str:
         "Do not grade the learner's choices. Code checks each one against the stored key.\n"
         "When the turn lists a finished quiz, use its score and the questions "
         "the learner missed to choose what to teach next.\n"
+        "When the learner asks for flashcards, call create_flashcards. A deck is for "
+        "revising what this session covered or what a resource says; it does not "
+        "replace teaching in the chat.\n"
+        "Build every card only from the earlier turns of this session or from its "
+        "resources, and cite that source on the card. Never write a card from your own "
+        "memory. Read a resource with read_resource before you cite it, and copy each "
+        "quote word for word.\n"
+        "When no turn or resource covers what the learner asked for, do not call "
+        "create_flashcards. Say so, offer to teach the topic in the chat first or to "
+        "work from a resource the learner adds, and say that fetching from the internet "
+        "is not available yet.\n"
+        "Make 5 to 15 cards unless the learner asks for a number. Honor a larger number "
+        f"up to {MAX_CARDS}; past {MAX_CARDS}, make {MAX_CARDS} and offer a second deck. "
+        "Never pad a deck: when the sources support fewer cards than asked for, make "
+        "fewer and say how many the sources supported.\n"
+        "Each card is one concept: a question or term on the front, at most three "
+        "sentences on the back, in plain text without Markdown or HTML.\n"
+        "If the deck is refused, fix the cards it names and send it once more, or "
+        "leave the deck out. When it is not stored, tell the learner which cards "
+        "failed and why, and that they can ask again.\n"
+        "When the turn lists decks, use the cards the learner rated again to choose "
+        "what to revisit.\n"
         "When a drawing will help the learner see how parts connect, a sequence, "
         "a comparison, or a layout, call draw_whiteboard.\n"
         "A new whiteboard includes a description for a person "
@@ -774,17 +862,32 @@ def turn_prompt(
     animation_step: AnimationStep | None = None,
     pinned: Whiteboard | None = None,
     resources: Sequence[str] = (),
+    decks: Sequence[dict[str, object]] = (),
+    turn_count: int | None = None,
 ) -> str:
+    """turn_count is how many earlier turns the session has, so a flashcard can
+    cite one by number (FC-05). It defaults to the turns given."""
+
     lines = [
         "Profile facts, read for this reply:",
         format_facts(profile),
     ]
     if not profile.facts:
         lines.append(_MISSING_PROFILE)
+    earlier_count = len(prior_turns) if turn_count is None else turn_count
+    lines.append("")
+    if earlier_count:
+        lines.append(
+            f"This session has {earlier_count} earlier turn{'' if earlier_count == 1 else 's'}, "
+            f"numbered 1 to {earlier_count} in order. This message is turn {earlier_count + 1}."
+        )
+    else:
+        lines.append("This session has no earlier turns. This message is turn 1.")
     if prior_turns:
         lines.append("")
         lines.append("Earlier turns:")
-        for turn in prior_turns:
+        for number, turn in enumerate(prior_turns, start=1):
+            lines.append(f"Turn {number}")
             lines.append(f"Learner: {turn.learner_message}")
             earlier = _pointing_text(whiteboards, turn.pointing)
             if earlier is not None:
@@ -834,6 +937,11 @@ def turn_prompt(
         lines.append("Quizzes in this session. Code checks each pick against the stored key:")
         for quiz in quizzes:
             lines.append(describe_result(quiz))
+    if decks:
+        lines.append("")
+        lines.append("Flashcard decks in this session, with the learner's latest ratings:")
+        for deck in decks:
+            lines.append(describe_deck(deck))
     current = _pointing_text(whiteboards, pointing)
     if current is not None:
         lines.append("")
@@ -902,6 +1010,10 @@ async def _unavailable_resource(_args: dict[str, Any]) -> dict[str, Any]:
 
 async def _unavailable_animation(_args: dict[str, Any]) -> dict[str, Any]:
     return _tool_error("Animation jobs are not available.")
+
+
+async def _unavailable_deck(_args: dict[str, Any]) -> dict[str, Any]:
+    return _tool_error("Flashcard storage is not available.")
 
 
 def _tool_error(text: str) -> dict[str, Any]:
@@ -1252,6 +1364,7 @@ def polaris_mcp_server(
     simplify_whiteboard: WhiteboardHandler | None = None,
     extend_whiteboard: WhiteboardHandler | None = None,
     read_resource: ResourceHandler | None = None,
+    create_flashcards: DeckHandler | None = None,
 ):
     mark = mark_whiteboard or _unavailable_whiteboard
     simplify = simplify_whiteboard or _unavailable_whiteboard
@@ -1318,12 +1431,17 @@ def polaris_mcp_server(
     async def read_resource_tool(args: dict[str, Any]) -> dict[str, Any]:
         return await (read_resource or _unavailable_resource)(args)
 
+    @tool("create_flashcards", CREATE_FLASHCARDS_DESCRIPTION, CREATE_FLASHCARDS_SCHEMA)
+    async def create_flashcards_tool(args: dict[str, Any]) -> dict[str, Any]:
+        return await (create_flashcards or _unavailable_deck)(args)
+
     return create_sdk_mcp_server(
         name=POLARIS_SERVER_NAME,
         version="1.0.0",
         tools=[
             read_resource_tool,
             create_quiz_tool,
+            create_flashcards_tool,
             draw_whiteboard_tool,
             mark_whiteboard_tool,
             simplify_whiteboard_tool,
@@ -1343,6 +1461,7 @@ def teaching_options(
     simplify_whiteboard: WhiteboardHandler | None = None,
     extend_whiteboard: WhiteboardHandler | None = None,
     read_resource: ResourceHandler | None = None,
+    create_flashcards: DeckHandler | None = None,
 ) -> ClaudeAgentOptions:
     return ClaudeAgentOptions(
         system_prompt=teaching_prompt(),
@@ -1359,6 +1478,7 @@ def teaching_options(
                 simplify_whiteboard=simplify_whiteboard,
                 extend_whiteboard=extend_whiteboard,
                 read_resource=read_resource,
+                create_flashcards=create_flashcards,
             )
         },
         allowed_tools=[
@@ -1369,9 +1489,11 @@ def teaching_options(
             EXTEND_WHITEBOARD_TOOL,
             START_ANIMATION_JOB_TOOL,
             READ_RESOURCE_TOOL,
+            CREATE_FLASHCARDS_TOOL,
         ],
         include_partial_messages=True,
         verbatim_prompts=True,
+        disallowed_tools=DISALLOWED_TOOLS,
         permission_mode="dontAsk",
         max_turns=TEACHING_MAX_TURNS,
         cwd=cwd,
@@ -1564,8 +1686,10 @@ class ClaudeTeachingAgent:
         self._preview_extension: ExtensionPreview | None = None
         self._start_animation_job: AnimationJobStore | None = None
         self._read_resource: ResourceReader | None = None
+        self._store_deck: DeckStore | None = None
         self._drawing_failures: dict[str, int] = {}
         self._quiz_refusals: dict[str, int] = {}
+        self._deck_refusals: dict[str, int] = {}
 
     def bind_store(
         self,
@@ -1578,6 +1702,7 @@ class ClaudeTeachingAgent:
         extend_whiteboard: WhiteboardStore | None = None,
         preview_extension: ExtensionPreview | None = None,
         read_resource: ResourceReader | None = None,
+        create_deck: DeckStore | None = None,
     ) -> None:
         """Chat calls this so tools can store an artifact. Does not write the profile."""
 
@@ -1589,6 +1714,57 @@ class ClaudeTeachingAgent:
         self._preview_extension = preview_extension
         self._start_animation_job = start_animation_job
         self._read_resource = read_resource
+        self._store_deck = create_deck
+
+    def _deck_handler_for(self, session_id: str) -> DeckHandler:
+        async def handle(args: dict[str, Any]) -> dict[str, Any]:
+            return await self.handle_create_flashcards(session_id, args)
+
+        return handle
+
+    async def handle_create_flashcards(
+        self, session_id: str, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """FC-06: code checks every source. A refused deck may be sent once more;
+        after DECK_CHECK_ATTEMPTS refusals in one reply, no deck is stored (FC-12)."""
+
+        if self._store_deck is None:
+            return await _unavailable_deck(args)
+        refusals = self._deck_refusals.get(session_id, 0)
+        if refusals >= DECK_CHECK_ATTEMPTS:
+            return _tool_error(
+                "The deck was refused too many times in this reply and nothing was stored. "
+                "Do not send a deck again. Tell the learner which cards failed and why, "
+                "and that they can ask again."
+            )
+        try:
+            payload = await asyncio.to_thread(self._store_deck, session_id, args)
+        except InvalidDeck as exc:
+            refusals += 1
+            self._deck_refusals[session_id] = refusals
+            if refusals >= DECK_CHECK_ATTEMPTS:
+                follow = (
+                    "Nothing was stored, and you cannot send a deck again in this reply. "
+                    "Tell the learner which cards failed and why, and that they can ask again."
+                )
+            else:
+                follow = (
+                    "Fix the cards named above and send the whole deck once more, "
+                    "or leave the deck out."
+                )
+            return _tool_error(f"{exc}\n{follow}")
+        count = len(payload.get("cards", []))
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": (
+                        f"Deck stored as id {payload['id']} with {count} "
+                        f"card{'' if count == 1 else 's'}. The learner sees it in this turn."
+                    ),
+                }
+            ]
+        }
 
     def _resource_handler_for(self, session_id: str) -> ResourceHandler:
         async def handle(args: dict[str, Any]) -> dict[str, Any]:
@@ -1867,9 +2043,11 @@ class ClaudeTeachingAgent:
         animation_step: AnimationStep | None = None,
         pinned: Whiteboard | None = None,
         resources: Sequence[str] = (),
+        decks: Sequence[dict[str, object]] = (),
     ) -> AsyncIterator[str | ReplyResult]:
         self._drawing_failures[session_id] = 0
         self._quiz_refusals[session_id] = 0
+        self._deck_refusals[session_id] = 0
         client, include_transcript = await self._ensure_client(
             session_id,
             sdk_session_id,
@@ -1888,6 +2066,8 @@ class ClaudeTeachingAgent:
             animation_step,
             pinned,
             resources,
+            decks,
+            turn_count=len(prior_turns),
         )
         if picture is None:
             await client.query(prompt)
@@ -1931,6 +2111,7 @@ class ClaudeTeachingAgent:
     async def close_session(self, session_id: str) -> None:
         self._drawing_failures.pop(session_id, None)
         self._quiz_refusals.pop(session_id, None)
+        self._deck_refusals.pop(session_id, None)
         pending = self._connecting.get(session_id)
         if pending is not None:
             # A connect under way finishes first, so its CLI is closed, not left running.
@@ -1996,6 +2177,7 @@ class ClaudeTeachingAgent:
             extend_whiteboard=self._extend_handler_for(session_id),
             start_animation_job=self._animation_handler_for(session_id),
             read_resource=self._resource_handler_for(session_id),
+            create_flashcards=self._deck_handler_for(session_id),
         )
         if start.resume:
             options = replace(options, resume=start.resume)

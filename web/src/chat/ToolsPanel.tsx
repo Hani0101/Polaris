@@ -1,10 +1,12 @@
 import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Clapperboard, Layers, ListChecks, Presentation } from 'lucide-react'
-import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import { Clapperboard, Layers, ListChecks, Presentation, SquareStack } from 'lucide-react'
+import type { AnimationArtifact, Artifact, Deck, Quiz, WhiteboardArtifact } from '../api.ts'
 import { AnimationPlayer } from '../AnimationPlayer.tsx'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
+import { DeckCard } from '../DeckCard.tsx'
 import { QuizCard } from '../QuizCard.tsx'
+import { CreateFlashcardsDialog } from './CreateFlashcardsDialog.tsx'
 import type { PointedPart } from '../whiteboard/pointing.ts'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
@@ -15,11 +17,18 @@ import { useResources } from './resources.tsx'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
 import './tools.css'
 
-export type ToolsTab = 'whiteboard' | 'quiz' | 'animation' | 'resources' | 'artifacts'
+export type ToolsTab =
+  | 'whiteboard'
+  | 'quiz'
+  | 'flashcards'
+  | 'animation'
+  | 'resources'
+  | 'artifacts'
 
 const TABS: TabItem<ToolsTab>[] = [
   { id: 'whiteboard', label: 'Whiteboard' },
   { id: 'quiz', label: 'Quiz' },
+  { id: 'flashcards', label: 'Flashcards' },
   { id: 'animation', label: 'Animation' },
   { id: 'resources', label: 'Resources' },
   { id: 'artifacts', label: 'Artifacts' },
@@ -40,7 +49,15 @@ type ToolsPanelProps = {
   pinnedWhiteboardId?: string | null
   onNewWhiteboard?: () => void
   creatingWhiteboard?: boolean
+  onOpenDeck?: (deckId: string) => void
+  onDeckChanged?: (deck: Deck) => void
+  /** Sends the learner turn the Create flashcards dialog wrote (FC-01). */
+  onCreateFlashcards?: (message: string) => void
+  /** A reply is running, so a new turn cannot be sent yet. */
+  sending?: boolean
 }
+
+const ignore = () => {}
 
 /**
  * The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs.
@@ -59,6 +76,10 @@ export const ToolsPanel = memo(function ToolsPanel({
   pinnedWhiteboardId = null,
   onNewWhiteboard,
   creatingWhiteboard = false,
+  onOpenDeck = ignore,
+  onDeckChanged = ignore,
+  onCreateFlashcards,
+  sending = false,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
   const { focus } = useResources()
@@ -97,6 +118,15 @@ export const ToolsPanel = memo(function ToolsPanel({
             onQuizChecked={onQuizChecked}
           />
         ) : null}
+        {tab === 'flashcards' ? (
+          <FlashcardsTab
+            deck={latest(artifacts, isDeck)}
+            onOpenDeck={onOpenDeck}
+            onDeckChanged={onDeckChanged}
+            onCreateFlashcards={onCreateFlashcards}
+            sending={sending}
+          />
+        ) : null}
         {tab === 'animation' ? (
           <AnimationTab
             animation={latest(artifacts, isAnimation)}
@@ -111,6 +141,7 @@ export const ToolsPanel = memo(function ToolsPanel({
             onOpenQuiz={onOpenQuiz}
             onOpenWhiteboard={onOpenWhiteboard}
             onOpenAnimation={onOpenAnimation}
+            onOpenDeck={onOpenDeck}
           />
         ) : null}
       </Tabs>
@@ -124,6 +155,10 @@ function isQuiz(artifact: Artifact): artifact is Quiz {
 
 function isAnimation(artifact: Artifact): artifact is AnimationArtifact {
   return artifact.kind === 'animation'
+}
+
+function isDeck(artifact: Artifact): artifact is Deck {
+  return artifact.kind === 'deck'
 }
 
 function latest<T extends Artifact>(
@@ -250,6 +285,54 @@ function QuizTab({
   return <QuizCard key={quiz.id} quiz={quiz} onChecked={onQuizChecked} onExpand={onOpenQuiz} />
 }
 
+/** Create flashcards opens the dialog (FC-01, FC-03); the latest deck is studied here. */
+function FlashcardsTab({
+  deck,
+  onOpenDeck,
+  onDeckChanged,
+  onCreateFlashcards,
+  sending,
+}: {
+  deck: Deck | null
+  onOpenDeck: (deckId: string) => void
+  onDeckChanged: (deck: Deck) => void
+  onCreateFlashcards?: (message: string) => void
+  sending: boolean
+}) {
+  const [creating, setCreating] = useState(false)
+  const create = onCreateFlashcards ? (
+    <>
+      <div className="tools-actions">
+        <button type="button" onClick={() => setCreating(true)} disabled={sending}>
+          Create flashcards
+        </button>
+      </div>
+      <CreateFlashcardsDialog
+        open={creating}
+        onCancel={() => setCreating(false)}
+        onSubmit={(message) => {
+          setCreating(false)
+          onCreateFlashcards(message)
+        }}
+      />
+    </>
+  ) : null
+  return (
+    <div className="tools-whiteboard">
+      {create}
+      {deck ? (
+        <DeckCard key={deck.id} deck={deck} onChanged={onDeckChanged} onExpand={onOpenDeck} />
+      ) : (
+        <ToolsEmpty
+          icon={<SquareStack size={24} strokeWidth={2} aria-hidden="true" />}
+          title="No flashcards yet"
+          body="Create flashcards from this session or its resources to revise what you covered."
+        />
+      )}
+    </div>
+  )
+}
+
 function AnimationTab({
   animation,
   onOpenAnimation,
@@ -297,18 +380,20 @@ function ArtifactsTab({
   onOpenQuiz,
   onOpenWhiteboard,
   onOpenAnimation,
+  onOpenDeck,
 }: {
   artifacts: Artifact[]
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation: (sessionId: string, jobId: string) => void
+  onOpenDeck: (deckId: string) => void
 }) {
   if (artifacts.length === 0) {
     return (
       <ToolsEmpty
         icon={<Layers size={24} strokeWidth={2} aria-hidden="true" />}
         title="No artifacts yet"
-        body="Whiteboards, quizzes, and animations from this session show here."
+        body="Whiteboards, quizzes, flashcards, and animations from this session show here."
       />
     )
   }
@@ -319,6 +404,13 @@ function ArtifactsTab({
         <li key={`${artifact.kind}-${artifact.id}`}>
           {artifact.kind === 'quiz' ? (
             <ClickableCard title="Quiz" body={artifact.title} onOpen={() => onOpenQuiz(artifact.id)} />
+          ) : null}
+          {artifact.kind === 'deck' ? (
+            <ClickableCard
+              title="Flashcards"
+              body={artifact.title}
+              onOpen={() => onOpenDeck(artifact.id)}
+            />
           ) : null}
           {artifact.kind === 'whiteboard' ? (
             <ClickableCard

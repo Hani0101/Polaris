@@ -21,7 +21,8 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 - Whiteboard, which the agent and the learner can both draw on
 - Quiz, graded against a stored answer key. It starts in the chat, and the learner can expand it onto its own page.
 - Animation. A later long-running job uses the same notice rules as animation (AN-02, AN-03, AN-07, AN-08).
-- Artifacts: a stored whiteboard, quiz, or animation, reopened from the session that created it
+- Flashcards, a deck for revision. Every card is tied to a source in the session's turns or resources, and a deck is checked by code before it is stored. See [Flashcards](features/flashcards.md) and [A deck's sources are checked by code](decisions/0012-deck-sources-checked-by-code.md).
+- Artifacts: a stored whiteboard, quiz, animation, or flashcard deck, reopened from the session that created it
 - Resources: PDFs, Word documents, text files, typed notes, and images the learner gives a session, which the agent explains from and cites. See [Resources](features/resources.md).
 - Settings, with one section for now: the appearance mode (System, Light, or Dark), kept in the browser. See [Settings](features/settings.md).
 
