@@ -10,6 +10,7 @@ import type { ViewTurn } from './Conversation.tsx'
 import { PinnedWhiteboard } from './PinnedWhiteboard.tsx'
 import type { PinnedTurn } from './PinnedWhiteboard.tsx'
 import { ResizeHandle, useSize } from './ResizeHandle.tsx'
+import { ResourcesProvider } from './resources.tsx'
 import { SessionPanel } from './SessionPanel.tsx'
 import { ToolsPanel } from './ToolsPanel.tsx'
 import { TopBar } from './TopBar.tsx'
@@ -187,136 +188,144 @@ export function ChatShell({
     onAskAboutStep,
   }
 
+  // A chosen citation opens the tools where the Resources tab shows it (RS-09).
+  function showResources() {
+    if (phone) setSheetOpen(true)
+    else if (!toolsOpen) onToggleTools()
+  }
+
   return (
-    <div className="app-shell">
-      <TopBar
-        sessionTitle={sessionTitle}
-        sessionListOpen={sessionListOpen}
-        onToggleSessions={onToggleSessions}
-        onLeave={onLeave}
-        canLeave={sessionOpen}
-        showToolsToggle={sessionOpen && !phone}
-        toolsOpen={toolsOpen}
-        onToggleTools={onToggleTools}
-      />
-      {error ? (
-        <div className="shell-alert">
-          <AlertBanner
-            action={
-              <button type="button" className="secondary" onClick={onRetryLoad}>
-                Try again
-              </button>
+    <ResourcesProvider sessionId={openId} onFocus={showResources}>
+      <div className="app-shell">
+        <TopBar
+          sessionTitle={sessionTitle}
+          sessionListOpen={sessionListOpen}
+          onToggleSessions={onToggleSessions}
+          onLeave={onLeave}
+          canLeave={sessionOpen}
+          showToolsToggle={sessionOpen && !phone}
+          toolsOpen={toolsOpen}
+          onToggleTools={onToggleTools}
+        />
+        {error ? (
+          <div className="shell-alert">
+            <AlertBanner
+              action={
+                <button type="button" className="secondary" onClick={onRetryLoad}>
+                  Try again
+                </button>
+              }
+            >
+              {error}
+            </AlertBanner>
+          </div>
+        ) : null}
+        <div className="app-body" ref={body} style={panelWidths}>
+          <SessionPanel
+            sessions={sessions}
+            openId={openId}
+            loading={loading}
+            open={sessionListOpen}
+            onClose={onCloseSessions}
+            onStart={onStart}
+            onOpen={onOpen}
+            onRename={onRename}
+            onDelete={onDelete}
+            onOpenSettings={onOpenSettings}
+          />
+          {sessionListOpen ? (
+            <ResizeHandle
+              label="Resize sessions panel"
+              orientation="vertical"
+              grows={1}
+              min={PANEL_MIN}
+              max={PANEL_MAX}
+              measure={widthOf('.session-panel')}
+              onResize={setLeftWidth}
+            />
+          ) : null}
+          {sessionListOpen ? (
+            <button
+              type="button"
+              className="drawer-dismiss"
+              aria-label="Close sessions"
+              onClick={onCloseSessions}
+            />
+          ) : null}
+          <Conversation
+            turns={turns}
+            draft={draft}
+            sending={sending}
+            sendError={sendError}
+            sessionOpen={sessionOpen}
+            onDraftChange={onDraftChange}
+            onSend={onSend}
+            onStop={onStop}
+            onCopy={onCopy}
+            onTryAgain={onTryAgain}
+            onOpenQuiz={onOpenQuiz}
+            onOpenWhiteboard={onOpenWhiteboard}
+            onOpenAnimation={onOpenAnimation}
+            onSimpler={onSimpler}
+            sessionId={openId}
+            onStart={onStart}
+            pointing={pointing}
+            onRemovePoint={onRemovePoint}
+            pictureAttached={pictureAttached}
+            onRemovePicture={onRemovePicture}
+            animationStep={animationStep}
+            onRemoveAnimationStep={onRemoveAnimationStep}
+            onAsk={onAsk}
+            onOpenTools={phone ? () => setSheetOpen(true) : undefined}
+            toolsButtonRef={toolsButton}
+            pinnedWhiteboardId={pinnedWhiteboardId}
+            pinned={
+              sessionOpen && openId && pinnedWhiteboardId ? (
+                <PinnedWhiteboard
+                  key={pinnedWhiteboardId}
+                  sessionId={openId}
+                  whiteboardId={pinnedWhiteboardId}
+                  turn={pinnedTurn}
+                  onClose={onClosePinned}
+                  onAsk={(parts) => onAsk(pinnedWhiteboardId, parts)}
+                  onPicture={onPicture}
+                />
+              ) : null
             }
-          >
-            {error}
-          </AlertBanner>
+          />
+          {sessionOpen && !phone && toolsOpen ? (
+            <ResizeHandle
+              label="Resize tools panel"
+              orientation="vertical"
+              grows={-1}
+              min={PANEL_MIN}
+              max={PANEL_MAX}
+              measure={widthOf('.tools-panel')}
+              onResize={setRightWidth}
+            />
+          ) : null}
+          {sessionOpen && !phone && toolsOpen ? (
+            <aside className="tools-panel" aria-labelledby={panelHeading}>
+              <ToolsPanel headingId={panelHeading} onClose={onCloseTools} {...toolsProps} />
+            </aside>
+          ) : null}
         </div>
-      ) : null}
-      <div className="app-body" ref={body} style={panelWidths}>
-        <SessionPanel
-          sessions={sessions}
-          openId={openId}
-          loading={loading}
-          open={sessionListOpen}
-          onClose={onCloseSessions}
-          onStart={onStart}
-          onOpen={onOpen}
-          onRename={onRename}
-          onDelete={onDelete}
-          onOpenSettings={onOpenSettings}
-        />
-        {sessionListOpen ? (
-          <ResizeHandle
-            label="Resize sessions panel"
-            orientation="vertical"
-            grows={1}
-            min={PANEL_MIN}
-            max={PANEL_MAX}
-            measure={widthOf('.session-panel')}
-            onResize={setLeftWidth}
-          />
-        ) : null}
-        {sessionListOpen ? (
-          <button
-            type="button"
-            className="drawer-dismiss"
-            aria-label="Close sessions"
-            onClick={onCloseSessions}
-          />
-        ) : null}
-        <Conversation
-          turns={turns}
-          draft={draft}
-          sending={sending}
-          sendError={sendError}
-          sessionOpen={sessionOpen}
-          onDraftChange={onDraftChange}
-          onSend={onSend}
-          onStop={onStop}
-          onCopy={onCopy}
-          onTryAgain={onTryAgain}
-          onOpenQuiz={onOpenQuiz}
-          onOpenWhiteboard={onOpenWhiteboard}
-          onOpenAnimation={onOpenAnimation}
-          onSimpler={onSimpler}
-          sessionId={openId}
-          onStart={onStart}
-          pointing={pointing}
-          onRemovePoint={onRemovePoint}
-          pictureAttached={pictureAttached}
-          onRemovePicture={onRemovePicture}
-          animationStep={animationStep}
-          onRemoveAnimationStep={onRemoveAnimationStep}
-          onAsk={onAsk}
-          onOpenTools={phone ? () => setSheetOpen(true) : undefined}
-          toolsButtonRef={toolsButton}
-          pinnedWhiteboardId={pinnedWhiteboardId}
-          pinned={
-            sessionOpen && openId && pinnedWhiteboardId ? (
-              <PinnedWhiteboard
-                key={pinnedWhiteboardId}
-                sessionId={openId}
-                whiteboardId={pinnedWhiteboardId}
-                turn={pinnedTurn}
-                onClose={onClosePinned}
-                onAsk={(parts) => onAsk(pinnedWhiteboardId, parts)}
-                onPicture={onPicture}
-              />
-            ) : null
-          }
-        />
-        {sessionOpen && !phone && toolsOpen ? (
-          <ResizeHandle
-            label="Resize tools panel"
-            orientation="vertical"
-            grows={-1}
-            min={PANEL_MIN}
-            max={PANEL_MAX}
-            measure={widthOf('.tools-panel')}
-            onResize={setRightWidth}
-          />
-        ) : null}
-        {sessionOpen && !phone && toolsOpen ? (
-          <aside className="tools-panel" aria-labelledby={panelHeading}>
-            <ToolsPanel headingId={panelHeading} onClose={onCloseTools} {...toolsProps} />
-          </aside>
-        ) : null}
-      </div>
-      {sessionOpen && phone ? (
-        <BottomSheet
-          open={sheetOpen}
-          labelledBy={sheetHeading}
-          onClose={() => setSheetOpen(false)}
-          returnFocus={toolsButton}
-        >
-          <ToolsPanel
-            headingId={sheetHeading}
+        {sessionOpen && phone ? (
+          <BottomSheet
+            open={sheetOpen}
+            labelledBy={sheetHeading}
             onClose={() => setSheetOpen(false)}
-            {...toolsProps}
-          />
-        </BottomSheet>
-      ) : null}
-      {toast ? <Toast message={toast} onClose={onCloseToast} /> : null}
-    </div>
+            returnFocus={toolsButton}
+          >
+            <ToolsPanel
+              headingId={sheetHeading}
+              onClose={() => setSheetOpen(false)}
+              {...toolsProps}
+            />
+          </BottomSheet>
+        ) : null}
+        {toast ? <Toast message={toast} onClose={onCloseToast} /> : null}
+      </div>
+    </ResourcesProvider>
   )
 }

@@ -1,9 +1,11 @@
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
-import { ExternalLink, Info, Lightbulb, TriangleAlert } from 'lucide-react'
+import { BookOpen, ExternalLink, Info, Lightbulb, TriangleAlert } from 'lucide-react'
 import './reply.css'
 import { highlightCode } from './highlightCode.tsx'
+import { useResources } from './resources.tsx'
 import { parseReply, type CalloutTone, type ReplyBlock } from './replyBlocks.ts'
 
 /**
@@ -15,7 +17,7 @@ import { parseReply, type CalloutTone, type ReplyBlock } from './replyBlocks.ts'
  */
 
 const INLINE =
-  /(?<code>`[^`\n]+`)|(?<bold>\*\*(?=\S)[^\n]*?\S\*\*|__(?=\S)[^\n]*?\S__)|(?<key>==(?=\S)[^\n]*?\S==)|(?<strike>~~(?=\S)[^\n]*?\S~~)|(?<link>\[(?<label>[^\]\n]+)\]\((?<href>https?:\/\/[^\s)]+)\))|(?<math>(?<![\\\w])\$(?=[^\s$])(?:[^$\n]*?[^\s$\\])?\$(?!\d)|\\\((?<parenMath>[^\n]+?)\\\))|(?<plain>(?<![\w*])\*(?=[^\s*])[^*\n]*?[^\s*]\*(?![\w*]))/
+  /(?<cite>\[\[cite:(?<citeId>[\w-]+)(?::(?<citePage>\d+))?\]\])|(?<code>`[^`\n]+`)|(?<bold>\*\*(?=\S)[^\n]*?\S\*\*|__(?=\S)[^\n]*?\S__)|(?<key>==(?=\S)[^\n]*?\S==)|(?<strike>~~(?=\S)[^\n]*?\S~~)|(?<link>\[(?<label>[^\]\n]+)\]\((?<href>https?:\/\/[^\s)]+)\))|(?<math>(?<![\\\w])\$(?=[^\s$])(?:[^$\n]*?[^\s$\\])?\$(?!\d)|\\\((?<parenMath>[^\n]+?)\\\))|(?<plain>(?<![\w*])\*(?=[^\s*])[^*\n]*?[^\s*]\*(?![\w*]))/
 
 const CALLOUT: Record<CalloutTone, { label: string; Icon: typeof Info }> = {
   note: { label: 'Note', Icon: Info },
@@ -43,6 +45,30 @@ function Maths({ tex, display, source }: { tex: string; display: boolean; source
   return <Tag className={display ? 'reply-math-block' : 'reply-math'} dangerouslySetInnerHTML={{ __html: html }} />
 }
 
+/**
+ * A citation of a learner's resource, written by the agent as [[cite:id:page]].
+ * It names the resource and page, and opens them in the Resources tab. A
+ * resource that has been removed says so instead (RS-15).
+ */
+function Citation({ id, page }: { id: string; page: number | null }) {
+  const { resources, loaded, open } = useResources()
+  const resource = resources.find((item) => item.id === id)
+  if (!resource) {
+    return <span className="reply-cite is-removed">{loaded ? 'resource removed' : 'a resource'}</span>
+  }
+  const label = page !== null && resource.kind === 'pdf' ? `${resource.name}, p. ${page}` : resource.name
+  return (
+    <button
+      type="button"
+      className="reply-cite"
+      onClick={() => open(id, resource.kind === 'pdf' ? page : null)}
+    >
+      <BookOpen size={16} strokeWidth={2} aria-hidden="true" />
+      {label}
+    </button>
+  )
+}
+
 function renderInline(value: string, key = 'i'): ReactNode[] {
   const nodes: ReactNode[] = []
   let rest = value
@@ -56,8 +82,10 @@ function renderInline(value: string, key = 'i'): ReactNode[] {
     if (match.index > 0) nodes.push(text(rest.slice(0, match.index)))
     const id = `${key}-${count}`
     const whole = match[0]
-    const { code, bold, key: term, strike, link, label, href, math, parenMath, plain } = match.groups
-    if (code) {
+    const { cite, citeId, citePage, code, bold, key: term, strike, link, label, href, math, parenMath, plain } = match.groups
+    if (cite && citeId) {
+      nodes.push(<Citation key={id} id={citeId} page={citePage ? Number(citePage) : null} />)
+    } else if (code) {
       nodes.push(<code key={id}>{code.slice(1, -1)}</code>)
     } else if (bold) {
       nodes.push(<strong key={id}>{renderInline(bold.slice(2, -2), id)}</strong>)
@@ -188,9 +216,11 @@ function renderBlocks(blocks: ReplyBlock[], key: string): ReactNode[] {
 }
 
 export function ReplyText({ text: reply, live = false }: { text: string; live?: boolean }) {
+  // Parsing, maths, and code colors run again only when the reply text changes.
+  const blocks = useMemo(() => renderBlocks(parseReply(reply), 'r'), [reply])
   return (
     <div className="tutor-body reply" aria-live={live ? 'polite' : undefined}>
-      {renderBlocks(parseReply(reply), 'r')}
+      {blocks}
     </div>
   )
 }

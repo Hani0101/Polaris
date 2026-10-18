@@ -3,7 +3,7 @@ import type { Comment, Whiteboard, WhiteboardStep } from '../api.ts'
 export type RevealPhase = 'streaming' | 'stopped' | 'done'
 
 const COMPLETE_MARKER = /\[\[step:[^\]]*\]\]/g
-const MARKER_OPEN = '[[step:'
+const MARKER_OPENS = ['[[step:', '[[cite:']
 
 export function revealWhiteboard<T extends Whiteboard>(
   whiteboard: T,
@@ -79,7 +79,9 @@ function hideIncompleteMarker(text: string): string {
   const opened = text.lastIndexOf('[[')
   if (opened >= 0) {
     const tail = text.slice(opened)
-    const unfinished = !tail.includes(']]') && (tail.startsWith(MARKER_OPEN) || MARKER_OPEN.startsWith(tail))
+    const unfinished =
+      !tail.includes(']]') &&
+      MARKER_OPENS.some((open) => tail.startsWith(open) || open.startsWith(tail))
     if (unfinished) return text.slice(0, opened).replace(/[ \t]+$/, '')
   }
   if (text.endsWith('[')) return text.slice(0, -1)

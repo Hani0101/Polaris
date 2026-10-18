@@ -500,3 +500,86 @@ export async function sendTurn(
   }
   if (!sawDone) throw new Error('The reply ended early.')
 }
+
+export type ResourceKind = 'pdf' | 'docx' | 'text' | 'note' | 'image'
+
+export type Resource = {
+  id: string
+  kind: ResourceKind
+  name: string
+  media_type: string
+  size: number
+  /** PDF pages, or parts of other text. Zero for an image. */
+  pages: number
+}
+
+export type ResourceView = Resource & {
+  /** The extracted text, one entry per page or part. Empty for an image. */
+  text_pages: string[]
+}
+
+/** Limits the server enforces (RS-04). The client shows them early. */
+export const RESOURCE_MAX_BYTES = 10 * 1024 * 1024
+export const RESOURCE_MAX_IMAGE_BYTES = 5 * 1024 * 1024
+export const RESOURCE_MAX_COUNT = 10
+export const RESOURCE_NAME_MAX = 80
+export const RESOURCE_ACCEPT = '.pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg'
+
+function resourcesPath(sessionId: string): string {
+  return `/api/sessions/${encodeURIComponent(sessionId)}/resources`
+}
+
+export function resourceFileUrl(sessionId: string, resourceId: string): string {
+  return `${resourcesPath(sessionId)}/${encodeURIComponent(resourceId)}/file`
+}
+
+export function listResources(sessionId: string, signal?: AbortSignal): Promise<Resource[]> {
+  return request<{ resources: Resource[] }>(resourcesPath(sessionId), { signal }).then(
+    (body) => body.resources,
+  )
+}
+
+/** The file is the request body and its name travels in X-Filename. */
+export function uploadResource(sessionId: string, file: File): Promise<Resource> {
+  return request<Resource>(resourcesPath(sessionId), {
+    method: 'POST',
+    headers: { 'X-Filename': encodeURIComponent(file.name) },
+    body: file,
+  })
+}
+
+export function addResourceNote(sessionId: string, name: string, text: string): Promise<Resource> {
+  return request<Resource>(`${resourcesPath(sessionId)}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, text }),
+  })
+}
+
+export function getResource(
+  sessionId: string,
+  resourceId: string,
+  signal?: AbortSignal,
+): Promise<ResourceView> {
+  return request<ResourceView>(`${resourcesPath(sessionId)}/${encodeURIComponent(resourceId)}`, {
+    signal,
+  })
+}
+
+export function updateResource(
+  sessionId: string,
+  resourceId: string,
+  change: { name?: string; text?: string },
+): Promise<Resource> {
+  return request<Resource>(`${resourcesPath(sessionId)}/${encodeURIComponent(resourceId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(change),
+  })
+}
+
+export function removeResource(sessionId: string, resourceId: string): Promise<{ id: string }> {
+  return request<{ id: string }>(`${resourcesPath(sessionId)}/${encodeURIComponent(resourceId)}`, {
+    method: 'DELETE',
+  })
+}

@@ -133,6 +133,9 @@ test('tabs switch with a click and with arrow keys', () => {
   expect(document.activeElement).toBe(screen.getByRole('tab', { name: 'Animation' }))
 
   fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
+  expect(selectedTab()).toBe('Resources')
+
+  fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
   expect(selectedTab()).toBe('Artifacts')
 
   fireEvent.keyDown(document.activeElement as Element, { key: 'ArrowRight' })
@@ -145,7 +148,7 @@ test('tabs switch with a click and with arrow keys', () => {
   expect(selectedTab()).toBe('Whiteboard')
 
   const tabs = screen.getAllByRole('tab')
-  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1])
+  expect(tabs.map((tab) => tab.tabIndex)).toEqual([0, -1, -1, -1, -1])
 })
 
 test('each tab shows an empty state when the session has nothing yet', () => {

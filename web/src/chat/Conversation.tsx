@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode, Ref } from 'react'
 import { Plus } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
@@ -77,6 +77,20 @@ type ConversationProps = {
 
 const PHONE_QUERY = '(max-width: 639px)'
 
+const noHandler = () => {}
+
+/**
+ * A function that keeps one identity and always calls the latest handler, so a
+ * turn is not drawn again (and its whiteboards redrawn) on every typed key.
+ */
+function useSteady<A extends unknown[], R>(handler: (...args: A) => R): (...args: A) => R {
+  const latest = useRef(handler)
+  useEffect(() => {
+    latest.current = handler
+  })
+  return useCallback((...args: A) => latest.current(...args), [])
+}
+
 export function Conversation({
   turns,
   draft,
@@ -108,6 +122,13 @@ export function Conversation({
 }: ConversationProps) {
   const scroller = useRef<HTMLDivElement>(null)
   const textarea = useRef<HTMLTextAreaElement>(null)
+  const copy = useSteady(onCopy)
+  const tryAgain = useSteady(onTryAgain)
+  const openQuiz = useSteady(onOpenQuiz)
+  const openWhiteboard = useSteady(onOpenWhiteboard)
+  const openAnimation = useSteady(onOpenAnimation ?? noHandler)
+  const simpler = useSteady(onSimpler ?? noHandler)
+  const ask = useSteady(onAsk ?? noHandler)
 
   useEffect(() => {
     const node = scroller.current
@@ -158,15 +179,15 @@ export function Conversation({
             <TurnBlock
               key={turn.key}
               turn={turn}
-              onCopy={onCopy}
-              onTryAgain={onTryAgain}
-              onOpenQuiz={onOpenQuiz}
-              onOpenWhiteboard={onOpenWhiteboard}
-              onOpenAnimation={onOpenAnimation}
-              onSimpler={onSimpler}
+              onCopy={copy}
+              onTryAgain={tryAgain}
+              onOpenQuiz={openQuiz}
+              onOpenWhiteboard={openWhiteboard}
+              onOpenAnimation={onOpenAnimation ? openAnimation : undefined}
+              onSimpler={onSimpler ? simpler : undefined}
               sending={sending}
               sessionId={sessionId}
-              onAsk={onAsk}
+              onAsk={onAsk ? ask : undefined}
               pinnedWhiteboardId={pinnedWhiteboardId}
             />
           ))}
@@ -312,7 +333,7 @@ function StepChip({ step, onRemove }: { step: AskedStep; onRemove?: () => void }
   )
 }
 
-function TurnBlock({
+const TurnBlock = memo(function TurnBlock({
   turn,
   onCopy,
   onTryAgain,
@@ -353,11 +374,16 @@ function TurnBlock({
     whiteboard.steps.map((step) => step.reply_part),
   )
   const reply = visibleReply(turn.reply, turn.streaming, markers)
-  const whiteboards = storedBoards.flatMap((whiteboard) => {
-    if (whiteboard.id === pinnedWhiteboardId) return []
-    const revealed = revealWhiteboard(whiteboard, turn.reply, phase)
-    return revealed ? [{ ...revealed, kind: 'whiteboard' as const }] : []
-  })
+  // The same board object while nothing changes, so the whiteboard is not redrawn.
+  const whiteboards = useMemo(
+    () =>
+      turn.artifacts.flatMap((artifact) => {
+        if (artifact.kind !== 'whiteboard' || artifact.id === pinnedWhiteboardId) return []
+        const revealed = revealWhiteboard(artifact, turn.reply, phase)
+        return revealed ? [revealed] : []
+      }),
+    [turn.artifacts, turn.reply, phase, pinnedWhiteboardId],
+  )
   const thinking = turn.streaming && reply === '' && whiteboards.length === 0 && !turn.failed
   const finished = !turn.streaming && !turn.failed && turn.reply !== ''
   const visible =
@@ -470,4 +496,4 @@ function TurnBlock({
       ) : null}
     </article>
   )
-}
+})

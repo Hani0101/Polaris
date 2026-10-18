@@ -10,15 +10,18 @@ import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
 import { stageText, useAnimationJob } from './animationJob.ts'
+import { ResourcesTab } from './ResourcesTab.tsx'
+import { useResources } from './resources.tsx'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
 import './tools.css'
 
-export type ToolsTab = 'whiteboard' | 'quiz' | 'animation' | 'artifacts'
+export type ToolsTab = 'whiteboard' | 'quiz' | 'animation' | 'resources' | 'artifacts'
 
 const TABS: TabItem<ToolsTab>[] = [
   { id: 'whiteboard', label: 'Whiteboard' },
   { id: 'quiz', label: 'Quiz' },
   { id: 'animation', label: 'Animation' },
+  { id: 'resources', label: 'Resources' },
   { id: 'artifacts', label: 'Artifacts' },
 ]
 
@@ -55,6 +58,14 @@ export function ToolsPanel({
   creatingWhiteboard = false,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
+  const { focus } = useResources()
+  const [seenFocus, setSeenFocus] = useState(focus?.nonce ?? 0)
+
+  // A chosen citation opens the Resources tab (RS-09).
+  if (focus && focus.nonce !== seenFocus) {
+    setSeenFocus(focus.nonce)
+    setTab('resources')
+  }
 
   return (
     <div className="tools">
@@ -90,6 +101,7 @@ export function ToolsPanel({
             onAskAboutStep={onAskAboutStep}
           />
         ) : null}
+        {tab === 'resources' ? <ResourcesTab /> : null}
         {tab === 'artifacts' ? (
           <ArtifactsTab
             artifacts={artifacts}

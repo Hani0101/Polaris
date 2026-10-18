@@ -58,7 +58,7 @@
 
 .tabs-list {
   display: flex;
-  /* Four tabs need 293px; a 320px phone sheet has 288px, so the row
+  /* Five tabs need more than the 288px of a 320px phone sheet, so the row
      scrolls there instead of clipping the last tab. */
   overflow-x: auto;
   scrollbar-width: none;
@@ -305,4 +305,127 @@
 .tools-card.is-selected,
 .tools-card--clickable.is-selected:hover:not(:disabled) {
   border: var(--border-width-emphasis) solid var(--color-accent);
+}
+
+/* Resources tab (DESIGN.md 7: Card, Empty state, Text input, Alert, Modal). */
+.resources {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  min-height: 0;
+}
+
+.resources.is-dropping {
+  outline: var(--border-width-emphasis) dashed var(--color-accent);
+  outline-offset: calc(-1 * var(--border-width-emphasis));
+}
+
+.resource-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.resource-card > .tools-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-actions {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+
+.resource-name {
+  font-weight: var(--font-weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.resource-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.resource-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.resource-preview-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.resource-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.resource-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.resource-pager-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* The extracted text wraps instead of scrolling sideways (6.5). */
+.resource-text {
+  margin: 0;
+  padding: var(--space-card-padding);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.resource-image {
+  max-width: 100%;
+  height: auto;
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.resource-skeleton {
+  min-height: calc(var(--component-tap-target-min) * 3);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.text-area {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  resize: vertical;
+}
+
+.text-area:hover {
+  border-color: var(--color-text-secondary);
 }

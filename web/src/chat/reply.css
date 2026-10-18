@@ -215,3 +215,32 @@
   margin-left: var(--space-2xs);
   vertical-align: -0.125em;
 }
+
+/* A citation of a resource inside a reply (RS-09). A link-styled button, never italic. */
+.reply-cite {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-link);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: inherit;
+  font-weight: var(--font-weight-bold);
+  line-height: inherit;
+  text-decoration: underline;
+  vertical-align: baseline;
+}
+
+.reply-cite:hover:not(:disabled) {
+  background: transparent;
+  color: var(--color-text-link);
+}
+
+.reply-cite.is-removed {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+  text-decoration: none;
+}
