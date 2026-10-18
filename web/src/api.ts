@@ -278,12 +278,14 @@ export type SessionSummary = {
   ended: boolean
   /** The learner's name for the session, or an empty string. */
   name: string
+  /** The title a model wrote from the first message (CH-20), or an empty string. */
+  title: string
   preview: string
 }
 
-/** CH-06: the learner's name, else the first message, else a placeholder. */
+/** CH-06: the learner's name, else the generated title, else the first message, else a placeholder. */
 export function sessionLabel(session: SessionSummary | undefined): string {
-  return session?.name || session?.preview || 'New session'
+  return session?.name || session?.title || session?.preview || 'New session'
 }
 
 export { ApiError }

@@ -8,8 +8,8 @@ afterEach(() => {
   cleanup()
 })
 
-const unnamed: SessionSummary = { id: 'a', ended: false, name: '', preview: 'What is a fraction?' }
-const named: SessionSummary = { id: 'b', ended: true, name: 'Fractions', preview: 'Older' }
+const unnamed: SessionSummary = { id: 'a', ended: false, name: '', title: '', preview: 'What is a fraction?' }
+const named: SessionSummary = { id: 'b', ended: true, name: 'Fractions', title: '', preview: 'Older' }
 
 function panel(
   onRename: (id: string, name: string) => Promise<void>,

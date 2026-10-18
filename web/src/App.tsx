@@ -63,6 +63,8 @@ const DevLottieRoute = import.meta.env.DEV
 
 const DESKTOP_QUERY = '(min-width: 1024px)'
 const TOAST_MS = 5000
+// When to look again for the generated title after a session's first reply (CH-20).
+const TITLE_REFRESH_MS = [1500, 4000, 10000]
 
 type PendingTurn = {
   learner: string
@@ -265,6 +267,7 @@ function App() {
   const sending = useRef(false)
   const switching = useRef(false)
   const toastTimer = useRef<number | null>(null)
+  const titleTimers = useRef<number[]>([])
   // The session whose agent was started in this visit, once the learner began typing.
   const warmedFor = useRef<string | null>(null)
 
@@ -442,6 +445,11 @@ function App() {
     }
     void load()
     return () => controller.abort()
+  }, [])
+
+  useEffect(() => {
+    const timers = titleTimers.current
+    return () => timers.forEach((timer) => window.clearTimeout(timer))
   }, [])
 
   function closeDrawerIfPhone() {
@@ -707,6 +715,10 @@ function App() {
         open.id,
         message,
         (chunk) => {
+          if (!sawText) {
+            // The session joins the list on its first message (CH-20).
+            void refresh().catch(() => {})
+          }
           sawText = true
           setPending((current) =>
             current ? { ...current, reply: current.reply + chunk } : current,
@@ -736,6 +748,14 @@ function App() {
       // fails to load keeps the sessions it had; the next refresh loads them again.
       void loadBoards(open.id)
       const listed = refresh().catch(() => {})
+      // The generated title is written after the reply (CH-20). Look for it a few times.
+      if (open.turns.length === 0) {
+        for (const wait of TITLE_REFRESH_MS) {
+          titleTimers.current.push(
+            window.setTimeout(() => void refresh().catch(() => {}), wait),
+          )
+        }
+      }
       const session = await getSession(open.id)
       if (controller.signal.aborted) return
       setOpen(session)

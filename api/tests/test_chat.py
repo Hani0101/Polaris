@@ -167,11 +167,13 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     opened: list[TestClient] = []
 
-    def make(agent=None, profile: str | None = None, profile_pass=None):
+    def make(agent=None, profile: str | None = None, profile_pass=None, title_writer=None):
         if profile is not None:
             (tmp_path / "profile.json").write_text(profile, encoding="utf-8")
         stub = TeachingStub() if agent is None else agent
-        client = TestClient(create_app(tmp_path, stub, profile_pass=profile_pass))
+        client = TestClient(
+            create_app(tmp_path, stub, profile_pass=profile_pass, title_writer=title_writer)
+        )
         if hasattr(stub, "chat"):
             stub.chat = client.app.state.chat
         client.__enter__()
@@ -298,6 +300,7 @@ def test_reopening_a_session_shows_its_turns(make_client):
 def test_leaving_a_session_ends_it(make_client):
     client, agent = make_client()
     session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
 
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
@@ -310,7 +313,9 @@ def test_leaving_a_session_ends_it(make_client):
 def test_switching_sessions_ends_the_one_left(make_client):
     client, agent = make_client()
     first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "First question")
     second = client.post("/api/sessions").json()
+    post_turn(client, second["id"], "Second question")
 
     assert client.get(f"/api/sessions/{first['id']}").json()["ended"] is True
     assert second["ended"] is False
@@ -771,7 +776,8 @@ def test_a_session_can_be_named(make_client):  # CH-06
 
 def test_an_unnamed_session_has_no_name(make_client):  # CH-06
     client, _agent = make_client()
-    client.post("/api/sessions")
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
 
     assert client.get("/api/sessions").json()["sessions"][0]["name"] == ""
 
@@ -779,6 +785,7 @@ def test_an_unnamed_session_has_no_name(make_client):  # CH-06
 def test_a_blank_name_removes_the_name(make_client):  # CH-07
     client, _agent = make_client()
     session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
     client.patch(f"/api/sessions/{session['id']}", json={"name": "Fractions"})
 
     cleared = client.patch(f"/api/sessions/{session['id']}", json={"name": "   "})
@@ -790,6 +797,7 @@ def test_a_blank_name_removes_the_name(make_client):  # CH-07
 def test_a_name_over_the_limit_is_refused(make_client):  # CH-07
     client, _agent = make_client()
     session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
 
     assert client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 80}).status_code == 200
     refused = client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 81})
@@ -829,6 +837,7 @@ def test_deleting_a_session_removes_it_and_what_was_made_in_it(make_client):  # 
     board = client.post(f"/api/sessions/{session['id']}/whiteboards")
     assert board.status_code == 201
     other = client.post("/api/sessions").json()
+    post_turn(client, other["id"], "Another question")
 
     deleted = client.delete(f"/api/sessions/{session['id']}")
 
@@ -1063,3 +1072,236 @@ def test_ending_a_session_while_it_warms_leaves_no_client(make_client, tmp_path)
     assert len(created) == 1
     assert created[0].disconnected is True
     assert agent._clients == {}
+
+
+class StubTitles:
+    """Returns a fixed title and records what it was shown (CH-20)."""
+
+    def __init__(self, title: str = "Adding fractions") -> None:
+        self.title = title
+        self.messages: list[str] = []
+
+    async def write(self, message: str) -> str:
+        self.messages.append(message)
+        return self.title
+
+
+class GatedTitles(StubTitles):
+    def __init__(self, title: str = "Adding fractions") -> None:
+        super().__init__(title)
+        self.release = threading.Event()
+
+    async def write(self, message: str) -> str:
+        await asyncio.to_thread(self.release.wait, 10)
+        return await super().write(message)
+
+
+class FailingTitles(StubTitles):
+    async def write(self, message: str) -> str:
+        self.messages.append(message)
+        raise RuntimeError("no title")
+
+
+def listed_sessions(client) -> list[dict]:
+    return client.get("/api/sessions").json()["sessions"]
+
+
+def wait_for_title(client, expected: str, seconds: float = 5.0) -> dict:
+    """The title is written after the reply, so poll the list for it."""
+
+    import time
+
+    deadline = time.monotonic() + seconds
+    while True:
+        rows = listed_sessions(client)
+        if rows and rows[0]["title"] == expected:
+            return rows[0]
+        assert time.monotonic() < deadline, rows
+        time.sleep(0.02)
+
+
+def test_a_session_without_a_message_is_not_listed(make_client):  # CH-18
+    client, _agent = make_client()
+    client.post("/api/sessions")
+
+    assert listed_sessions(client) == []
+
+
+def test_the_first_send_lists_the_session_with_its_message(make_client):  # CH-20
+    agent = GatedAgent()
+    client, _agent = make_client(agent)
+    session = client.post("/api/sessions").json()
+    scope_events: list[dict] = []
+
+    def send() -> None:
+        scope_events.extend(post_turn(client, session["id"], "What is a fraction?"))
+
+    thread = threading.Thread(target=send)
+    thread.start()
+    try:
+        import time
+
+        deadline = time.monotonic() + 5
+        while not listed_sessions(client):
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        row = listed_sessions(client)[0]
+        assert row["id"] == session["id"]
+        assert row["preview"] == "What is a fraction?"
+    finally:
+        agent.release.set()
+        thread.join(10)
+
+
+def test_the_title_is_written_from_the_first_message_only(make_client):  # CH-20, CH-21
+    titles = StubTitles("Adding fractions")
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "  How do I add 1/2 and 1/3?  ")
+
+    row = wait_for_title(client, "Adding fractions")
+
+    assert titles.messages == ["How do I add 1/2 and 1/3?"]
+    assert row["name"] == ""
+    assert row["preview"] == "How do I add 1/2 and 1/3?"
+
+
+def test_the_title_is_written_once(make_client):  # CH-20
+    titles = StubTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "First")
+    wait_for_title(client, "Adding fractions")
+
+    post_turn(client, session["id"], "Second")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.post(f"/api/sessions/{session['id']}/open")
+    post_turn(client, session["id"], "Third")
+
+    assert titles.messages == ["First"]
+
+
+def test_a_failed_title_keeps_the_first_message_label(make_client):  # CH-21
+    titles = FailingTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+
+    post_turn(client, session["id"], "Why is the sky blue?")
+    post_turn(client, session["id"], "And at sunset?")
+
+    row = listed_sessions(client)[0]
+    assert row["title"] == ""
+    assert row["preview"] == "Why is the sky blue?"
+    assert titles.messages == ["Why is the sky blue?"]
+
+
+def test_a_title_is_cleaned_and_limited(make_client):  # CH-21
+    titles = StubTitles('  "**Fractions**"\nextra line ' + "x" * 200)
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Fractions please")
+
+    row = wait_for_title(client, "Fractions")
+
+    assert len(row["title"]) <= 80
+
+
+def test_a_name_beats_a_late_title(make_client):  # CH-21
+    titles = GatedTitles("Adding fractions")
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Add fractions")
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Fractions"})
+
+    titles.release.set()
+    row = wait_for_title(client, "Adding fractions")
+
+    assert row["name"] == "Fractions"
+
+
+def test_a_title_for_a_deleted_session_is_dropped(make_client):  # CH-21, CH-14
+    titles = GatedTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Add fractions")
+
+    assert client.delete(f"/api/sessions/{session['id']}").status_code == 200
+    titles.release.set()
+    import time
+
+    time.sleep(0.2)
+
+    assert listed_sessions(client) == []
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+
+
+def test_an_older_session_gets_no_title(make_client, tmp_path):  # CH-22
+    client, _agent = make_client(title_writer=StubTitles())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
+    wait_for_title(client, "Adding fractions")
+    # A session saved before generated titles: no title, no first_message.
+    db = sqlite3.connect(tmp_path / "polaris.db")
+    db.execute("UPDATE sessions SET generated_title = NULL, first_message = NULL")
+    db.commit()
+    db.close()
+
+    row = listed_sessions(client)[0]
+
+    assert row["title"] == ""
+    assert row["preview"] == "Hello"
+
+
+def test_leaving_a_draft_discards_it(make_client):  # CH-19
+    pass_ = StubPass()
+    client, agent = make_client(profile_pass=pass_)
+    draft = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{draft['id']}/leave")
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert listed_sessions(client) == []
+    assert pass_.calls == []
+
+
+def test_starting_another_session_discards_the_draft(make_client):  # CH-19
+    pass_ = StubPass()
+    client, _agent = make_client(profile_pass=pass_)
+    draft = client.post("/api/sessions").json()
+
+    other = client.post("/api/sessions").json()
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert client.get(f"/api/sessions/{other['id']}").status_code == 200
+    assert pass_.calls == []
+
+
+def test_opening_a_session_discards_the_draft(make_client):  # CH-19
+    pass_ = StubPass()
+    client, _agent = make_client(profile_pass=pass_)
+    earlier = client.post("/api/sessions").json()
+    post_turn(client, earlier["id"], "Earlier question")
+    client.post(f"/api/sessions/{earlier['id']}/leave")
+    draft = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{earlier['id']}/open")
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert [row["id"] for row in listed_sessions(client)] == [earlier["id"]]
+
+
+def test_a_draft_drops_its_held_resource(make_client, tmp_path):  # CH-19
+    client, _agent = make_client()
+    draft = client.post("/api/sessions").json()
+    client.post(
+        f"/api/sessions/{draft['id']}/resources/notes",
+        json={"name": "Notes", "text": "Fractions"},
+    )
+
+    client.post(f"/api/sessions/{draft['id']}/leave")
+
+    db = sqlite3.connect(tmp_path / "polaris.db")
+    try:
+        assert db.execute("SELECT id FROM resources").fetchall() == []
+    finally:
+        db.close()

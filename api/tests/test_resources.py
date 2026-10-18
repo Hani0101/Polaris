@@ -145,6 +145,7 @@ def test_a_resource_belongs_to_its_session(make_client):  # RS-01
     client, _agent = make_client()
     first = new_session(client)
     add_note(client, first, "Week 2", "Cells make energy.")
+    send(client, first, "Explain my notes")
     second = new_session(client)
 
     assert len(listed(client, first)) == 1

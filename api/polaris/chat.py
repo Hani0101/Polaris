@@ -65,6 +65,7 @@ from polaris.quiz import (
 )
 from polaris.extend import ExtensionCheck, apply_extension
 from polaris.resources import ResourceStore, create_resource_tables
+from polaris.session_title import TitleWriter, clean_title
 from polaris.sign_in import SignIn
 from polaris.whiteboard import (
     MissingWhiteboard,
@@ -249,11 +250,15 @@ class Chat:
         agent: ReplyAgent,
         profile_pass: ProfilePass | None = None,
         animation_writer: AnimationWriter | None = None,
+        title_writer: TitleWriter | None = None,
     ) -> None:
         self.data_dir = data_dir
         self.agent = agent
         self._profile_pass = profile_pass
         self._animation_writer = animation_writer
+        self._title_writer = title_writer
+        self._title_tasks: set[asyncio.Task[None]] = set()
+        self._discarded: list[str] = []
         self.db_path = data_dir / "polaris.db"
         self.profile_path = data_dir / "profile.json"
         self._lock = threading.Lock()
@@ -307,15 +312,19 @@ class Chat:
         def read(conn: sqlite3.Connection) -> list[dict[str, object]]:
             rows = conn.execute(
                 """
-                SELECT s.id, s.ended_at, s.name,
-                    (
-                        SELECT t.learner_message
-                        FROM turns t
-                        WHERE t.session_id = s.id
-                        ORDER BY t.created_at ASC, t.id ASC
-                        LIMIT 1
+                SELECT s.id, s.ended_at, s.name, s.generated_title,
+                    COALESCE(
+                        (
+                            SELECT t.learner_message
+                            FROM turns t
+                            WHERE t.session_id = s.id
+                            ORDER BY t.created_at ASC, t.id ASC
+                            LIMIT 1
+                        ),
+                        s.first_message
                     ) AS preview
                 FROM sessions s
+                WHERE preview IS NOT NULL
                 ORDER BY s.created_at DESC
                 """
             ).fetchall()
@@ -324,6 +333,7 @@ class Chat:
                     "id": row["id"],
                     "ended": row["ended_at"] is not None,
                     "name": row["name"] or "",
+                    "title": row["generated_title"] or "",
                     "preview": row["preview"] or "",
                 }
                 for row in rows
@@ -332,6 +342,7 @@ class Chat:
         return self._with_db(read)
 
     def start(self) -> tuple[dict[str, object], tuple[str, ...]]:
+        self._discard_drafts(except_id=None)
         ended = self._end_open(except_id=None)
         session_id = str(uuid.uuid4())
 
@@ -346,6 +357,7 @@ class Chat:
 
     def open(self, session_id: str) -> tuple[dict[str, object], tuple[str, ...]]:
         self._require(session_id)
+        self._discard_drafts(except_id=session_id)
         ended = self._end_open(except_id=session_id)
 
         def write(conn: sqlite3.Connection) -> None:
@@ -529,6 +541,8 @@ class Chat:
 
         row = self._require(session_id)
         if row["ended_at"] is not None:
+            return False
+        if self._discard_drafts(only_id=session_id):
             return False
 
         def write(conn: sqlite3.Connection) -> None:
@@ -735,6 +749,8 @@ class Chat:
             return taken
 
         try:
+            if await asyncio.to_thread(self._claim_first_message, session_id, text):
+                self._start_title(session_id, text)
             for notice in self.take_animation_notices(session_id):
                 parts.append(notice)
                 yield notice
@@ -805,6 +821,48 @@ class Chat:
                     )
             else:
                 await asyncio.to_thread(self._discard_unattached, session_id)
+
+    def _claim_first_message(self, session_id: str, text: str) -> bool:
+        """List the session by its first message (CH-20). True only the first time:
+        a session with a turn or a stored first message is not titled again."""
+
+        def write(conn: sqlite3.Connection) -> bool:
+            cursor = conn.execute(
+                """
+                UPDATE sessions SET first_message = ?
+                WHERE id = ? AND first_message IS NULL
+                AND NOT EXISTS (SELECT 1 FROM turns WHERE session_id = ?)
+                """,
+                (text, session_id, session_id),
+            )
+            return cursor.rowcount > 0
+
+        return self._with_db(write)
+
+    def _start_title(self, session_id: str, text: str) -> None:
+        """Write the generated title off the reply (CH-20, CH-21)."""
+
+        if self._title_writer is None:
+            return
+        task = asyncio.get_running_loop().create_task(self._write_title(session_id, text))
+        self._title_tasks.add(task)
+        task.add_done_callback(self._title_tasks.discard)
+
+    async def _write_title(self, session_id: str, text: str) -> None:
+        try:
+            title = clean_title(await self._title_writer.write(text))
+        except Exception:
+            return  # A title is cosmetic: no retry, no error (CH-21).
+        if not title or session_id in self._deleting:
+            return
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE sessions SET generated_title = ? WHERE id = ? AND generated_title IS NULL",
+                (title, session_id),
+            )
+
+        await asyncio.to_thread(self._with_db, write)
 
     def _require_open_for_resource(self, session_id: str) -> None:
         """A resource for a session being deleted, or gone, is dropped (RS-18, CH-14)."""
@@ -1845,6 +1903,39 @@ class Chat:
 
         self._with_db(write)
 
+    def _discard_drafts(
+        self, except_id: str | None = None, only_id: str | None = None
+    ) -> bool:
+        """Remove open sessions that never got a message (CH-19). A draft never
+        ends and no profile pass runs on it. Returns whether any was removed."""
+
+        def find(conn: sqlite3.Connection) -> list[str]:
+            rows = conn.execute(
+                """
+                SELECT id FROM sessions
+                WHERE ended_at IS NULL AND first_message IS NULL
+                AND NOT EXISTS (SELECT 1 FROM turns WHERE session_id = sessions.id)
+                """
+            ).fetchall()
+            return [
+                row["id"]
+                for row in rows
+                if row["id"] != except_id and only_id in (None, row["id"])
+            ]
+
+        drafts = [id_ for id_ in self._with_db(find) if id_ not in self._busy]
+        for draft_id in drafts:
+            self._delete_rows(draft_id)
+            self.resources.delete_session_files(draft_id)
+        self._discarded.extend(drafts)
+        return bool(drafts)
+
+    def take_discarded(self) -> tuple[str, ...]:
+        """Drafts removed since the last call, so their warmed agents can close."""
+
+        taken, self._discarded = tuple(self._discarded), []
+        return taken
+
     def _end_open(self, except_id: str | None) -> tuple[str, ...]:
         def write(conn: sqlite3.Connection) -> tuple[str, ...]:
             if except_id is None:
@@ -1922,6 +2013,10 @@ class Chat:
             }
             if "name" not in session_columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN name TEXT")
+            if "first_message" not in session_columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN first_message TEXT")
+            if "generated_title" not in session_columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN generated_title TEXT")
             # Startup create, so a database from before this index still gets it.
             conn.execute(
                 """

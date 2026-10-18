@@ -33,6 +33,7 @@ from polaris.chat import (
 from polaris.login import ApiKeyPresent, assert_claude_login
 from polaris.profile import ProfilePass, ProfileUnreadable
 from polaris.profile_pass import ClaudeProfilePass
+from polaris.session_title import ClaudeTitleWriter, TitleWriter
 from polaris.quiz import AlreadyChecked, InvalidSubmission, MissingQuiz
 from polaris.resources import MAX_FILE_BYTES, MissingResource, ResourceRefused, too_big
 from polaris.sign_in import (
@@ -171,10 +172,18 @@ def _signed_out_response(status_code: int, detail: str | None = None) -> JSONRes
     return response
 
 
+async def _close_quietly(agent: ReplyAgent, session_id: str) -> None:
+    try:
+        await agent.close_session(session_id)
+    except Exception:
+        pass
+
+
 def create_app(
     data_dir: Path,
     agent: ReplyAgent | None = None,
     profile_pass: ProfilePass | None = None,
+    title_writer: TitleWriter | None = None,
 ) -> FastAPI:
     """Build the API. Refuses to start when an API key would replace the Claude login."""
 
@@ -185,6 +194,8 @@ def create_app(
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
+        if title_writer is None:
+            title_writer = ClaudeTitleWriter(data_dir / "claude-work")
         # A router sends maths and heavy graphs to Manim and the rest to
         # Lottie (AN-21). POLARIS_ANIMATION_ENGINE=manim, lottie, or data
         # forces one writer for every job.
@@ -206,6 +217,7 @@ def create_app(
         agent,
         profile_pass=profile_pass,
         animation_writer=animation_writer,
+        title_writer=title_writer,
     )
 
     @asynccontextmanager
@@ -225,6 +237,7 @@ def create_app(
     app = FastAPI(lifespan=lifespan)
     app.state.chat = chat
     app.state.api_key_stop = False
+    app.state.background = set()
 
     @app.middleware("http")
     async def stop_when_api_key_seen(request, call_next):
@@ -408,6 +421,16 @@ def create_app(
         chat.wait_for_session_ends()
         return {"facts": list(chat.read_profile().facts)}
 
+    def close_discarded() -> None:
+        """A draft left unsent is gone; close the agent it may have warmed (CH-19)."""
+
+        for session_id in chat.take_discarded():
+            task = asyncio.get_running_loop().create_task(
+                _close_quietly(chat.agent, session_id)
+            )
+            app.state.background.add(task)
+            task.add_done_callback(app.state.background.discard)
+
     @app.get("/api/sessions")
     def list_sessions() -> dict[str, list[dict[str, object]]]:
         return {"sessions": chat.list_sessions()}
@@ -416,6 +439,7 @@ def create_app(
     async def start_session() -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.start)
         chat.end_in_background(ended_ids)
+        close_discarded()
         return session
 
     @app.get("/api/sessions/{session_id}")
@@ -434,6 +458,7 @@ def create_app(
     async def open_session(session_id: str) -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.open, session_id)
         chat.end_in_background(ended_ids)
+        close_discarded()
         return session
 
     @app.post("/api/sessions/{session_id}/warm", status_code=202)
@@ -447,7 +472,12 @@ def create_app(
     async def leave_session(session_id: str) -> dict[str, object]:
         if await asyncio.to_thread(chat.leave, session_id):
             chat.end_in_background((session_id,))
-        return await asyncio.to_thread(chat.get, session_id)
+        close_discarded()
+        try:
+            return await asyncio.to_thread(chat.get, session_id)
+        except MissingSession:
+            # A draft is discarded, not ended (CH-19).
+            return {"id": session_id, "ended": False, "turns": []}
 
     @app.post("/api/sessions/{session_id}/turns")
     async def send_turn(session_id: str, body: TurnBody) -> StreamingResponse:
