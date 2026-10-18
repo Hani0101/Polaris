@@ -24,24 +24,24 @@ AN-15  Every animation has a text description that a screen reader can read (WCA
 AN-16  A later turn in the session can see what each finished animation showed, step by step.
 AN-17  The learner can ask about the step they are on. The next turn knows which animation and which step was asked about.
 AN-18  The learner can turn on narration, which reads each caption aloud with a voice on their own machine. It is off until they turn it on, and the captions stay on screen.
-AN-19  While a job runs, the learner can see which stage it is in: writing, checking, or fixing.
+AN-19  While a job runs, the learner can see which stage it is in: choosing, writing, checking, or fixing.
 AN-20  The animation fits a phone screen from 320px wide, with no horizontal scroll, and every control is at least a 44px tap target.
-AN-21  Before the writer starts, a small evaluation reads the learner's message and the brief and picks the engine: Manim for a maths problem or a heavy graph, Lottie for everything else. If the evaluation fails, a keyword check picks. Routing never fails a job.
+AN-21  Before the writer starts, the learner chooses the engine on the animation card: Manim or Lottie. The card says Manim is best for scientific topics and Lottie for other topics. Nothing is written until they choose, and a job takes only one choice.
 AN-22  A video animation made by Manim keeps its own colors in Light and in Dark, since they are fixed when it is rendered. A data animation follows the appearance mode through its color roles (AN-14).
 AN-23  A session has at most one running animation job. A second request while one runs is refused, and the agent is told to wait for the first.
-AN-24  A job that was still running or queued (AN-25) when the app closed is marked failed the next time the app starts. Its session is told the same as in AN-09, and no ready notice is sent. It is not run again.
+AN-24  A job that was still running or queued (AN-25) when the app closed is marked failed the next time the app starts. Its session is told the same as in AN-09, and no ready notice is sent. It is not run again. A job still waiting for the learner's engine choice (AN-21) keeps waiting.
 AN-25  Across all sessions, at most two jobs write and render at once. A further job is queued and starts, in the order it was asked for, when one of them finishes. While it is queued, the learner sees that it is waiting for another animation to finish. `POLARIS_ANIMATION_WORKERS` changes the limit.
 
 ## Engines
 
-On `feat/animation` a job is written by one of two writers. `api/polaris/animation_router.py` picks it (AN-21).
+On `feat/animation` a job is written by one of two writers, and the learner picks which (AN-21). `api/polaris/animation_engines.py` holds both.
 
-- **Manim** (`api/polaris/manim_writer.py`) for maths and heavy graphs: equations, calculus, geometry, trigonometry, linear algebra, proofs, plots of functions or data on axes, and graph theory with many nodes and edges. See [the Manim research](../research/0003-manim-experiment.md).
-- **Lottie** (`api/polaris/lottie_writer.py`) for everything else: how something works, processes, systems, stories, timelines, and simple diagrams and charts. See [the Lottie experiment](../experiments/lottie-animation.md).
+- **Manim** (`api/polaris/manim_writer.py`) for scientific topics: maths, physics, equations, calculus, geometry, plots of functions or data on axes, and graph theory. See [the Manim research](../research/0003-manim-experiment.md).
+- **Lottie** (`api/polaris/lottie_writer.py`) for other topics: how something works, processes, systems, stories, timelines, and simple diagrams and charts. See [the Lottie experiment](../experiments/lottie-animation.md).
 
-The evaluation is one structured-output call to a small model (`claude-haiku-5-5`, or `POLARIS_ROUTER_MODEL`) with no tools. It sees the learner's message from the turn that started the job and the teaching agent's brief, and returns `manim` or `lottie` with a reason. The choice is kept in the job's folder as `route.json`.
+A new job starts in the `choosing` stage with its brief stored on the job. The animation card shows both engines as full-width options, each with one line on what it suits. Picking one sends `POST /api/sessions/{session}/jobs/{job}/engine` with `manim` or `lottie`, and the job moves to `writing`, or `queued` when every worker is busy (AN-25). A second choice for the same job is refused, so only one writer starts. The chat's waiting notice (AN-02) also asks the learner to choose.
 
-`POLARIS_ANIMATION_ENGINE` set to `manim`, `lottie`, or `data` makes every job use that one writer. Unset, or `auto`, uses the router.
+`POLARIS_ANIMATION_ENGINE` set to `manim`, `lottie`, or `data` makes every job use that one writer and skips the choice. Unset, or `choose`, lets the learner choose.
 
 Colours (AN-14): both writers start from the design system's palette and may leave it. The Lottie writer sets a background with its `set_background` tool, and the player paints it. A Manim scene sets `self.camera.background_color`.
 
@@ -83,7 +83,7 @@ The "Ask about this step" action sends the turn with the animation id and the st
 
 ### Job stages
 
-A running job has a `stage`: `queued` while it waits for a place to run (AN-25), `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
+A running job has a `stage`: `choosing` while it waits for the learner to pick an engine (AN-21), `queued` while it waits for a place to run (AN-25), `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
 
 ### Narration
 
@@ -171,12 +171,19 @@ Scenario: a video keeps its colors in Light  [AN-22]
   Then the video plays with the same dark background
   And its captions and controls use the Light colors
 
-Scenario: maths goes to Manim, the rest to Lottie  [AN-21]
-  Given the learner asked "Show me the derivative as the slope of a tangent"
-  When the job starts
-  Then the evaluation picks Manim
-  And when the learner asks "How does the heart pump blood?", the evaluation picks Lottie
-  And if the evaluation call fails, a keyword check picks and the job still runs
+Scenario: the learner chooses the engine  [AN-21]
+  Given the agent started an animation job
+  When the learner looks at the animation card
+  Then it offers Manim, best for scientific topics, and Lottie, best for other topics
+  And nothing is written yet
+  And when they choose Lottie, the Lottie writer starts
+  And choosing again does not start a second writer
+
+Scenario: a job waiting for a choice survives a restart  [AN-24]
+  Given a job is waiting for the learner's engine choice
+  When the app closes and starts again
+  Then the job still waits for the choice
+  And no failure notice is sent
 
 Scenario: a screen reader follows the animation  [AN-15]
   Given a finished animation

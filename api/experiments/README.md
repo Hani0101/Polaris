@@ -14,7 +14,7 @@ no FFmpeg install is needed: maths uses Typst and video uses PyAV.
 
 ## Run the app with Manim
 
-On `feat/animation` the router sends maths and heavy graphs to Manim (AN-21).
+On `feat/animation` a job uses Manim when the learner chooses it (AN-21).
 `POLARIS_ANIMATION_ENGINE=manim` sends every job to Manim, and
 `POLARIS_ANIMATION_ENGINE=data` brings back the animation-data writer.
 

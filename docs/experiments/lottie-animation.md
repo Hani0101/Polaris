@@ -29,9 +29,8 @@ when the writer can see its own frames.
 
 ## Running it
 
-- On `feat/animation` the router sends every request that is not maths or a heavy graph to
-  this writer (AN-21). `POLARIS_ANIMATION_ENGINE=lottie` sends every job here, and
-  `POLARIS_ANIMATION_ENGINE=data` switches back to the old writer. `POLARIS_ANIMATION_MODEL`
+- On `feat/animation` a job uses this writer when the learner chooses Lottie (AN-21).
+  `POLARIS_ANIMATION_ENGINE=lottie` sends every job here, and `POLARIS_ANIMATION_ENGINE=data` switches back to the old writer. `POLARIS_ANIMATION_MODEL`
   picks the writer's model.
 - To run one eval brief: `api/.venv/Scripts/python.exe api/evals/run_lottie_one.py pendulum`.
   It writes `api/evals/results/lottie/<brief>/animation.json`, and the writer's scenes, previews
