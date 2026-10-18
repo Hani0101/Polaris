@@ -16,6 +16,7 @@ import {
   warmSession,
 } from './api.ts'
 import type {
+  AnimationSettings,
   Artifact,
   BoardPicture,
   Deck,
@@ -29,8 +30,10 @@ import { animationPagePath, pathAnimation } from './animationPath.ts'
 import type { AskedStep } from './animation/askedStep.ts'
 import type { AskAboutStep } from './animation/ScenePlayer.tsx'
 import { AnimationPage } from './AnimationPage.tsx'
+import { CHOOSING, askForAnimationSettings } from './chat/animationJob.ts'
 import { watchRunningAnimations } from './chat/animationNotices.ts'
 import { ChatShell } from './chat/ChatShell.tsx'
+import { ChooseAnimationDialog } from './chat/ChooseAnimationDialog.tsx'
 import type { ViewTurn } from './chat/Conversation.tsx'
 import { createDraft } from './chat/draft.ts'
 import type { PinnedTurn } from './chat/PinnedWhiteboard.tsx'
@@ -740,6 +743,7 @@ function App() {
     attached: Pointing | null = pointing,
     simplifies: string | null = null,
     step: AskedStep | null = askedStep,
+    animationSettings: AnimationSettings | null = null,
   ) {
     if (!open || sending.current) return
     if (pending?.status === 'streaming') return
@@ -802,6 +806,10 @@ function App() {
               ? { ...current, artifacts: [...current.artifacts, artifact] }
               : current,
           )
+          // AN-21, AN-26: a job the chat started asks for its engine and settings.
+          if (artifact.kind === 'animation' && artifact.stage === CHOOSING) {
+            askForAnimationSettings(artifact)
+          }
         },
         {
           signal: controller.signal,
@@ -811,6 +819,7 @@ function App() {
           animationStep: step,
           pinnedWhiteboardId: sentPinned,
           web: webMode,
+          animationSettings,
         },
       )
       if (controller.signal.aborted) return
@@ -921,6 +930,9 @@ function App() {
     onDeckChanged,
     // FC-01: the dialog's request is a visible learner turn, about nothing pinned or pointed at.
     onAskForDeck: (message: string) => void sendMessage(message, null, null, null),
+    // AN-26: the Create animation dialog's request is a visible learner turn with its settings.
+    onAskForAnimation: (message: string, settings: AnimationSettings) =>
+      void sendMessage(message, null, null, null, settings),
     onNewWhiteboard: () => void newBoard(),
     onClosePinned: unpinBoard,
     onPicture: (next: BoardPicture) => {
@@ -1050,6 +1062,7 @@ function App() {
           pinnedTurn={pinnedTurn}
         />
       </div>
+      <ChooseAnimationDialog />
     </>
   )
 }

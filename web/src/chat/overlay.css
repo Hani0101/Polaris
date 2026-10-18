@@ -68,6 +68,10 @@ button.destructive:disabled {
   gap: var(--space-stack-default);
   width: 100%;
   max-width: var(--layout-max-width-form);
+  /* DS-GAP: Modal has no rule for content taller than the screen; it scrolls
+     inside the page margin. */
+  max-height: 100%;
+  overflow-y: auto;
   padding: var(--space-card-padding);
   background: var(--color-surface-raised);
   border: var(--border-width-default) solid var(--color-border-default);

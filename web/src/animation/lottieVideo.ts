@@ -14,6 +14,10 @@ export type LottieVideo = {
   description: string
   background: string
   scenes: LottieScene[]
+  /** lottie-web's drawing quality, chosen by the learner (AN-26). Older videos have none. */
+  quality?: 'low' | 'medium' | 'high'
+  /** The frame rate every scene uses, chosen by the learner (AN-26). */
+  fps?: number | null
 }
 
 export function isLottieVideo(value: unknown): value is LottieVideo {

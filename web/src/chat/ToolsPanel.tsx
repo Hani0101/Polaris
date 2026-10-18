@@ -1,7 +1,14 @@
 import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Clapperboard, Layers, ListChecks, Presentation, SquareStack } from 'lucide-react'
-import type { AnimationArtifact, Artifact, Deck, Quiz, WhiteboardArtifact } from '../api.ts'
+import type {
+  AnimationArtifact,
+  AnimationSettings,
+  Artifact,
+  Deck,
+  Quiz,
+  WhiteboardArtifact,
+} from '../api.ts'
 import { AnimationPlayer } from '../AnimationPlayer.tsx'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import { DeckCard } from '../DeckCard.tsx'
@@ -11,8 +18,9 @@ import type { PointedPart } from '../whiteboard/pointing.ts'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
-import { CHOOSING, stageText, useAnimationJob } from './animationJob.ts'
-import { EnginePicker } from './EnginePicker.tsx'
+import { animationRequest, settingsText } from '../animation/settings.ts'
+import { CHOOSING, askForAnimationSettings, stageText, useAnimationJob } from './animationJob.ts'
+import { AnimationSettingsDialog } from './AnimationSettingsDialog.tsx'
 import { ResourcesTab } from './ResourcesTab.tsx'
 import { useResources } from './resources.tsx'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
@@ -54,6 +62,8 @@ type ToolsPanelProps = {
   onDeckChanged?: (deck: Deck) => void
   /** Sends the learner turn the Create flashcards dialog wrote (FC-01). */
   onCreateFlashcards?: (message: string) => void
+  /** Sends the learner turn the Create animation dialog wrote, with its settings (AN-26). */
+  onCreateAnimation?: (message: string, settings: AnimationSettings) => void
   /** A reply is running, so a new turn cannot be sent yet. */
   sending?: boolean
 }
@@ -80,6 +90,7 @@ export const ToolsPanel = memo(function ToolsPanel({
   onOpenDeck = ignore,
   onDeckChanged = ignore,
   onCreateFlashcards,
+  onCreateAnimation,
   sending = false,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
@@ -133,6 +144,8 @@ export const ToolsPanel = memo(function ToolsPanel({
             animation={latest(artifacts, isAnimation)}
             onOpenAnimation={onOpenAnimation}
             onAskAboutStep={onAskAboutStep}
+            onCreateAnimation={onCreateAnimation}
+            sending={sending}
           />
         ) : null}
         {tab === 'resources' ? <ResourcesTab /> : null}
@@ -338,40 +351,75 @@ function AnimationTab({
   animation,
   onOpenAnimation,
   onAskAboutStep,
+  onCreateAnimation,
+  sending,
 }: {
   animation: AnimationArtifact | null
   onOpenAnimation: (sessionId: string, jobId: string) => void
   onAskAboutStep?: (ask: AskAboutStep) => void
+  onCreateAnimation?: (message: string, settings: AnimationSettings) => void
+  sending: boolean
 }) {
+  const [creating, setCreating] = useState(false)
+  // AN-26: the topic, engine, quality, and frame rate in one dialog. The turn it
+  // sends carries the settings, so the job starts without asking again.
+  const create = onCreateAnimation ? (
+    <>
+      <div className="tools-actions">
+        <button type="button" onClick={() => setCreating(true)} disabled={sending}>
+          Create animation
+        </button>
+      </div>
+      <AnimationSettingsDialog
+        open={creating}
+        mode="create"
+        onCancel={() => setCreating(false)}
+        onSubmit={(settings, topic) => {
+          setCreating(false)
+          onCreateAnimation(animationRequest(topic), settings)
+        }}
+      />
+    </>
+  ) : null
+  let body
   if (!animation) {
-    return (
+    body = (
       <ToolsEmpty
         icon={<Clapperboard size={24} strokeWidth={2} aria-hidden="true" />}
         title="No animation yet"
-        body="Ask Polaris to animate an idea, and the animation shows here."
+        body="Create an animation, or ask Polaris to animate an idea, and it shows here."
       />
     )
-  }
-  if (animation.status !== 'ready') {
-    return <AnimationCard animation={animation} onOpen={onOpenAnimation} />
+  } else if (animation.status !== 'ready') {
+    body = <AnimationCard animation={animation} onOpen={onOpenAnimation} />
+  } else {
+    body = (
+      <>
+        <div className="tools-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => onOpenAnimation(animation.session_id, animation.id)}
+          >
+            Open animation
+          </button>
+        </div>
+        {animation.settings ? (
+          <p className="tools-card-body">{settingsText(animation.settings)}</p>
+        ) : null}
+        <AnimationPlayer
+          key={animation.id}
+          sessionId={animation.session_id}
+          jobId={animation.id}
+          onAskAboutStep={onAskAboutStep}
+        />
+      </>
+    )
   }
   return (
     <div className="tools-animation">
-      <div className="tools-actions">
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => onOpenAnimation(animation.session_id, animation.id)}
-        >
-          Open animation
-        </button>
-      </div>
-      <AnimationPlayer
-        key={animation.id}
-        sessionId={animation.session_id}
-        jobId={animation.id}
-        onAskAboutStep={onAskAboutStep}
-      />
+      {create}
+      {body}
     </div>
   )
 }
@@ -453,15 +501,23 @@ function AnimationCard({
   animation: AnimationArtifact
   onOpen: (sessionId: string, jobId: string) => void
 }) {
-  const { status, stage } = useAnimationJob(animation)
+  const { status, stage, settings } = useAnimationJob(animation)
   const choosing = status === 'running' && stage === CHOOSING
+  // AN-26: the chosen settings show while the job runs and after.
+  const settingsLine = settings ? (
+    <span className="tools-card-body">{settingsText(settings)}</span>
+  ) : null
   if (status === 'ready') {
     return (
-      <ClickableCard
-        title="Animation"
-        body="Open the finished animation."
-        onOpen={() => onOpen(animation.session_id, animation.id)}
-      />
+      <button
+        type="button"
+        className="tools-card tools-card--clickable"
+        onClick={() => onOpen(animation.session_id, animation.id)}
+      >
+        <span className="tools-card-title">Animation</span>
+        <span className="tools-card-body">Open the finished animation.</span>
+        {settingsLine}
+      </button>
     )
   }
   return (
@@ -471,7 +527,23 @@ function AnimationCard({
         {choosing ? <Badge variant="accent">Waiting for you</Badge> : null}
         {status === 'running' && !choosing ? <Badge variant="neutral">In progress</Badge> : null}
       </span>
-      {choosing ? <EnginePicker job={animation} /> : null}
+      {settingsLine}
+      {choosing ? (
+        <>
+          <span className="tools-card-body">
+            Choose the engine, quality, and frame rate to start it.
+          </span>
+          <div>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => askForAnimationSettings({ ...animation, status, stage })}
+            >
+              Choose settings
+            </button>
+          </div>
+        </>
+      ) : null}
       {status === 'running' && !choosing && stageText(stage) ? (
         <span className="tools-card-body" role="status">
           {stageText(stage)}

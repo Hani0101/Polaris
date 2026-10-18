@@ -5,14 +5,22 @@ import { isLottieVideo } from './lottieVideo.ts'
 import type { LottieVideo } from './lottieVideo.ts'
 
 type Listener = () => void
-const loaded: Array<{ data: unknown; listeners: Record<string, Listener[]> }> = []
+const loaded: Array<{
+  data: unknown
+  listeners: Record<string, Listener[]>
+  setSubframe: ReturnType<typeof vi.fn>
+}> = []
+const setQuality = vi.fn()
 
 vi.mock('lottie-web/build/player/lottie_light', () => ({
   default: {
+    setQuality: (quality: string) => setQuality(quality),
     loadAnimation: ({ animationData }: { animationData: unknown }) => {
       const listeners: Record<string, Listener[]> = {}
-      loaded.push({ data: animationData, listeners })
+      const setSubframe = vi.fn()
+      loaded.push({ data: animationData, listeners, setSubframe })
       return {
+        setSubframe,
         totalFrames: 60,
         currentFrame: 0,
         addEventListener: (name: string, listener: Listener) => {
@@ -31,6 +39,7 @@ vi.mock('lottie-web/build/player/lottie_light', () => ({
 afterEach(() => {
   cleanup()
   loaded.length = 0
+  setQuality.mockClear()
 })
 
 const scene = (nm: string) => ({ nm, v: '5.12.0', fr: 30, ip: 0, op: 60, w: 800, h: 600, layers: [] })
@@ -79,4 +88,20 @@ test('the learner can jump to a step and ask about it', async () => {
     stepNumber: 2,
     caption: 'It swings along its arc.',
   })
+})
+
+test('the player draws at the chosen quality and keeps the chosen frame rate (AN-26)', async () => {
+  render(<LottiePlayer video={{ ...video, quality: 'low', fps: 24 }} jobId="job-1" />)
+
+  await waitFor(() => expect(loaded).toHaveLength(1))
+  expect(setQuality).toHaveBeenCalledWith('low')
+  expect(loaded[0].setSubframe).toHaveBeenCalledWith(false)
+})
+
+test('an older video without settings draws at high quality and is smoothed', async () => {
+  render(<LottiePlayer video={video} jobId="job-1" />)
+
+  await waitFor(() => expect(loaded).toHaveLength(1))
+  expect(setQuality).toHaveBeenCalledWith('high')
+  expect(loaded[0].setSubframe).not.toHaveBeenCalled()
 })

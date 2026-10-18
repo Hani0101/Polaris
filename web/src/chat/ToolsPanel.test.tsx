@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
@@ -341,4 +341,48 @@ test('the bottom sheet takes focus, switches stops from the handle, and gives fo
 
   fireEvent.click(screen.getByRole('button', { name: 'Close tools' }))
   expect(document.activeElement).toBe(opener)
+})
+
+test('Create animation sends a turn with the chosen topic and settings (AN-26)', async () => {
+  const onCreateAnimation = vi.fn()
+  render(
+    <ToolsPanel
+      artifacts={[]}
+      headingId="tools-heading"
+      onClose={noop}
+      onOpenQuiz={noop}
+      onOpenWhiteboard={noop}
+      onOpenAnimation={noop}
+      onQuizChecked={noop}
+      onCreateAnimation={onCreateAnimation}
+    />,
+  )
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Create animation' }))
+
+  fireEvent.change(screen.getByLabelText('What should the animation show?'), {
+    target: { value: 'The derivative as the slope of a tangent' },
+  })
+  fireEvent.click(screen.getByRole('radio', { name: /Manim/ }))
+  fireEvent.click(screen.getByRole('radio', { name: /Low \(480p\)/ }))
+  await act(async () => {
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Create animation' }))
+  })
+
+  expect(onCreateAnimation).toHaveBeenCalledWith(
+    'Make an animation: The derivative as the slope of a tangent',
+    { engine: 'manim', quality: '480p', fps: 60 },
+  )
+})
+
+test('a ready animation shows its settings in the animation tab (AN-26)', () => {
+  const ready: AnimationArtifact = {
+    ...animation,
+    status: 'ready',
+    settings: { engine: 'lottie', quality: 'medium', fps: 24 },
+  }
+  renderPanel([ready])
+  fireEvent.click(screen.getByRole('tab', { name: 'Animation' }))
+
+  expect(screen.getByText('Lottie · Medium · 24 fps')).toBeTruthy()
 })

@@ -1,6 +1,14 @@
 import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
-import type { Artifact, BoardPicture, Deck, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
+import type {
+  AnimationSettings,
+  Artifact,
+  BoardPicture,
+  Deck,
+  Quiz,
+  SessionSummary,
+  WhiteboardArtifact,
+} from '../api.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
 import type { SignInState } from '../auth.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
@@ -95,6 +103,8 @@ type ChatShellProps = {
   onDeckChanged?: (deck: Deck) => void
   /** Sends the learner turn that asks for a deck, from the Create flashcards dialog (FC-01). */
   onAskForDeck?: (message: string) => void
+  /** Sends the learner turn from the Create animation dialog, with its settings (AN-26). */
+  onAskForAnimation?: (message: string, settings: AnimationSettings) => void
   /** Every whiteboard in the session, for the Whiteboard tab (WB-18). */
   whiteboards?: WhiteboardArtifact[]
   onNewWhiteboard?: () => void
@@ -163,6 +173,7 @@ export function ChatShell({
   onOpenDeck = noTools,
   onDeckChanged = noTools,
   onAskForDeck,
+  onAskForAnimation,
   whiteboards = noWhiteboards,
   onNewWhiteboard,
   creatingWhiteboard = false,
@@ -203,6 +214,10 @@ export function ChatShell({
     setSheetOpen(false)
     onAskForDeck?.(message)
   })
+  const askForAnimation = useSteady((message: string, settings: AnimationSettings) => {
+    setSheetOpen(false)
+    onAskForAnimation?.(message, settings)
+  })
   const closeSheet = useCallback(() => setSheetOpen(false), [])
   const openSheet = useCallback(() => setSheetOpen(true), [])
   const askPinned = useSteady((parts: PointedPart[]) => {
@@ -224,6 +239,7 @@ export function ChatShell({
     onOpenDeck,
     onDeckChanged,
     onCreateFlashcards: onAskForDeck ? askForDeck : undefined,
+    onCreateAnimation: onAskForAnimation ? askForAnimation : undefined,
     sending,
   }
 

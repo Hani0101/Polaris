@@ -87,6 +87,8 @@ export function LottiePlayer({ video, jobId, onAskAboutStep }: LottiePlayerProps
     Promise.all([loadLottie(), loadFonts()])
       .then(([lottie]) => {
         if (cancelled) return
+        // AN-26: the learner's quality. lottie-web keeps it for every player on the page.
+        lottie.setQuality(video.quality ?? 'high')
         item = lottie.loadAnimation({
           container: box,
           renderer: 'svg',
@@ -96,6 +98,8 @@ export function LottiePlayer({ video, jobId, onAskAboutStep }: LottiePlayerProps
           rendererSettings: { preserveAspectRatio: 'xMidYMid meet' },
         })
         anim.current = item
+        // AN-26: a chosen frame rate is kept, not smoothed between frames.
+        if (video.fps) item.setSubframe(false)
         const frames = Math.max(1, item.totalFrames - 1)
         item.addEventListener('enterFrame', () => {
           if (item) setProgress(Math.min(1, item.currentFrame / frames))
@@ -131,7 +135,7 @@ export function LottiePlayer({ video, jobId, onAskAboutStep }: LottiePlayerProps
       if (anim.current === item) anim.current = null
     }
     // `playing` is read through a ref so pausing does not rebuild the scene.
-  }, [scene, index, total, reduced, starts])
+  }, [scene, index, total, reduced, starts, video.quality, video.fps])
 
   // Narration reads the caption each time a scene starts (AN-18).
   useEffect(() => {

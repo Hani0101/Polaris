@@ -2,15 +2,15 @@
 
 import { useEffect, useState } from 'react'
 import { getAnimationJob } from '../api.ts'
-import type { AnimationArtifact, AnimationStage } from '../api.ts'
+import type { AnimationArtifact, AnimationSettings, AnimationStage } from '../api.ts'
 
 export const RUNNING = 'running'
-// The job waits for the learner to pick Manim or Lottie (AN-21).
+// The job waits for the learner to pick the engine and its settings (AN-21, AN-26).
 export const CHOOSING = 'choosing'
 const POLL_MS = 10_000
 
 const STAGE_TEXT: Record<AnimationStage, string> = {
-  choosing: 'Waiting for you to choose Manim or Lottie',
+  choosing: 'Waiting for you to choose the engine and quality',
   queued: 'Waiting for another animation to finish',
   writing: 'Writing the animation',
   checking: 'Checking the animation',
@@ -98,6 +98,25 @@ export function shareAnimationJob(job: AnimationArtifact): void {
   for (const listener of [...poll.listeners]) listener(job)
 }
 
+type SettingsAsker = (job: AnimationArtifact) => void
+let settingsAsker: SettingsAsker | null = null
+
+/**
+ * Opens the dialog that asks for a waiting job's engine, quality, and frame
+ * rate (AN-21, AN-26). The app mounts the one dialog; cards and the chat call this.
+ */
+export function askForAnimationSettings(job: AnimationArtifact): void {
+  settingsAsker?.(job)
+}
+
+/** The app's settings dialog registers here. Returns the unregister. */
+export function setAnimationSettingsAsker(asker: SettingsAsker): () => void {
+  settingsAsker = asker
+  return () => {
+    if (settingsAsker === asker) settingsAsker = null
+  }
+}
+
 /** Test seam: replace the fetch and timers behind every poll. */
 export function _setJobPolling(next: Partial<Polling> | null): void {
   polling = next ? { ...defaultPolling(), ...next } : defaultPolling()
@@ -108,12 +127,17 @@ export function _stopJobPolling(): void {
   for (const [key, poll] of [...polls]) stopPoll(key, poll)
 }
 
-type JobView = { status: string; stage: AnimationStage | null }
+type JobView = {
+  status: string
+  stage: AnimationStage | null
+  /** The engine, quality, and frame rate, once chosen (AN-26). */
+  settings: AnimationSettings | null
+}
 
 /**
- * The job's latest status and stage. While it runs, it hears the job's shared
- * poll, which asks the backend again every few seconds; a failed check
- * changes nothing.
+ * The job's latest status, stage, and settings. While it runs, it hears the
+ * job's shared poll, which asks the backend again every few seconds; a failed
+ * check changes nothing.
  */
 export function useAnimationJob(
   job: AnimationArtifact,
@@ -122,14 +146,19 @@ export function useAnimationJob(
   const [polled, setPolled] = useState<JobView | null>(null)
   const status = job.status === RUNNING ? (polled?.status ?? job.status) : job.status
   const stage = status === RUNNING ? (polled?.stage ?? job.stage ?? null) : null
+  const settings = polled?.settings ?? job.settings ?? null
 
   useEffect(() => {
     if (status !== RUNNING || !job.session_id) return
     return subscribeAnimationJob(job.session_id, job.id, (next) => {
-      setPolled({ status: next.status, stage: next.stage ?? null })
+      setPolled({
+        status: next.status,
+        stage: next.stage ?? null,
+        settings: next.settings ?? null,
+      })
       if (next.status !== RUNNING) onStatus?.(job.id, next.status)
     })
   }, [status, job.id, job.session_id, onStatus])
 
-  return { status, stage }
+  return { status, stage, settings }
 }

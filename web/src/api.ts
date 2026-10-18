@@ -205,12 +205,21 @@ export type AnimationStage = 'choosing' | 'queued' | 'writing' | 'checking' | 'f
 /** The two animation engines the learner chooses between (AN-21). */
 export type AnimationEngine = 'manim' | 'lottie'
 
+/** The engine, quality, and frame rate of one job (AN-26). See animation/settings.ts. */
+export type AnimationSettings = {
+  engine: AnimationEngine
+  quality: string
+  fps: number
+}
+
 export type AnimationArtifact = {
   id: string
   kind: 'animation'
   session_id: string
   status: string
   stage?: AnimationStage | null
+  /** Set once the engine is chosen, while the job runs and after (AN-26). */
+  settings?: AnimationSettings | null
 }
 
 /** Where a flashcard comes from (FC-05). A removed resource keeps the card (FC-18). */
@@ -276,6 +285,8 @@ export type TurnBody = {
   pinned_whiteboard_id?: string
   /** Web mode: the agent may search and read the web for this reply only (CH-23). */
   web?: boolean
+  /** From the Create animation dialog: the job this turn starts uses these (AN-26). */
+  animation_settings?: AnimationSettings
 }
 
 /** A PNG of one whiteboard, sent with the next turn only. data is base64. */
@@ -293,6 +304,7 @@ export function turnBody(
   animationStep?: { jobId: string; stepId: string } | null,
   pinnedWhiteboardId?: string | null,
   web?: boolean,
+  animationSettings?: AnimationSettings | null,
 ): TurnBody {
   const body: TurnBody = { message }
   if (pointing && pointing.parts.length > 0) {
@@ -308,6 +320,7 @@ export function turnBody(
   }
   if (pinnedWhiteboardId) body.pinned_whiteboard_id = pinnedWhiteboardId
   if (web) body.web = true
+  if (animationSettings) body.animation_settings = animationSettings
   return body
 }
 
@@ -416,16 +429,16 @@ export function getAnimationJob(
   return request<AnimationArtifact>(`/api/sessions/${sessionId}/jobs/${jobId}`, { signal })
 }
 
-/** Start a waiting animation job with the engine the learner chose (AN-21). */
-export function chooseAnimationEngine(
+/** Start a waiting animation job with the settings the learner chose (AN-21, AN-26). */
+export function chooseAnimationSettings(
   sessionId: string,
   jobId: string,
-  engine: AnimationEngine,
+  settings: AnimationSettings,
 ): Promise<AnimationArtifact> {
   return request<AnimationArtifact>(`/api/sessions/${sessionId}/jobs/${jobId}/engine`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ engine }),
+    body: JSON.stringify(settings),
   })
 }
 
@@ -541,6 +554,7 @@ export async function sendTurn(
     animationStep?: { jobId: string; stepId: string } | null
     pinnedWhiteboardId?: string | null
     web?: boolean
+    animationSettings?: AnimationSettings | null
   },
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/turns`, {
@@ -559,6 +573,7 @@ export async function sendTurn(
         options?.animationStep,
         options?.pinnedWhiteboardId,
         options?.web,
+        options?.animationSettings,
       ),
     ),
     signal: options?.signal,
