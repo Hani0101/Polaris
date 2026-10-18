@@ -282,6 +282,9 @@ function App() {
   const titleTimers = useRef<number[]>([])
   // The session whose agent was started in this visit.
   const warmedFor = useRef<string | null>(null)
+  // The draft made when Polaris opened, until a start uses it or an open discards
+  // it (CH-30). Null inside the promise if it could not be made.
+  const spare = useRef<Promise<Session | null> | null>(null)
 
   const sendablePicture = picture && picture.whiteboard_id === pinnedId ? picture : null
 
@@ -459,6 +462,21 @@ function App() {
     return () => controller.abort()
   }, [])
 
+  // Make a draft and start its agent while the learner looks at the list, so a new
+  // session opens on an agent already running (CH-30). A failure only loses the
+  // head start: starting a session then makes one as before.
+  useEffect(() => {
+    if (import.meta.env.DEV && window.location.pathname.startsWith('/dev/')) return
+    if (spare.current) return
+    spare.current = startSession().then(
+      (session) => {
+        warmSession(session.id).catch(() => {})
+        return session
+      },
+      () => null,
+    )
+  }, [])
+
   useEffect(() => {
     const timers = titleTimers.current
     return () => timers.forEach((timer) => window.clearTimeout(timer))
@@ -512,7 +530,11 @@ function App() {
     setError(null)
     resetConversation()
     try {
-      const session = await startSession()
+      const made = spare.current ? await spare.current : null
+      spare.current = null
+      // The draft's agent was started when it was made.
+      if (made) warmedFor.current = made.id
+      const session = made ?? (await startSession())
       setOpen(session)
       void loadBoards(session.id)
       await refresh()
@@ -542,17 +564,24 @@ function App() {
     setError(null)
     resetConversation()
     try {
+      // The draft is made first, so its start cannot end the session opened here.
+      await spare.current
       const session = await openSession(sessionId)
+      // Opening discarded the draft and closed its agent (CH-19).
+      spare.current = null
       setOpen(session)
       void loadBoards(session.id)
       await refresh()
       closeDrawerIfPhone()
     } catch (caught) {
+      // A missing session is refused before any draft is discarded, so the new
+      // session below still uses it.
       if (caught instanceof ApiError && caught.status === 404) {
         showToast('That session no longer exists.')
         await onStart()
         return
       }
+      spare.current = null
       setError(
         errorText(
           caught,

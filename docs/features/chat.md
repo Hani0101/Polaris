@@ -21,7 +21,7 @@ CH-14  A reply or animation job still running in the session is stopped before i
 CH-15  A learner can delete only their own sessions. An anonymous session can be deleted too.
 CH-16  In a signed-in session, deleting waits for the profile pass on it to finish (PR-05). If the pass fails, the session is still deleted and the learner is told that its facts were not saved.
 CH-17  Opening a session that no longer exists tells the learner so and opens a new empty session.
-CH-18  A new session is a draft. A draft is not in the session list, has no rename control, and its top bar says "Untitled". A draft opens when the learner starts a new session, deletes the open one (CH-13), or opens a missing one (CH-17).
+CH-18  A new session is a draft. A draft is not in the session list, has no rename control, and its top bar says "Untitled". A draft opens when the learner starts a new session, deletes the open one (CH-13), or opens a missing one (CH-17). The first of these after Polaris opens uses the draft made then (CH-30).
 CH-19  Leaving a draft, including by switching to another session or starting a new one, discards it. A draft left by reloading or closing the tab is discarded the next time a session is started, opened, or left. It never ends, and no profile pass runs on it. A resource added to a draft (RS-17) is held with it and goes into the session on the first send, or is dropped with the draft.
 CH-20  The first send lists the session at once, labelled with its first message, while the reply is still being produced. If the send fails, the typed message stays in the composer. A separate cheap model then writes a generated title from the text of that first message only. It runs once per session, for anonymous sessions too, and never on later turns, on reopening, or after a failure.
 CH-21  A generated title is plain text of at most 80 characters, about six words, in the language of the message. It never delays the reply. If it fails, the label stays as it is, with no retry and no error shown. If the session was deleted first, the write is dropped (CH-14). A title that arrives after the learner has named the session is stored but does not replace the name.
@@ -33,6 +33,7 @@ CH-26  The agent reads only public web pages. Code checks the address of every p
 CH-27  Web content reaches the agent as data. A command written in a page cannot change its instructions or tools, and it never reads an address because a page told it to (RS-11).
 CH-28  While web mode is on, the composer says so in words, and the toggle reads as on or off to a screen reader. The learner can turn it off from either place.
 CH-29  A reply starts with text before the agent uses any tool, so the learner has something to read while a whiteboard, quiz, deck, or animation job is made, or a resource or web page is read. The explanation comes before a quiz, deck, or animation job is made, and those are made at the end of the reply. No text announces an artifact before it is stored. A whiteboard is still drawn before the text its steps belong to (WB-06).
+CH-30  When Polaris opens, it makes a draft at once and starts its agent, without opening it. The first new session the learner starts is that draft, so its first reply does not wait for the agent to start. Opening another session first discards it and closes its agent (CH-19). Making it ends a session left open by an earlier visit (CH-05). A later new session is made when the learner starts it.
 
 Profile rules PR-01, PR-02, and PR-03 apply before a teaching reply. While an animation job runs, AN-02 and AN-03 apply in the chat.
 
@@ -178,6 +179,17 @@ Scenario: a resource waits with the draft  [CH-19]
   Given a draft with a resource added
   When the learner sends the first message
   Then the session appears with that resource
+
+Scenario: a new session uses the draft made at open  [CH-30]
+  Given the learner has just opened Polaris
+  When they start a new session
+  Then the session that opens is the draft made when Polaris opened
+  And its agent is already running
+
+Scenario: opening another session discards the draft made at open  [CH-30, CH-19]
+  Given the learner has just opened Polaris
+  When they open an earlier session
+  Then the draft made at open is gone, its agent is closed, and the list is unchanged
 
 Scenario: the first send adds the session to the list  [CH-20]
   Given an unsent draft
