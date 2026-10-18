@@ -2,7 +2,8 @@
 
 Started by ``polaris.manim_render`` as ``python -I manim_child.py
 request.json``. It imports nothing from Polaris. The request names the
-scene file, the output folder, and the quality.
+scene file, the output folder, and the quality, and may give the pixel
+size and frame rate.
 
 While the scene plays, every animation is followed by a layout check:
 something outside the frame, two pieces of text overlapping, or text too
@@ -159,6 +160,9 @@ def _run(request: dict, out_dir: Path, report: dict) -> None:
     import polaris_manim
 
     width, height, fps = QUALITIES[request["quality"]]
+    # The learner's settings may replace the final size and frame rate.
+    if "fps" in request:
+        width, height, fps = int(request["width"]), int(request["height"]), int(request["fps"])
     preview = request["quality"] == "preview"
     config.pixel_width = width
     config.pixel_height = height

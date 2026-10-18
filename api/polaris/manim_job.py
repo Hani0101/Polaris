@@ -64,8 +64,13 @@ def produce_manim(
     write_draft: DraftWrite,
     on_stage: StageCallback | None = None,
     renderer: Renderer = render,
+    output: tuple[int, int, int] | None = None,
 ) -> AnimationProduceResult:
-    """Write, render, and apply at most two fixes."""
+    """Write, render, and apply at most two fixes.
+
+    ``output`` is the final render's pixel width, height, and frames per
+    second, from the learner's settings (AN-26). None keeps the default.
+    """
 
     root = Path(work_dir)
 
@@ -85,7 +90,7 @@ def produce_manim(
             errors = [f"The writer failed: {error}"]
             continue
         stage(CHECKING)
-        result = renderer(draft.code, root / "render", quality=FINAL)
+        result = renderer(draft.code, root / "render", quality=FINAL, output=output)
         if result.ok and result.video is not None:
             store_render(root, job_id, draft, result)
             return AnimationProduceResult(status=READY, runs=runs)

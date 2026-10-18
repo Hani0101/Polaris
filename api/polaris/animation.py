@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from polaris.animation_engines import AnimationSettings
 from polaris.animation_format import Animation, check_animation
 from polaris.lottie_video import LottieVideo, check_lottie_video, is_lottie_video
 
@@ -50,9 +51,9 @@ WAITING_NOTICE = (
     "The operating system will notify you when it is ready."
 )
 
-# AN-02 and AN-21: the job waits on its card until the learner picks an engine.
+# AN-02, AN-21, AN-26: the job waits until the learner picks its engine and settings.
 CHOOSING_NOTICE = (
-    "Choose Manim or Lottie on the animation card to start it. " + WAITING_NOTICE
+    "Choose the engine, quality, and frame rate to start this animation. " + WAITING_NOTICE
 )
 
 FAILURE_NOTICE = (
@@ -150,9 +151,18 @@ class AnimationProduceResult:
 
 
 def job_payload(
-    job_id: str, session_id: str, *, status: str, stage: str | None = None
+    job_id: str,
+    session_id: str,
+    *,
+    status: str,
+    stage: str | None = None,
+    settings: AnimationSettings | None = None,
 ) -> dict[str, object]:
-    """Learner-visible job. A running job also says its stage (AN-19)."""
+    """Learner-visible job. A running job also says its stage (AN-19).
+
+    Once the engine is chosen, the job also carries its engine, quality,
+    and frame rate, while it runs and after (AN-26).
+    """
 
     payload: dict[str, object] = {
         "id": job_id,
@@ -162,6 +172,8 @@ def job_payload(
     }
     if status == RUNNING and stage:
         payload["stage"] = stage
+    if settings is not None:
+        payload["settings"] = settings.as_payload()
     return payload
 
 

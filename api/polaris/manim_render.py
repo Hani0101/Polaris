@@ -7,7 +7,9 @@ AN-04 and decision 0006 on purpose, to find out what Manim can do.
 
 Two qualities: ``preview`` (640x480, 15 fps) for the writer's own checks
 and the fix loop, and ``final`` (1440x1080, 60 fps) for what the learner
-watches. The frame is 4:3, like the Polaris animation canvas.
+watches. A final render may take another size and frame rate from the
+learner's settings (``output``, AN-26). The frame is 4:3, like the Polaris
+animation canvas.
 
 The child runs with ``python -I``, a stripped environment, a time limit,
 and an audit hook. That is not a sandbox; see the child's docstring.
@@ -108,8 +110,18 @@ def check_code(code: str) -> list[str]:
     return errors
 
 
-def render(code: str, out_dir: Path, *, quality: str = PREVIEW) -> RenderResult:
-    """Check and render ``code`` into ``out_dir``. Never raises for bad code."""
+def render(
+    code: str,
+    out_dir: Path,
+    *,
+    quality: str = PREVIEW,
+    output: tuple[int, int, int] | None = None,
+) -> RenderResult:
+    """Check and render ``code`` into ``out_dir``. Never raises for bad code.
+
+    ``output`` (pixel width, height, frames per second) replaces the
+    quality's own size and frame rate.
+    """
 
     errors = check_code(code)
     if errors:
@@ -121,12 +133,14 @@ def render(code: str, out_dir: Path, *, quality: str = PREVIEW) -> RenderResult:
     scene_path = out_dir / "scene.py"
     scene_path.write_text(code, encoding="utf-8")
     request_path = out_dir / "request.json"
-    request_path.write_text(
-        json.dumps(
-            {"scene_path": str(scene_path), "out_dir": str(out_dir), "quality": quality}
-        ),
-        encoding="utf-8",
-    )
+    request: dict[str, object] = {
+        "scene_path": str(scene_path),
+        "out_dir": str(out_dir),
+        "quality": quality,
+    }
+    if output is not None:
+        request["width"], request["height"], request["fps"] = output
+    request_path.write_text(json.dumps(request), encoding="utf-8")
     started = time.monotonic()
     limit = TIME_LIMITS[quality]
     try:

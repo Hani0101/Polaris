@@ -26,10 +26,11 @@ AN-17  The learner can ask about the step they are on. The next turn knows which
 AN-18  The learner can turn on narration, which reads each caption aloud with a voice on their own machine. It is off until they turn it on, and the captions stay on screen.
 AN-19  While a job runs, the learner can see which stage it is in: choosing, writing, checking, or fixing.
 AN-20  The animation fits a phone screen from 320px wide, with no horizontal scroll, and every control is at least a 44px tap target.
-AN-21  Before the writer starts, the learner chooses the engine on the animation card: Manim or Lottie. The card says Manim is best for scientific topics and Lottie for other topics. Nothing is written until they choose, and a job takes only one choice.
+AN-21  Before the writer starts, the learner chooses the engine: Manim or Lottie. The choice says Manim is best for scientific topics and Lottie for other topics. When the chat starts a job, a dialog asks for the engine and its settings (AN-26), and the job's card can open that dialog again. Nothing is written until they choose, and a job takes only one choice.
 AN-22  A video animation made by Manim keeps its own colors in Light and in Dark, since they are fixed when it is rendered. A data animation follows the appearance mode through its color roles (AN-14).
 AN-23  A session has at most one running animation job. A second request while one runs is refused, and the agent is told to wait for the first.
 AN-24  A job that was still running or queued (AN-25) when the app closed is marked failed the next time the app starts. Its session is told the same as in AN-09, and no ready notice is sent. It is not run again. A job still waiting for the learner's engine choice (AN-21) keeps waiting.
+AN-26  The learner chooses the animation's quality and frame rate with the engine, from the values that engine offers. Manim offers 480p, 720p, and 1080p at 15, 24, 30, or 60 fps. Lottie offers low, medium, and high quality at 24, 30, or 60 fps. The dialog offers only those values, and the backend refuses any other. The Tools panel's Create animation button opens the same dialog with a field for what the animation shows, and its turn starts the job with those settings, so the learner is not asked again. The animation card shows the engine, quality, and frame rate while the job runs and after it is ready.
 AN-25  Across all sessions, at most two jobs write and render at once. A further job is queued and starts, in the order it was asked for, when one of them finishes. While it is queued, the learner sees that it is waiting for another animation to finish. `POLARIS_ANIMATION_WORKERS` changes the limit.
 
 ## Engines
@@ -39,9 +40,25 @@ On `feat/animation` a job is written by one of two writers, and the learner pick
 - **Manim** (`api/polaris/manim_writer.py`) for scientific topics: maths, physics, equations, calculus, geometry, plots of functions or data on axes, and graph theory. See [the Manim research](../research/0003-manim-experiment.md).
 - **Lottie** (`api/polaris/lottie_writer.py`) for other topics: how something works, processes, systems, stories, timelines, and simple diagrams and charts. See [the Lottie experiment](../experiments/lottie-animation.md).
 
-A new job starts in the `choosing` stage with its brief stored on the job. The animation card shows both engines as full-width options, each with one line on what it suits. Picking one sends `POST /api/sessions/{session}/jobs/{job}/engine` with `manim` or `lottie`, and the job moves to `writing`, or `queued` when every worker is busy (AN-25). A second choice for the same job is refused, so only one writer starts. The chat's waiting notice (AN-02) also asks the learner to choose.
+A job the chat starts begins in the `choosing` stage with its brief stored on the job, and the settings dialog opens. The dialog has three radio groups: the engine, each with one line on what it suits, then the quality and the frame rate that engine offers. Switching engine resets both to that engine's defaults. Not now leaves the job waiting, and Choose settings on its card opens the dialog again. Start animation sends `POST /api/sessions/{session}/jobs/{job}/engine` with `engine`, `quality`, and `fps`, and the job moves to `writing`, or `queued` when every worker is busy (AN-25). A second choice for the same job is refused, so only one writer starts. The chat's waiting notice (AN-02) also asks the learner to choose.
 
-`POLARIS_ANIMATION_ENGINE` set to `manim`, `lottie`, or `data` makes every job use that one writer and skips the choice. Unset, or `choose`, lets the learner choose.
+The Create animation button in the Tools panel's Animation tab opens the dialog with a field for what the animation shows. It sends the visible learner turn "Make an animation: <topic>" with the settings as `animation_settings` on the turn, in the same way the Create flashcards dialog sends its turn (FC-01). The job that turn starts takes those settings and skips the `choosing` stage.
+
+### Settings
+
+`ENGINE_OPTIONS` in `api/polaris/animation_engines.py` lists each engine's legal values and defaults, and `check_settings` refuses any other value with a 422, on both the engine route and the turn. The body is strict, so `"60"` or `true` is not taken as a frame rate. `web/src/animation/settings.ts` lists the same values with their labels.
+
+| Engine | Quality | Frame rate | Default |
+|---|---|---|---|
+| Manim | 480p (640×480), 720p (960×720), 1080p (1440×1080) | 15, 24, 30, 60 | 1080p, 60 fps |
+| Lottie | low, medium, high | 24, 30, 60 | high, 30 fps |
+
+- **Manim** renders video, so the quality is the pixel size of the final render, and the frame rate is the render's. The writer's own previews stay at 640×480 and 15 fps, so they stay quick.
+- **Lottie** is vector data that lottie-web draws in the browser, so it has no pixel size. Its quality is lottie-web's drawing quality (`setQuality`): lower draws curves with fewer points and plays better on slow devices. The frame rate is every scene's `fr`. The writer is told it, the check refuses a scene with another `fr`, and the player turns off lottie-web's smoothing between frames (`setSubframe(false)`) so that rate is what plays. The stored video keeps `quality` and `fps`. An older video without them plays at high quality, smoothed.
+
+The job keeps `engine`, `quality`, and `fps` in `animation_jobs`, and a job's payload carries them as `settings` once chosen.
+
+`POLARIS_ANIMATION_ENGINE` set to `manim`, `lottie`, or `data` makes every job use that one writer at its defaults and skips the choice, including settings sent by the Create animation dialog. Unset, or `choose`, lets the learner choose.
 
 Colours (AN-14): both writers start from the design system's palette and may leave it. The Lottie writer sets a background with its `set_background` tool, and the player paints it. A Manim scene sets `self.camera.background_color`.
 
@@ -83,7 +100,7 @@ The "Ask about this step" action sends the turn with the animation id and the st
 
 ### Job stages
 
-A running job has a `stage`: `choosing` while it waits for the learner to pick an engine (AN-21), `queued` while it waits for a place to run (AN-25), `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
+A running job has a `stage`: `choosing` while it waits for the learner to pick an engine and its settings (AN-21, AN-26), `queued` while it waits for a place to run (AN-25), `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
 
 ### Narration
 
@@ -172,12 +189,30 @@ Scenario: a video keeps its colors in Light  [AN-22]
   And its captions and controls use the Light colors
 
 Scenario: the learner chooses the engine  [AN-21]
-  Given the agent started an animation job
-  When the learner looks at the animation card
-  Then it offers Manim, best for scientific topics, and Lottie, best for other topics
+  Given the agent started an animation job from the chat
+  When the job appears
+  Then a dialog offers Manim, best for scientific topics, and Lottie, best for other topics
   And nothing is written yet
-  And when they choose Lottie, the Lottie writer starts
+  And when they choose Lottie and start it, the Lottie writer starts
   And choosing again does not start a second writer
+
+Scenario: only legal settings can be chosen  [AN-26]
+  Given the settings dialog is open
+  When the learner picks Manim
+  Then the quality offers 480p, 720p, and 1080p, and the frame rate 15, 24, 30, and 60 fps
+  And when they switch to Lottie, the quality offers low, medium, and high, and the frame rate 24, 30, and 60 fps
+  And a request with Manim at 120 fps, or Lottie at 1080p, is refused by the backend
+
+Scenario: an animation from the Create animation dialog  [AN-26]
+  Given the learner opens Create animation in the Tools panel
+  When they type "How the heart pumps blood", choose Lottie, low quality, 24 fps, and create it
+  Then the chat sends "Make an animation: How the heart pumps blood"
+  And the job starts with Lottie, low, 24 fps without asking again
+
+Scenario: the card shows the settings  [AN-26]
+  Given a job made with Manim at 720p and 30 fps
+  When it is running, and again when it is ready
+  Then its card shows "Manim · Medium (720p) · 30 fps"
 
 Scenario: a job waiting for a choice survives a restart  [AN-24]
   Given a job is waiting for the learner's engine choice

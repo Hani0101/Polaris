@@ -10,12 +10,18 @@ from urllib.parse import unquote
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, StrictInt, StrictStr
 
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
-from polaris.animation_engines import AnimationEngines, EngineChoiceClosed, UnknownEngine
+from polaris.animation_engines import (
+    AnimationEngines,
+    EngineChoiceClosed,
+    IllegalSettings,
+    UnknownEngine,
+    check_settings,
+)
 from polaris.lottie_writer import LottieAnimationWriter
 from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
@@ -73,6 +79,15 @@ class NameBody(BaseModel):
     name: str
 
 
+class AnimationSettingsBody(BaseModel):
+    """An engine and its quality and frame rate (AN-26). check_settings checks them."""
+
+    # Strict, so "60" or true is refused rather than turned into a number.
+    engine: StrictStr
+    quality: StrictStr
+    fps: StrictInt
+
+
 class TurnBody(BaseModel):
     message: str
     pointing: PointingBody | None = None
@@ -83,6 +98,8 @@ class TurnBody(BaseModel):
     pinned_whiteboard_id: str | None = None
     # Web mode: the agent may search and read the web for this reply only (CH-23).
     web: bool = False
+    # From the Create animation dialog: the job this turn starts uses these (AN-26).
+    animation_settings: AnimationSettingsBody | None = None
 
 
 class NoteBody(BaseModel):
@@ -102,10 +119,6 @@ class ResourceEditBody(BaseModel):
 class AnswerBody(BaseModel):
     question_id: str
     choice_id: str
-
-
-class EngineBody(BaseModel):
-    engine: str
 
 
 class RatingBody(BaseModel):
@@ -319,6 +332,10 @@ def create_app(
     async def unknown_engine(_request, exc: UnknownEngine) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(IllegalSettings)
+    async def illegal_settings(_request, exc: IllegalSettings) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
     @app.exception_handler(EngineChoiceClosed)
     async def engine_choice_closed(_request, exc: EngineChoiceClosed) -> JSONResponse:
         return JSONResponse(status_code=409, content={"detail": str(exc)})
@@ -518,6 +535,10 @@ def create_app(
     @app.post("/api/sessions/{session_id}/turns")
     async def send_turn(session_id: str, body: TurnBody) -> StreamingResponse:
         text = await asyncio.to_thread(chat.validate_turn, session_id, body.message)
+        animation_settings = None
+        if body.animation_settings is not None:
+            chosen = body.animation_settings
+            animation_settings = check_settings(chosen.engine, chosen.quality, chosen.fps)
         pointing = None
         if body.pointing is not None:
             pointing = await asyncio.to_thread(
@@ -570,6 +591,7 @@ def create_app(
                     animation_step=animation_step,
                     pinned=pinned,
                     web=body.web,
+                    animation_settings=animation_settings,
                 ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})
@@ -683,8 +705,11 @@ def create_app(
         return chat.get_animation_job(session_id, job_id)
 
     @app.post("/api/sessions/{session_id}/jobs/{job_id}/engine")
-    def choose_job_engine(session_id: str, job_id: str, body: EngineBody) -> dict[str, object]:
-        return chat.choose_animation_engine(session_id, job_id, body.engine)
+    def choose_job_engine(
+        session_id: str, job_id: str, body: AnimationSettingsBody
+    ) -> dict[str, object]:
+        settings = check_settings(body.engine, body.quality, body.fps)
+        return chat.choose_animation_engine(session_id, job_id, settings)
 
     @app.get("/api/sessions/{session_id}/jobs/{job_id}/media")
     def read_job_media(session_id: str, job_id: str) -> FileResponse:

@@ -40,7 +40,13 @@ from polaris.animation import (
     waiting_notice_chunk,
 )
 from polaris.animation import StoredAnimation as Animation
-from polaris.animation_engines import AnimationEngines, EngineChoiceClosed
+from polaris.lottie_video import is_lottie_video
+from polaris.animation_engines import (
+    AnimationEngines,
+    AnimationSettings,
+    EngineChoiceClosed,
+    load_settings,
+)
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.manim_job import (
     ManimDraftData,
@@ -302,6 +308,9 @@ class Chat:
         self._busy: set[str] = set()
         # Sessions being deleted (CH-14): a reply running in one stops and saves nothing.
         self._deleting: set[str] = set()
+        # session id -> the animation settings the Create animation dialog sent
+        # with the turn now running, so the job it starts needs no choice (AN-26).
+        self._turn_settings: dict[str, AnimationSettings] = {}
         self._pending: dict[str, list[dict[str, object]]] = {}
         self._mark_rollbacks: dict[str, list[tuple[str, str]]] = {}
         # session id -> (whiteboard id, step id) the agent added this turn. A
@@ -823,10 +832,13 @@ class Chat:
         animation_step: AnimationStep | None = None,
         pinned: Whiteboard | None = None,
         web: bool = False,
+        animation_settings: AnimationSettings | None = None,
     ) -> AsyncIterator[str | dict[str, object]]:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
         self._busy.add(session_id)
+        if animation_settings is not None:
+            self._turn_settings[session_id] = animation_settings
         parts: list[str] = []
         created: list[dict[str, object]] = []
         completed = False
@@ -906,6 +918,7 @@ class Chat:
             completed = True
         finally:
             self._busy.discard(session_id)
+            self._turn_settings.pop(session_id, None)
             if completed:
                 await asyncio.to_thread(
                     self._save_turn,
@@ -1130,8 +1143,10 @@ class Chat:
 
         The animation is written and run by a worker, outside the turn, so
         the learner can keep talking in this session or another. With both
-        engines, the job waits for the learner to choose one (AN-21). When
-        every worker is busy the job starts queued (AN-25).
+        engines, the job waits for the learner to choose the engine and its
+        settings (AN-21, AN-26), unless this turn came from the Create
+        animation dialog with them already chosen. When every worker is busy
+        the job starts queued (AN-25).
         """
 
         self._require(session_id)
@@ -1140,11 +1155,15 @@ class Chat:
             raise ValueError("An animation job needs a brief.")
         job_id = str(uuid.uuid4())
         writer = self._animation_writer
+        settings: AnimationSettings | None = None
         if isinstance(writer, AnimationEngines):
-            stage = JOB_CHOOSING
+            settings = self._turn_settings.get(session_id)
+            stage = self._start_stage() if settings is not None else JOB_CHOOSING
         else:
             stage = self._start_stage() if writer is not None else JOB_WRITING
-        payload = job_payload(job_id, session_id, status=JOB_RUNNING, stage=stage)
+        payload = job_payload(
+            job_id, session_id, status=JOB_RUNNING, stage=stage, settings=settings
+        )
 
         def write(conn: sqlite3.Connection) -> None:
             conn.execute(
@@ -1156,43 +1175,64 @@ class Chat:
             )
             conn.execute(
                 """
-                INSERT INTO animation_jobs (id, status, stage, brief)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO animation_jobs (id, status, stage, brief, engine, quality, fps)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (job_id, JOB_RUNNING, stage, brief),
+                (
+                    job_id,
+                    JOB_RUNNING,
+                    stage,
+                    brief,
+                    settings.engine if settings else None,
+                    settings.quality if settings else None,
+                    settings.fps if settings else None,
+                ),
             )
 
         self._with_db(write)
         with self._lock:
             self._pending.setdefault(session_id, []).append(payload)
-        if writer is not None and not isinstance(writer, AnimationEngines):
+        if isinstance(writer, AnimationEngines):
+            if settings is not None:
+                self._launch_animation(
+                    writer.writer_for(settings.engine), session_id, job_id, brief, settings
+                )
+        elif writer is not None:
             self._launch_animation(writer, session_id, job_id, brief)
         return payload
 
     def choose_animation_engine(
-        self, session_id: str, job_id: str, engine: str
+        self, session_id: str, job_id: str, settings: AnimationSettings
     ) -> dict[str, object]:
-        """Start a waiting job with the engine the learner chose (AN-21).
+        """Start a waiting job with the engine and settings the learner chose (AN-21, AN-26).
 
-        Raises UnknownEngine for a name other than manim or lottie, and
-        EngineChoiceClosed when the job is not waiting for a choice, so a
-        second click never starts a second writer.
+        ``settings`` comes from ``check_settings``, so it holds only values
+        the engine offers. Raises EngineChoiceClosed when the job is not
+        waiting for a choice, so a second click never starts a second writer.
         """
 
         engines = self._animation_writer
         if not isinstance(engines, AnimationEngines):
             raise EngineChoiceClosed()
-        writer = engines.writer_for(engine)
+        writer = engines.writer_for(settings.engine)
         self.get_animation_job(session_id, job_id)
         stage = self._start_stage()
 
         def write(conn: sqlite3.Connection) -> str | None:
             chosen = conn.execute(
                 """
-                UPDATE animation_jobs SET stage = ?
+                UPDATE animation_jobs SET stage = ?, engine = ?, quality = ?, fps = ?
                 WHERE id = ? AND status = ? AND stage = ?
                 """,
-                (stage, job_id, JOB_RUNNING, JOB_CHOOSING),
+                (
+                    stage,
+                    settings.engine,
+                    settings.quality,
+                    settings.fps,
+                    job_id,
+                    JOB_RUNNING,
+                    JOB_CHOOSING,
+                ),
             )
             if chosen.rowcount != 1:
                 return None
@@ -1204,8 +1244,10 @@ class Chat:
         brief = self._with_db(write)
         if not brief:
             raise EngineChoiceClosed()
-        self._launch_animation(writer, session_id, job_id, brief)
-        return job_payload(job_id, session_id, status=JOB_RUNNING, stage=stage)
+        self._launch_animation(writer, session_id, job_id, brief, settings)
+        return job_payload(
+            job_id, session_id, status=JOB_RUNNING, stage=stage, settings=settings
+        )
 
     def _start_stage(self) -> str:
         """Queued when every worker is busy (AN-25), otherwise writing."""
@@ -1218,9 +1260,12 @@ class Chat:
         session_id: str,
         job_id: str,
         brief: str,
+        settings: AnimationSettings | None = None,
     ) -> None:
         self._animation_queue.submit(
-            functools.partial(self._run_animation_job, writer, session_id, job_id, brief)
+            functools.partial(
+                self._run_animation_job, writer, session_id, job_id, brief, settings
+            )
         )
 
     def _run_animation_job(
@@ -1229,6 +1274,7 @@ class Chat:
         session_id: str,
         job_id: str,
         brief: str,
+        settings: AnimationSettings | None = None,
     ) -> None:
         """Worker: write, check, and fix one animation (AN-05, AN-09, AN-10).
 
@@ -1240,9 +1286,9 @@ class Chat:
             # A job that waited in the queue starts now (AN-25).
             self._set_animation_stage(job_id, JOB_WRITING)
             if getattr(writer, "engine", None) == "manim":
-                self._run_manim_job(writer, loop, session_id, job_id, brief)
+                self._run_manim_job(writer, loop, session_id, job_id, brief, settings)
             else:
-                self._run_data_job(writer, loop, session_id, job_id, brief)
+                self._run_data_job(writer, loop, session_id, job_id, brief, settings)
         except MissingJob:
             # The turn that started the job failed and was discarded.
             pass
@@ -1258,22 +1304,34 @@ class Chat:
         session_id: str,
         job_id: str,
         brief: str,
+        settings: AnimationSettings | None = None,
     ) -> None:
-        """Worker for animation data and Lottie: write, check, fix (AN-05, AN-19)."""
+        """Worker for animation data and Lottie: write, check, fix (AN-05, AN-19).
+
+        A Lottie job's quality and frame rate go into the stored video, where
+        the check holds every scene to the frame rate and the player reads
+        both (AN-26).
+        """
 
         last_data: dict[str, Any] | None = None
+        # The animation-data writer takes no settings; only Lottie jobs have them.
+        extra: dict[str, Any] = {"settings": settings} if settings is not None else {}
 
         def write_animation(errors: list[str] | None) -> dict[str, Any]:
             nonlocal last_data
-            last_data = loop.run_until_complete(
+            data = loop.run_until_complete(
                 writer.write(
                     brief,
                     failed_data=last_data if errors is not None else None,
                     errors=errors,
                     job_id=job_id,
+                    **extra,
                 )
             )
-            return last_data
+            if settings is not None and is_lottie_video(data):
+                data = {**data, "quality": settings.quality, "fps": settings.fps}
+            last_data = data
+            return data
 
         self.produce_animation_job(session_id, job_id, write_animation)
 
@@ -1284,8 +1342,13 @@ class Chat:
         session_id: str,
         job_id: str,
         brief: str,
+        settings: AnimationSettings | None = None,
     ) -> None:
-        """Worker for the Manim experiment: draft, render, fix (AN-05, AN-19)."""
+        """Worker for the Manim experiment: draft, render, fix (AN-05, AN-19).
+
+        The writer's previews stay small and quick; the chosen quality and
+        frame rate set the final render (AN-26).
+        """
 
         def write_draft(
             failed_code: str | None, errors: list[str] | None
@@ -1308,6 +1371,7 @@ class Chat:
             work_dir=self.animation_work_dir(job_id),
             write_draft=write_draft,
             on_stage=lambda stage: self._set_animation_stage(job_id, stage),
+            output=settings.manim_output() if settings is not None else None,
         )
         self._set_animation_status(job_id, result.status)
         if result.session_notice:
@@ -1365,7 +1429,7 @@ class Chat:
         def read(conn: sqlite3.Connection) -> sqlite3.Row | None:
             return conn.execute(
                 """
-                SELECT a.id, a.session_id, j.status, j.stage
+                SELECT a.id, a.session_id, j.status, j.stage, j.engine, j.quality, j.fps
                 FROM artifacts a
                 JOIN animation_jobs j ON j.id = a.id
                 WHERE a.id = ? AND a.session_id = ? AND a.kind = 'animation'
@@ -1377,7 +1441,11 @@ class Chat:
         if row is None:
             raise MissingJob()
         return job_payload(
-            row["id"], row["session_id"], status=row["status"], stage=row["stage"]
+            row["id"],
+            row["session_id"],
+            status=row["status"],
+            stage=row["stage"],
+            settings=load_settings(row["engine"], row["quality"], row["fps"]),
         )
 
     def get_animation_media(self, session_id: str, job_id: str) -> PlaybackFile:
@@ -1981,7 +2049,9 @@ class Chat:
                 SELECT a.turn_id, a.id, a.session_id, a.kind,
                        q.questions_json, q.score_correct, q.score_total,
                        q.submitted_json, w.drawing_json, j.status AS job_status,
-                       j.stage AS job_stage, d.cards_json, d.ratings_json
+                       j.stage AS job_stage, j.engine AS job_engine,
+                       j.quality AS job_quality, j.fps AS job_fps,
+                       d.cards_json, d.ratings_json
                 FROM artifacts a
                 LEFT JOIN quizzes q ON q.id = a.id AND a.kind = 'quiz'
                 LEFT JOIN decks d ON d.id = a.id AND a.kind = 'deck'
@@ -2024,6 +2094,9 @@ class Chat:
                             row["session_id"],
                             status=row["job_status"],
                             stage=row["job_stage"],
+                            settings=load_settings(
+                                row["job_engine"], row["job_quality"], row["job_fps"]
+                            ),
                         )
                     )
             return tuple(
@@ -2368,7 +2441,10 @@ class Chat:
                     id TEXT PRIMARY KEY REFERENCES artifacts(id),
                     status TEXT NOT NULL,
                     stage TEXT,
-                    brief TEXT
+                    brief TEXT,
+                    engine TEXT,
+                    quality TEXT,
+                    fps INTEGER
                 )
                 """
             )
@@ -2381,6 +2457,10 @@ class Chat:
             # The brief waits here while the learner chooses an engine (AN-21).
             if "brief" not in job_columns:
                 conn.execute("ALTER TABLE animation_jobs ADD COLUMN brief TEXT")
+            # The engine, quality, and frame rate the learner chose (AN-26).
+            for column, kind in (("engine", "TEXT"), ("quality", "TEXT"), ("fps", "INTEGER")):
+                if column not in job_columns:
+                    conn.execute(f"ALTER TABLE animation_jobs ADD COLUMN {column} {kind}")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS artifacts_session_id_turn_id

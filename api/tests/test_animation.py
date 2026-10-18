@@ -115,11 +115,13 @@ class FakeWriter:
         self.outputs = outputs
         self.gate = gate
         self.calls: list[tuple[str, object, list[str] | None]] = []
+        self.settings: list[object] = []
 
-    async def write(self, brief: str, *, failed_data, errors, job_id=None) -> object:
+    async def write(self, brief: str, *, failed_data, errors, job_id=None, settings=None) -> object:
         if self.gate is not None:
             await asyncio.to_thread(self.gate.wait, 10)
         self.calls.append((brief, failed_data, errors))
+        self.settings.append(settings)
         return self.outputs.pop(0)
 
 

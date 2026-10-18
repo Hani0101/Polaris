@@ -32,6 +32,7 @@ from claude_agent_sdk import (
     tool,
 )
 
+from polaris.animation_engines import AnimationSettings
 from polaris.login import reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.lottie_video import (
@@ -50,6 +51,9 @@ from polaris.lottie_video import (
     render_scenes,
     renderer_available,
 )
+
+# The starter scene's frame rate. The writer uses the learner's (AN-26).
+STARTER_FPS = 30
 
 GUIDES_DIR = Path(__file__).with_name("lottie_guides")
 GUIDE_FILES = (
@@ -263,7 +267,29 @@ def _guides() -> str:
     return "\n\n".join(parts)
 
 
-def lottie_writer_prompt() -> str:
+def starter_scene(fps: int = STARTER_FPS) -> dict[str, Any]:
+    """The starter scene retimed to ``fps``: every frame count scales with it."""
+
+    scale = fps / STARTER_FPS
+
+    def retime(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                key: round(value * scale)
+                if key in ("t", "ip", "op", "st") and isinstance(value, (int, float))
+                else retime(value)
+                for key, value in node.items()
+            }
+        if isinstance(node, list):
+            return [retime(item) for item in node]
+        return node
+
+    scene = retime(STARTER_SCENE)
+    scene["fr"] = fps
+    return scene
+
+
+def lottie_writer_prompt(fps: int = STARTER_FPS) -> str:
     return f"""\
 You are Polaris's animation director. Polaris is a tutor. You turn a teaching
 brief into a short explanatory video made of Lottie scenes, the way a great
@@ -274,8 +300,9 @@ explainer channel would: clear, beautiful, calm, and exact.
 A video is {1}-{MAX_SCENES} scenes played one after another. Each scene is one
 Lottie JSON document and one step of the explanation, with a caption the
 player shows under the picture (and can read aloud). Usually 3 to 6 scenes.
-- Canvas: w {WIDTH}, h {HEIGHT} (4:3). Use fr 30. ip 0. A scene lasts
-  {MIN_SCENE_SECONDS:g} to {MAX_SCENE_SECONDS:g} seconds (op = seconds x 30).
+- Canvas: w {WIDTH}, h {HEIGHT} (4:3). Use fr {fps}. ip 0. A scene lasts
+  {MIN_SCENE_SECONDS:g} to {MAX_SCENE_SECONDS:g} seconds (op = seconds x {fps}). Every
+  frame number (ip, op, st, keyframe t) counts frames at {fps} per second.
 - The learner may watch on a phone 320px wide, where the canvas is ~0.32x.
   Text size is at least {MIN_TEXT_SIZE} (prefer 34-44 for labels, 48-60 for
   titles). Keep labels short. Lines are at least 4 wide.
@@ -330,7 +357,7 @@ reference the fName in "f".
 - Layer order: the first layer in "layers" is drawn on top.
 
 Here is a scene that renders correctly in Polaris. Start from its structure:
-{json.dumps(STARTER_SCENE)}
+{json.dumps(starter_scene(fps))}
 
 # How you work (tools)
 
@@ -372,8 +399,10 @@ class LottieWriterFailed(RuntimeError):
 class SceneStore:
     """The writer's scenes and video plan, kept as files in one work folder."""
 
-    def __init__(self, work_dir: Path) -> None:
+    def __init__(self, work_dir: Path, *, fps: int | None = None) -> None:
         self.work_dir = work_dir
+        # The learner's frame rate; every scene's fr must match it (AN-26).
+        self.fps = fps
         self.scenes_dir = work_dir / "scenes"
         self.scenes_dir.mkdir(parents=True, exist_ok=True)
         self.previews_dir = work_dir / "previews"
@@ -427,7 +456,7 @@ class SceneStore:
             captions = self._captions()
             captions[scene_id] = caption.strip()
             self._save_captions(captions)
-        return check_scene(scene_id, lottie)
+        return check_scene(scene_id, lottie, fps=self.fps)
 
     def delete(self, scene_id: str) -> bool:
         path = self._scene_path(scene_id)
@@ -471,6 +500,7 @@ class SceneStore:
             "description": plan["description"],
             "background": self.background,
             "scenes": scenes,
+            **({"fps": self.fps} if self.fps is not None else {}),
         }
 
 
@@ -666,7 +696,7 @@ def lottie_writer_options(store: SceneStore) -> ClaudeAgentOptions:
     model = os.environ.get("POLARIS_ANIMATION_MODEL") or None
     # The prompt is too long for a Windows command line, so it goes in a file.
     prompt_file = store.work_dir / "system-prompt.md"
-    prompt_file.write_text(lottie_writer_prompt(), encoding="utf-8")
+    prompt_file.write_text(lottie_writer_prompt(store.fps or STARTER_FPS), encoding="utf-8")
     return ClaudeAgentOptions(
         system_prompt={"type": "file", "path": str(prompt_file)},
         tools=[],
@@ -733,9 +763,10 @@ class LottieAnimationWriter:
         failed_data: dict[str, Any] | None,
         errors: list[str] | None,
         job_id: str | None = None,
+        settings: AnimationSettings | None = None,
     ) -> dict[str, Any]:
         folder = job_id or f"brief-{abs(hash(brief)) % 10**10}"
-        store = SceneStore(self.work_root / folder)
+        store = SceneStore(self.work_root / folder, fps=settings.fps if settings else None)
         options = lottie_writer_options(store)
         prompt = lottie_writer_prompt_for(brief, errors=errors, existing=store.scene_ids())
         log = (store.work_dir / "transcript.log").open("a", encoding="utf-8")

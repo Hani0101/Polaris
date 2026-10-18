@@ -119,7 +119,7 @@ class _Renders:
         self.results = results
         self.calls: list[str] = []
 
-    def __call__(self, code: str, out_dir: Path, *, quality: str) -> RenderResult:
+    def __call__(self, code: str, out_dir: Path, *, quality: str, output=None) -> RenderResult:
         self.calls.append(code)
         return self.results.pop(0)
 

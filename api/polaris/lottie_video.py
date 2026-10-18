@@ -25,6 +25,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from polaris.animation_engines import ENGINE_OPTIONS, LOTTIE
+
 FORMAT = "lottie"
 
 WIDTH = 800
@@ -60,6 +62,10 @@ class LottieVideo(BaseModel):
     # The writer may pick any background; the player paints it behind every scene.
     background: str = Field(default=BACKGROUND, pattern=r"^#[0-9a-fA-F]{6}$")
     scenes: list[LottieScene] = Field(min_length=1)
+    # The learner's settings (AN-26). lottie-web draws at this quality, and
+    # every scene's fr is this frame rate. None: the writer chose the rate.
+    quality: str = ENGINE_OPTIONS[LOTTIE].default_quality
+    fps: int | None = None
 
     @property
     def steps(self) -> list[LottieScene]:
@@ -95,8 +101,11 @@ def _walk(node: Any, path: str):
             yield from _walk(value, f"{path}[{index}]")
 
 
-def check_scene(scene_id: str, lottie: object) -> list[str]:
-    """Structural checks for one Lottie document. Errors name the scene."""
+def check_scene(scene_id: str, lottie: object, *, fps: int | None = None) -> list[str]:
+    """Structural checks for one Lottie document. Errors name the scene.
+
+    With ``fps``, the scene's fr must be that frame rate (AN-26).
+    """
 
     where = f"scene '{scene_id}'"
     if not isinstance(lottie, dict):
@@ -114,6 +123,11 @@ def check_scene(scene_id: str, lottie: object) -> list[str]:
         errors.append(f"{where}: w and h must be {WIDTH} and {HEIGHT}.")
     if not isinstance(lottie["fr"], (int, float)) or not 12 <= lottie["fr"] <= 60:
         errors.append(f"{where}: fr must be between 12 and 60.")
+    elif fps is not None and lottie["fr"] != fps:
+        errors.append(
+            f"{where}: fr is {lottie['fr']:g}; the learner chose {fps} frames per second, "
+            f"so fr must be {fps} and ip, op, and keyframe times count frames at {fps} fps."
+        )
     seconds = scene_seconds(lottie)
     if not MIN_SCENE_SECONDS <= seconds <= MAX_SCENE_SECONDS:
         errors.append(
@@ -172,6 +186,12 @@ def check_lottie_video(data: object, *, render: bool = True) -> CheckedVideo:
             ],
         )
     errors: list[str] = []
+    options = ENGINE_OPTIONS[LOTTIE]
+    if video.quality not in options.qualities:
+        errors.append(f"quality must be one of {', '.join(options.qualities)}.")
+    if video.fps is not None and video.fps not in options.frame_rates:
+        rates = ", ".join(str(rate) for rate in options.frame_rates)
+        errors.append(f"fps must be one of {rates}.")
     if len(video.scenes) > MAX_SCENES:
         errors.append(f"At most {MAX_SCENES} scenes; this has {len(video.scenes)}.")
     seen: set[str] = set()
@@ -184,7 +204,7 @@ def check_lottie_video(data: object, *, render: bool = True) -> CheckedVideo:
                 f"scene '{scene.id}': the caption is {len(scene.caption)} characters; "
                 f"at most {MAX_CAPTION_LENGTH}."
             )
-        errors.extend(check_scene(scene.id, scene.lottie))
+        errors.extend(check_scene(scene.id, scene.lottie, fps=video.fps))
     if not errors and render and renderer_available():
         errors.extend(render_errors(video))
     if errors:
