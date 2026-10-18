@@ -34,6 +34,9 @@
 
 .an-stage {
   display: flex;
+  /* Never shrink below the player's content inside a height-limited parent
+     (the tools panel); the parent scrolls instead of the card clipping it. */
+  flex-shrink: 0;
   flex-direction: column;
   min-height: 16rem;
   padding: var(--space-card-padding);
