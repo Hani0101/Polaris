@@ -7,10 +7,13 @@ import {
   showReadyNotice,
   watchAnimationJob,
 } from './animationNotices.ts'
+import { _setJobPolling, _stopJobPolling } from './animationJob.ts'
 
 afterEach(() => {
   _clearNoticeWatchers()
   _setNoticeWatchers(null)
+  _stopJobPolling()
+  _setJobPolling(null)
   vi.unstubAllGlobals()
   vi.useRealTimers()
 })
@@ -34,10 +37,9 @@ test('a job start asks for permission when the OS has no answer', async () => {
     status: 'running',
   })
   const timers: Array<() => void> = []
-  _setNoticeWatchers({
-    askPermission,
+  _setNoticeWatchers({ askPermission, showReady: vi.fn() })
+  _setJobPolling({
     pollJob,
-    showReady: vi.fn(),
     setTimer: (handler) => {
       timers.push(handler as () => void)
       return timers.length
@@ -70,9 +72,9 @@ test('a ready job sends a notice that opens the animation', async () => {
 
   _setNoticeWatchers({
     askPermission: vi.fn().mockResolvedValue('granted'),
-    pollJob,
     showReady,
   })
+  _setJobPolling({ pollJob })
 
   watchAnimationJob('s-1', 'job-1', onStatus)
   await vi.advanceTimersByTimeAsync(10_000)
@@ -88,13 +90,15 @@ test('a failed job does not send a ready notice', async () => {
   const onStatus = vi.fn()
   _setNoticeWatchers({
     askPermission: vi.fn().mockResolvedValue('granted'),
+    showReady,
+  })
+  _setJobPolling({
     pollJob: vi.fn().mockResolvedValue({
       id: 'job-1',
       kind: 'animation',
       session_id: 's-1',
       status: 'failed',
     }),
-    showReady,
   })
 
   watchAnimationJob('s-1', 'job-1', onStatus)

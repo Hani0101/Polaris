@@ -1,12 +1,31 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import { AnimationCard } from './AnimationCard.tsx'
+import { _stopJobPolling } from './animationJob.ts'
+import { _clearNoticeWatchers, _setNoticeWatchers, watchAnimationJob } from './animationNotices.ts'
 
 afterEach(() => {
   cleanup()
+  _clearNoticeWatchers()
+  _setNoticeWatchers(null)
+  _stopJobPolling()
 })
 
 const job = { id: 'job-1', kind: 'animation' as const, session_id: 'session-1' }
+
+function jobResponse(fields: { status: string; stage?: string }) {
+  return async () =>
+    new Response(JSON.stringify({ ...job, ...fields }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+}
+
+async function waitForPoll() {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000)
+  })
+}
 
 test('a failed job tells the session to try later (AN-09)', () => {
   render(<AnimationCard job={{ ...job, status: 'failed' }} />)
@@ -60,6 +79,88 @@ test('the stage updates from polling', async () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/sessions/session-1/jobs/job-1', expect.anything())
     expect(screen.getByRole('status').textContent).toBe('Checking the animation')
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('two cards and the notice watcher share one poll of the job', async () => {
+  vi.useFakeTimers()
+  const fetchMock = vi.fn(jobResponse({ status: 'running', stage: 'checking' }))
+  vi.stubGlobal('fetch', fetchMock)
+  _setNoticeWatchers({ askPermission: vi.fn().mockResolvedValue('granted'), showReady: vi.fn() })
+  try {
+    watchAnimationJob('session-1', 'job-1')
+    render(
+      <>
+        <AnimationCard job={{ ...job, status: 'running', stage: 'writing' }} />
+        <AnimationCard job={{ ...job, status: 'running', stage: 'writing' }} />
+      </>,
+    )
+
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByRole('status').map((line) => line.textContent)).toEqual([
+      'Checking the animation',
+      'Checking the animation',
+    ])
+
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a finished job stops the shared poll for every card and the watcher', async () => {
+  vi.useFakeTimers()
+  const fetchMock = vi.fn(jobResponse({ status: 'ready' }))
+  vi.stubGlobal('fetch', fetchMock)
+  const showReady = vi.fn()
+  const watched = vi.fn()
+  const onStatus = vi.fn()
+  _setNoticeWatchers({ askPermission: vi.fn().mockResolvedValue('granted'), showReady })
+  try {
+    watchAnimationJob('session-1', 'job-1', watched)
+    render(
+      <>
+        <AnimationCard job={{ ...job, status: 'running' }} onOpen={vi.fn()} onStatus={onStatus} />
+        <AnimationCard job={{ ...job, status: 'running' }} onOpen={vi.fn()} />
+      </>,
+    )
+
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.getAllByRole('button', { name: /open animation/i })).toHaveLength(2)
+    expect(onStatus).toHaveBeenCalledWith('job-1', 'ready')
+    expect(watched).toHaveBeenCalledWith('job-1', 'ready')
+    expect(showReady).toHaveBeenCalledTimes(1)
+
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})
+
+test('the poll stops when the last card leaves', async () => {
+  vi.useFakeTimers()
+  const fetchMock = vi.fn(jobResponse({ status: 'running' }))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    const first = render(<AnimationCard job={{ ...job, status: 'running' }} />)
+    const second = render(<AnimationCard job={{ ...job, status: 'running' }} />)
+
+    first.unmount()
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    second.unmount()
+    await waitForPoll()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   } finally {
     vi.useRealTimers()
     vi.unstubAllGlobals()

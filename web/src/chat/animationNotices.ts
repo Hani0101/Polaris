@@ -5,11 +5,10 @@
  * A ready notice opens the animation. Failed jobs never get a ready notice.
  */
 
-import { getAnimationJob } from '../api.ts'
 import type { Artifact } from '../api.ts'
 import { animationPagePath } from '../animationPath.ts'
+import { RUNNING, subscribeAnimationJob } from './animationJob.ts'
 
-const POLL_MS = 10_000
 const NOTICE_TITLE = 'Polaris'
 const READY_BODY = 'Your animation is ready.'
 
@@ -20,20 +19,15 @@ type WatchKey = string
 type Watchers = {
   askPermission: () => Promise<NoticePermission>
   showReady: (sessionId: string, jobId: string, openPath: string) => void
-  pollJob: typeof getAnimationJob
-  setTimer: typeof window.setInterval
-  clearTimer: typeof window.clearInterval
 }
 
 const defaultWatchers = (): Watchers => ({
   askPermission: askNoticePermission,
   showReady: showReadyNotice,
-  pollJob: getAnimationJob,
-  setTimer: (handler, ms) => window.setInterval(handler, ms),
-  clearTimer: (id) => window.clearInterval(id),
 })
 
-const watching = new Map<WatchKey, number>()
+// Each watched job's way to stop hearing its shared poll (animationJob.ts).
+const watching = new Map<WatchKey, () => void>()
 let watchers: Watchers = defaultWatchers()
 
 function keyOf(sessionId: string, jobId: string): WatchKey {
@@ -80,14 +74,14 @@ export function showReadyNotice(
   }
 }
 
-/** Test seam: replace timers and Notification helpers. */
+/** Test seam: replace the Notification helpers. Polls use `_setJobPolling`. */
 export function _setNoticeWatchers(next: Partial<Watchers> | null): void {
   watchers = next ? { ...defaultWatchers(), ...next } : defaultWatchers()
 }
 
 /** Test seam: stop every watcher. */
 export function _clearNoticeWatchers(): void {
-  for (const timer of watching.values()) watchers.clearTimer(timer)
+  for (const stop of watching.values()) stop()
   watching.clear()
 }
 
@@ -107,29 +101,24 @@ export function watchAnimationJob(
 
   void watchers.askPermission()
 
-  const timer = watchers.setTimer(() => {
-    void watchers
-      .pollJob(sessionId, jobId)
-      .then((job) => {
-        if (job.status === 'running') return
-        stopWatching(key)
-        onStatus?.(jobId, job.status)
-        if (job.status === 'ready') {
-          watchers.showReady(sessionId, jobId, animationPagePath(sessionId, jobId))
-        }
-      })
-      .catch(() => {
-        // Keep polling; a single failed check is not the end of the job.
-      })
-  }, POLL_MS)
+  // The poll is shared with the job's cards. A failed check tells no one, so
+  // polling goes on; a single failed check is not the end of the job.
+  const stop = subscribeAnimationJob(sessionId, jobId, (job) => {
+    if (job.status === RUNNING) return
+    stopWatching(key)
+    onStatus?.(jobId, job.status)
+    if (job.status === 'ready') {
+      watchers.showReady(sessionId, jobId, animationPagePath(sessionId, jobId))
+    }
+  })
 
-  watching.set(key, timer)
+  watching.set(key, stop)
 }
 
 function stopWatching(key: WatchKey): void {
-  const timer = watching.get(key)
-  if (timer === undefined) return
-  watchers.clearTimer(timer)
+  const stop = watching.get(key)
+  if (stop === undefined) return
+  stop()
   watching.delete(key)
 }
 
