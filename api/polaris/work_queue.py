@@ -1,9 +1,11 @@
 """Bounded background work: a queue served by a fixed number of threads.
 
 Animation jobs run on one per app (AN-01), so only a few write and render at
-once and the rest wait their turn in order. The one-shot Claude calls (the
-profile pass, the session title, and the key check) share ``CLAUDE_CALLS``,
+once and the rest wait their turn in order. The one-shot Claude calls made
+off the turn (the profile pass and the session title) share ``CLAUDE_CALLS``,
 so several sessions ending together do not start several Claude CLIs at once.
+The key check runs inside a turn, so it has ``TURN_CALLS`` and never waits
+behind them.
 
 The threads are daemons. Work still queued when Polaris stops is dropped; an
 animation job left that way is failed at the next start (AN-24).
@@ -83,13 +85,16 @@ class WorkQueue:
                     self._lock.notify_all()
 
 
-# Two at a time, so a key check during a turn is not held up by a long
-# profile pass alone.
+# Two at a time, so a title is not held up by a long profile pass alone.
 CLAUDE_CALLS = WorkQueue("polaris-claude-call", workers=2)
+# Calls a reply waits on.
+TURN_CALLS = WorkQueue("polaris-turn-call", workers=2)
 
 
-async def run_claude_call(make: Callable[[], Awaitable[T]]) -> T:
-    """Run a one-shot Claude call on ``CLAUDE_CALLS`` and await its result.
+async def run_claude_call(
+    make: Callable[[], Awaitable[T]], work: WorkQueue = CLAUDE_CALLS
+) -> T:
+    """Run a one-shot Claude call on ``work`` and await its result.
 
     ``make`` builds the coroutine on the worker's own loop, one that can spawn
     the Claude CLI even when the caller's loop cannot.
@@ -104,7 +109,7 @@ async def run_claude_call(make: Callable[[], Awaitable[T]]) -> T:
         except RuntimeError:
             pass  # The caller's loop closed while the call ran.
 
-    def work() -> None:
+    def call() -> None:
         loop = new_cli_loop()
         asyncio.set_event_loop(loop)
         try:
@@ -120,5 +125,5 @@ async def run_claude_call(make: Callable[[], Awaitable[T]]) -> T:
             finally:
                 loop.close()
 
-    CLAUDE_CALLS.submit(work)
+    work.submit(call)
     return await future

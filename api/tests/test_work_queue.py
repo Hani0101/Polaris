@@ -1,7 +1,7 @@
 """Bounded background work [AN-25]: at most N at once, the rest wait in order.
 
-The same queue runs the one-shot Claude calls: the profile pass, the session
-title, and the key check.
+The one-shot Claude calls (the profile pass and the session title) share a
+queue; the key check, which a reply waits on, has its own.
 """
 
 import asyncio
@@ -10,7 +10,7 @@ import threading
 
 import pytest
 
-from polaris.work_queue import WorkQueue, run_claude_call
+from polaris.work_queue import CLAUDE_CALLS, TURN_CALLS, WorkQueue, run_claude_call
 
 
 def test_no_more_than_the_limit_runs_at_once():
@@ -91,3 +91,33 @@ def test_a_claude_call_runs_off_the_caller_loop():
         assert await run_claude_call(which_loop) is not asyncio.get_running_loop()
 
     asyncio.run(main())
+
+
+def test_a_claude_call_runs_on_the_queue_it_is_given():
+    own = WorkQueue("test-own", workers=1)
+
+    async def thread_name() -> str:
+        return threading.current_thread().name
+
+    async def main() -> None:
+        assert (await run_claude_call(thread_name, own)).startswith("test-own")
+
+    asyncio.run(main())
+
+
+def test_a_turn_call_does_not_wait_behind_busy_claude_calls():
+    gate = threading.Event()
+    for _ in range(CLAUDE_CALLS.workers):
+        CLAUDE_CALLS.submit(functools.partial(gate.wait, 5))
+
+    async def answer() -> int:
+        return 42
+
+    async def main() -> None:
+        assert await asyncio.wait_for(run_claude_call(answer, TURN_CALLS), 2) == 42
+
+    try:
+        asyncio.run(main())
+    finally:
+        gate.set()
+        assert CLAUDE_CALLS.wait(5)

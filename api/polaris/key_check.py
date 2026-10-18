@@ -28,7 +28,7 @@ from claude_agent_sdk import (
 
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
-from polaris.work_queue import run_claude_call
+from polaris.work_queue import TURN_CALLS, run_claude_call
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -205,7 +205,8 @@ class ClaudeKeyCheck:
     async def _collect(
         self, prompt: str, options: ClaudeAgentOptions
     ) -> list[object]:
-        return await run_claude_call(lambda: self._gather(prompt, options))
+        # The reply waits on this, so it does not queue behind a profile pass.
+        return await run_claude_call(lambda: self._gather(prompt, options), TURN_CALLS)
 
     async def _gather(
         self, prompt: str, options: ClaudeAgentOptions
