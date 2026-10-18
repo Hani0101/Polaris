@@ -23,6 +23,7 @@ from polaris.agent import ReplyAgent, ReplyResult
 from polaris.animation import (
     FAILED as JOB_FAILED,
     FAILURE_NOTICE,
+    QUEUED as JOB_QUEUED,
     READY as JOB_READY,
     RUNNING as JOB_RUNNING,
     WRITING as JOB_WRITING,
@@ -85,9 +86,14 @@ from polaris.whiteboard import (
     pointed_element_errors,
     simpler_count_errors,
 )
+from polaris.work_queue import WorkQueue
 
 
 MAX_NAME_LENGTH = 80
+
+# Animation jobs that write and render at once (AN-25). Manim and Lottie
+# renders are heavy, so the rest wait in order.
+ANIMATION_WORKERS = 2
 
 
 class MissingSession(Exception):
@@ -280,6 +286,7 @@ class Chat:
         profile_pass: ProfilePass | None = None,
         animation_writer: AnimationWriter | None = None,
         title_writer: TitleWriter | None = None,
+        animation_workers: int = ANIMATION_WORKERS,
     ) -> None:
         self.data_dir = data_dir
         self.agent = agent
@@ -307,8 +314,8 @@ class Chat:
         # and an agent step never overwrite each other (WB-21).
         self._board_lock = threading.Lock()
         self._animation_notices: dict[str, list[str]] = {}
-        # job id -> worker writing that animation off the turn (AN-01).
-        self._animation_threads: dict[str, threading.Thread] = {}
+        # Writes animations off the turn (AN-01), a few at a time (AN-25).
+        self._animation_queue = WorkQueue("polaris-animation", animation_workers)
         # Session-end work runs after the request that ended the session: the
         # agent closes, then the profile pass runs, one session at a time
         # (CH-05, PR-05). A reply, a profile read, and a delete wait for it.
@@ -1063,7 +1070,8 @@ class Chat:
         """Store a running job and return its id before any animation exists (AN-01).
 
         The animation is written and run by a worker, outside the turn, so
-        the learner can keep talking in this session or another.
+        the learner can keep talking in this session or another. When every
+        worker is busy the job starts queued (AN-25).
         """
 
         self._require(session_id)
@@ -1071,7 +1079,9 @@ class Chat:
         if not brief:
             raise ValueError("An animation job needs a brief.")
         job_id = str(uuid.uuid4())
-        payload = job_payload(job_id, session_id, status=JOB_RUNNING, stage=JOB_WRITING)
+        waits = self._animation_writer is not None and not self._animation_queue.has_free_worker()
+        stage = JOB_QUEUED if waits else JOB_WRITING
+        payload = job_payload(job_id, session_id, status=JOB_RUNNING, stage=stage)
 
         def write(conn: sqlite3.Connection) -> None:
             conn.execute(
@@ -1086,7 +1096,7 @@ class Chat:
                 INSERT INTO animation_jobs (id, status, stage)
                 VALUES (?, ?, ?)
                 """,
-                (job_id, JOB_RUNNING, JOB_WRITING),
+                (job_id, JOB_RUNNING, stage),
             )
 
         self._with_db(write)
@@ -1107,15 +1117,11 @@ class Chat:
         writer = self._animation_writer
         if writer is None:
             return
-        thread = threading.Thread(
-            target=self._run_animation_job,
-            args=(writer, session_id, job_id, brief, learner_message),
-            name=f"polaris-animation-{job_id[:8]}",
-            daemon=True,
+        self._animation_queue.submit(
+            functools.partial(
+                self._run_animation_job, writer, session_id, job_id, brief, learner_message
+            )
         )
-        with self._lock:
-            self._animation_threads[job_id] = thread
-        thread.start()
 
     def _run_animation_job(
         self,
@@ -1132,13 +1138,35 @@ class Chat:
         """
 
         loop = new_cli_loop()
-        if isinstance(writer, AnimationRouter):
-            route = loop.run_until_complete(writer.route(brief, learner_message))
-            save_route(self.animation_work_dir(job_id), route)
-            writer = writer.writer_for(route)
-        if getattr(writer, "engine", None) == "manim":
-            self._run_manim_job(writer, loop, session_id, job_id, brief)
-            return
+        try:
+            # A job that waited in the queue starts now (AN-25).
+            self._set_animation_stage(job_id, JOB_WRITING)
+            if isinstance(writer, AnimationRouter):
+                route = loop.run_until_complete(writer.route(brief, learner_message))
+                save_route(self.animation_work_dir(job_id), route)
+                writer = writer.writer_for(route)
+            if getattr(writer, "engine", None) == "manim":
+                self._run_manim_job(writer, loop, session_id, job_id, brief)
+            else:
+                self._run_data_job(writer, loop, session_id, job_id, brief)
+        except MissingJob:
+            # The turn that started the job failed and was discarded.
+            pass
+        except Exception:
+            self._fail_animation_job(session_id, job_id)
+        finally:
+            loop.close()
+
+    def _run_data_job(
+        self,
+        writer: AnimationWriter,
+        loop: asyncio.AbstractEventLoop,
+        session_id: str,
+        job_id: str,
+        brief: str,
+    ) -> None:
+        """Worker for animation data and Lottie: write, check, fix (AN-05, AN-19)."""
+
         last_data: dict[str, Any] | None = None
 
         def write_animation(errors: list[str] | None) -> dict[str, Any]:
@@ -1153,17 +1181,7 @@ class Chat:
             )
             return last_data
 
-        try:
-            self.produce_animation_job(session_id, job_id, write_animation)
-        except MissingJob:
-            # The turn that started the job failed and was discarded.
-            pass
-        except Exception:
-            self._fail_animation_job(session_id, job_id)
-        finally:
-            loop.close()
-            with self._lock:
-                self._animation_threads.pop(job_id, None)
+        self.produce_animation_job(session_id, job_id, write_animation)
 
     def _run_manim_job(
         self,
@@ -1190,36 +1208,24 @@ class Chat:
                 title=draft.title, description=draft.description, code=draft.code
             )
 
-        try:
-            self.get_animation_job(session_id, job_id)
-            result = produce_manim(
-                job_id=job_id,
-                work_dir=self.animation_work_dir(job_id),
-                write_draft=write_draft,
-                on_stage=lambda stage: self._set_animation_stage(job_id, stage),
-            )
-            self._set_animation_status(job_id, result.status)
-            if result.session_notice:
-                with self._lock:
-                    self._animation_notices.setdefault(session_id, []).append(
-                        result.session_notice
-                    )
-        except MissingJob:
-            pass
-        except Exception:
-            self._fail_animation_job(session_id, job_id)
-        finally:
-            loop.close()
+        self.get_animation_job(session_id, job_id)
+        result = produce_manim(
+            job_id=job_id,
+            work_dir=self.animation_work_dir(job_id),
+            write_draft=write_draft,
+            on_stage=lambda stage: self._set_animation_stage(job_id, stage),
+        )
+        self._set_animation_status(job_id, result.status)
+        if result.session_notice:
             with self._lock:
-                self._animation_threads.pop(job_id, None)
+                self._animation_notices.setdefault(session_id, []).append(
+                    result.session_notice
+                )
 
-    def wait_for_animation_jobs(self, timeout: float | None = None) -> None:
-        """Block until every animation worker has finished."""
+    def wait_for_animation_jobs(self, timeout: float | None = None) -> bool:
+        """Block until every animation job, queued or running, has finished."""
 
-        with self._lock:
-            threads = list(self._animation_threads.values())
-        for thread in threads:
-            thread.join(timeout)
+        return self._animation_queue.wait(timeout)
 
     def _fail_animation_job(self, session_id: str, job_id: str) -> None:
         try:
@@ -1231,7 +1237,7 @@ class Chat:
             self._animation_notices.setdefault(session_id, []).append(FAILURE_NOTICE)
 
     def _fail_interrupted_jobs(self) -> None:
-        """A job still running at startup lost its worker when Polaris stopped (AN-09)."""
+        """A job running or queued at startup was cut off when Polaris stopped (AN-24)."""
 
         def write(conn: sqlite3.Connection) -> list[str]:
             rows = conn.execute(

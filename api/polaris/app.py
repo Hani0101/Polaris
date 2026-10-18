@@ -19,6 +19,7 @@ from polaris.animation_router import AnimationRouter
 from polaris.lottie_writer import LottieAnimationWriter
 from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
+    ANIMATION_WORKERS,
     BlankMessage,
     Chat,
     InvalidAnimationStep,
@@ -230,6 +231,10 @@ def create_app(
         profile_pass=profile_pass,
         animation_writer=animation_writer,
         title_writer=title_writer,
+        # How many animation jobs write and render at once (AN-25).
+        animation_workers=int(
+            os.environ.get("POLARIS_ANIMATION_WORKERS", ANIMATION_WORKERS)
+        ),
     )
 
     @asynccontextmanager

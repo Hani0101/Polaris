@@ -5,16 +5,13 @@ Uses one-shot query() with structured output (streaming-vs-single-mode,
 structured-outputs). model="haiku" (configuration, model aliases).
 setting_sources=[] and skills=[] keep filesystem settings and skills out.
 verbatim_prompts sends the session text without @path expansion.
-On Windows, uvicorn --reload uses SelectorEventLoop, which cannot spawn
-the Claude CLI, so the query runs on a ProactorEventLoop in a worker
-thread, matching the teaching client.
+The query runs on the shared queue of one-shot Claude calls, on a loop that
+can spawn the Claude CLI (on Windows, uvicorn --reload uses a
+SelectorEventLoop, which cannot).
 """
 
 from __future__ import annotations
 
-import asyncio
-import sys
-import threading
 from collections.abc import AsyncIterator, Callable, Sequence
 from pathlib import Path
 
@@ -29,6 +26,7 @@ from polaris.login import reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
 from polaris.models import Fact, FactChange, Turn
 from polaris.profile import FACT_BASES, FACT_KINDS, ProfilePassFailed
+from polaris.work_queue import run_claude_call
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -201,19 +199,6 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _off_loop_required() -> bool:
-    if sys.platform != "win32":
-        return False
-    loop = asyncio.get_running_loop()
-    return not isinstance(loop, asyncio.ProactorEventLoop)
-
-
-def _cli_loop() -> asyncio.AbstractEventLoop:
-    if sys.platform == "win32":
-        return asyncio.ProactorEventLoop()
-    return asyncio.new_event_loop()
-
-
 class ClaudeProfilePass:
     """One-shot Haiku pass over a session that just ended."""
 
@@ -254,34 +239,7 @@ class ClaudeProfilePass:
     async def _collect(
         self, prompt: str, options: ClaudeAgentOptions
     ) -> list[object]:
-        if not _off_loop_required():
-            return [
-                message
-                async for message in self._query_fn(prompt=prompt, options=options)
-            ]
-        return await self._collect_off_loop(prompt, options)
-
-    async def _collect_off_loop(
-        self, prompt: str, options: ClaudeAgentOptions
-    ) -> list[object]:
-        loop = _cli_loop()
-        caller = asyncio.get_running_loop()
-        future: asyncio.Future[list[object]] = caller.create_future()
-
-        def worker() -> None:
-            asyncio.set_event_loop(loop)
-            try:
-                gathered = loop.run_until_complete(self._gather(prompt, options))
-                caller.call_soon_threadsafe(future.set_result, gathered)
-            except BaseException as exc:
-                caller.call_soon_threadsafe(future.set_exception, exc)
-            finally:
-                loop.close()
-
-        threading.Thread(
-            target=worker, name="polaris-profile-pass", daemon=True
-        ).start()
-        return await future
+        return await run_claude_call(lambda: self._gather(prompt, options))
 
     async def _gather(
         self, prompt: str, options: ClaudeAgentOptions

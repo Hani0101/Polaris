@@ -8,6 +8,7 @@ export const RUNNING = 'running'
 const POLL_MS = 10_000
 
 const STAGE_TEXT: Record<AnimationStage, string> = {
+  queued: 'Waiting for another animation to finish',
   writing: 'Writing the animation',
   checking: 'Checking the animation',
   fixing: 'Fixing the animation',

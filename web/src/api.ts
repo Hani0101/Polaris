@@ -195,8 +195,11 @@ export type WhiteboardArtifact = Whiteboard & {
   kind: 'whiteboard'
 }
 
-/** What a running job is doing (AN-19). A ready or failed job has no stage. */
-export type AnimationStage = 'writing' | 'checking' | 'fixing'
+/**
+ * What a running job is doing (AN-19), or that it waits for a free place
+ * (AN-25). A ready or failed job has no stage.
+ */
+export type AnimationStage = 'queued' | 'writing' | 'checking' | 'fixing'
 
 export type AnimationArtifact = {
   id: string

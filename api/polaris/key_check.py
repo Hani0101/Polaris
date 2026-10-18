@@ -9,16 +9,12 @@ The prompt is built only from learner-visible fields, so the key, the
 explanation and the wrong-choice notes never reach the checking model.
 A result counts only when its subtype is "success" and structured_output
 is present (structured-outputs, error handling); anything else raises
-KeyCheckFailed. On Windows, uvicorn --reload uses SelectorEventLoop, which
-cannot spawn the Claude CLI, so the query runs on a ProactorEventLoop in a
-worker thread, matching the profile pass.
+KeyCheckFailed. The query runs on the shared queue of one-shot Claude calls,
+on a loop that can spawn the Claude CLI, as the profile pass does.
 """
 
 from __future__ import annotations
 
-import asyncio
-import sys
-import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -32,6 +28,7 @@ from claude_agent_sdk import (
 
 from polaris.login import ApiKeyPresent, reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
+from polaris.work_queue import run_claude_call
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -178,19 +175,6 @@ def parse_answers(data: object, quiz: dict[str, Any]) -> dict[str, str]:
     return answers
 
 
-def _off_loop_required() -> bool:
-    if sys.platform != "win32":
-        return False
-    loop = asyncio.get_running_loop()
-    return not isinstance(loop, asyncio.ProactorEventLoop)
-
-
-def _cli_loop() -> asyncio.AbstractEventLoop:
-    if sys.platform == "win32":
-        return asyncio.ProactorEventLoop()
-    return asyncio.new_event_loop()
-
-
 class ClaudeKeyCheck:
     """One-shot Haiku pass that answers a quiz without its key."""
 
@@ -221,31 +205,7 @@ class ClaudeKeyCheck:
     async def _collect(
         self, prompt: str, options: ClaudeAgentOptions
     ) -> list[object]:
-        if not _off_loop_required():
-            return await self._gather(prompt, options)
-        return await self._collect_off_loop(prompt, options)
-
-    async def _collect_off_loop(
-        self, prompt: str, options: ClaudeAgentOptions
-    ) -> list[object]:
-        loop = _cli_loop()
-        caller = asyncio.get_running_loop()
-        future: asyncio.Future[list[object]] = caller.create_future()
-
-        def worker() -> None:
-            asyncio.set_event_loop(loop)
-            try:
-                gathered = loop.run_until_complete(self._gather(prompt, options))
-                caller.call_soon_threadsafe(future.set_result, gathered)
-            except BaseException as exc:
-                caller.call_soon_threadsafe(future.set_exception, exc)
-            finally:
-                loop.close()
-
-        threading.Thread(
-            target=worker, name="polaris-key-check", daemon=True
-        ).start()
-        return await future
+        return await run_claude_call(lambda: self._gather(prompt, options))
 
     async def _gather(
         self, prompt: str, options: ClaudeAgentOptions

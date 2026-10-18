@@ -28,7 +28,9 @@ RUNNING = "running"
 READY = "ready"
 FAILED = "failed"
 
-# Stages of a running job (AN-19). A ready or failed job has none.
+# Stages of a running job (AN-19). A ready or failed job has none. A queued
+# job waits for a free place to run (AN-25).
+QUEUED = "queued"
 WRITING = "writing"
 CHECKING = "checking"
 FIXING = "fixing"

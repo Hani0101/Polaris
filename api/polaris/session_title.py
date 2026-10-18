@@ -4,15 +4,14 @@ message of a session and returns a short title. It sees nothing else.
 Uses one-shot query() with a plain-text result (streaming-vs-single-mode).
 model="haiku" (configuration, model aliases). setting_sources=[] and
 skills=[] keep filesystem settings and skills out; verbatim_prompts sends the
-message without @path expansion. The query runs on the loop that can spawn
-the Claude CLI, as the profile pass does.
+message without @path expansion. The query runs on the shared queue of
+one-shot Claude calls, on a loop that can spawn the Claude CLI, as the
+profile pass does.
 """
 
 from __future__ import annotations
 
-import asyncio
 import re
-import threading
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Protocol
@@ -26,7 +25,7 @@ from claude_agent_sdk import (
 
 from polaris.login import reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
-from polaris.profile_pass import _cli_loop, _off_loop_required
+from polaris.work_queue import run_claude_call
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -102,24 +101,7 @@ class ClaudeTitleWriter:
         return clean_title(result.result)
 
     async def _collect(self, prompt: str, options: ClaudeAgentOptions) -> list[object]:
-        if not _off_loop_required():
-            return await self._gather(prompt, options)
-        loop = _cli_loop()
-        caller = asyncio.get_running_loop()
-        future: asyncio.Future[list[object]] = caller.create_future()
-
-        def worker() -> None:
-            asyncio.set_event_loop(loop)
-            try:
-                gathered = loop.run_until_complete(self._gather(prompt, options))
-                caller.call_soon_threadsafe(future.set_result, gathered)
-            except BaseException as exc:
-                caller.call_soon_threadsafe(future.set_exception, exc)
-            finally:
-                loop.close()
-
-        threading.Thread(target=worker, name="polaris-session-title", daemon=True).start()
-        return await future
+        return await run_claude_call(lambda: self._gather(prompt, options))
 
     async def _gather(self, prompt: str, options: ClaudeAgentOptions) -> list[object]:
         return [item async for item in self._query_fn(prompt=prompt, options=options)]

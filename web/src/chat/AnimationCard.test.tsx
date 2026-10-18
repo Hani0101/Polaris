@@ -59,6 +59,13 @@ test('a running job shows the stage it is in (AN-19)', () => {
   expect(screen.getByRole('status').textContent).toBe('Fixing the animation')
 })
 
+test('a queued job says it is waiting for another animation (AN-25)', () => {
+  render(<AnimationCard job={{ ...job, status: 'running', stage: 'queued' }} />)
+
+  expect(screen.getByText('In progress')).toBeTruthy()
+  expect(screen.getByRole('status').textContent).toBe('Waiting for another animation to finish')
+})
+
 test('the stage updates from polling', async () => {
   vi.useFakeTimers()
   const fetchMock = vi.fn(

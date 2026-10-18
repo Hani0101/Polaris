@@ -18,9 +18,7 @@ ProactorEventLoop on Windows).
 
 from __future__ import annotations
 
-import asyncio
 import json
-import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any, Protocol
@@ -35,6 +33,7 @@ from claude_agent_sdk import (
 from polaris.animation_format import ANIMATION_LIMITS, Animation
 from polaris.login import reject_api_key_credential
 from polaris.tool_policy import DISALLOWED_TOOLS
+from polaris.work_queue import new_cli_loop as new_cli_loop
 
 QueryFn = Callable[..., AsyncIterator[object]]
 
@@ -99,14 +98,6 @@ def writer_schema() -> dict[str, Any]:
     """The animation format as structured output accepts it."""
 
     return _trim_schema(Animation.model_json_schema(), top=True)
-
-
-def new_cli_loop() -> asyncio.AbstractEventLoop:
-    """A loop that can spawn the Claude CLI. On Windows that is a ProactorEventLoop."""
-
-    if sys.platform == "win32":
-        return asyncio.ProactorEventLoop()
-    return asyncio.new_event_loop()
 
 
 class WriterFailed(RuntimeError):

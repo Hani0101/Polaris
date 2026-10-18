@@ -28,6 +28,9 @@ AN-19  While a job runs, the learner can see which stage it is in: writing, chec
 AN-20  The animation fits a phone screen from 320px wide, with no horizontal scroll, and every control is at least a 44px tap target.
 AN-21  Before the writer starts, a small evaluation reads the learner's message and the brief and picks the engine: Manim for a maths problem or a heavy graph, Lottie for everything else. If the evaluation fails, a keyword check picks. Routing never fails a job.
 AN-22  A video animation made by Manim keeps its own colors in Light and in Dark, since they are fixed when it is rendered. A data animation follows the appearance mode through its color roles (AN-14).
+AN-23  A session has at most one running animation job. A second request while one runs is refused, and the agent is told to wait for the first.
+AN-24  A job that was still running or queued (AN-25) when the app closed is marked failed the next time the app starts. Its session is told the same as in AN-09, and no ready notice is sent. It is not run again.
+AN-25  Across all sessions, at most two jobs write and render at once. A further job is queued and starts, in the order it was asked for, when one of them finishes. While it is queued, the learner sees that it is waiting for another animation to finish. `POLARIS_ANIMATION_WORKERS` changes the limit.
 
 ## Engines
 
@@ -80,7 +83,7 @@ The "Ask about this step" action sends the turn with the animation id and the st
 
 ### Job stages
 
-A running job has a `stage`: `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
+A running job has a `stage`: `queued` while it waits for a place to run (AN-25), `writing` for the first run, `checking` while the backend checks the data, and `fixing` while the writer works on a fix. The job's status is still `running`, `ready`, or `failed`. A ready or failed job has no stage.
 
 ### Narration
 
@@ -207,6 +210,28 @@ Scenario: the animation fits a phone  [AN-20]
   When the learner opens an animation
   Then the whole canvas and the controls fit without horizontal scroll
   And every control is at least 44px
+
+Scenario: a second job waits for the first  [AN-23]
+  Given a job is running in this session
+  When the agent asks for another animation in the same session
+  Then no second job is started
+  And the agent is told to wait for the running one
+  And a job in another session is not affected
+
+Scenario: a job cut off by closing the app  [AN-24]
+  Given a job was running when the app closed
+  When the app starts again
+  Then that job is marked failed
+  And its session is told Polaris cannot create the animation right now and to try later
+  And no ready notice is sent
+  And the job is not run again
+
+Scenario: a job waits for a free place  [AN-25]
+  Given two jobs are running in other sessions
+  When the agent starts an animation in this session
+  Then the job is queued
+  And the animation card says it is waiting for another animation to finish
+  And when one of the running jobs finishes, this job starts writing
 
 ## Evals
 

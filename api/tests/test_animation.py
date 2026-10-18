@@ -25,6 +25,7 @@ from polaris.animation import (
     FIXING,
     MAX_ERRORS_TO_WRITER,
     NOT_AN_OBJECT_ERROR,
+    QUEUED,
     WAITING_NOTICE,
     WRITING,
     errors_for_writer,
@@ -434,6 +435,40 @@ def test_a_job_running_when_polaris_stopped_fails_on_restart(tmp_path: Path):
         assert second.take_animation_notices(session["id"]) == [FAILURE_NOTICE]
     finally:
         second.close()
+
+
+def test_a_job_waits_queued_while_every_worker_is_busy(tmp_path: Path):
+    """Scenario: a job waits for a free place [AN-25]."""
+
+    gate = threading.Event()
+    writer = FakeWriter([_good(), _good()], gate=gate)
+    chat = Chat(tmp_path, TeachingStub(), animation_writer=writer, animation_workers=1)
+    try:
+        first_session, _ended = chat.start()
+        first = chat.start_animation_job(first_session["id"], BRIEF)
+        # A first message keeps the session from being discarded as a draft.
+        chat._with_db(
+            lambda conn: conn.execute(
+                "UPDATE sessions SET first_message = 'Pizza' WHERE id = ?",
+                (first_session["id"],),
+            )
+        )
+        second_session, _ended = chat.start()
+        second = chat.start_animation_job(second_session["id"], BRIEF)
+
+        assert first["stage"] == WRITING
+        assert second["stage"] == QUEUED
+        waiting = chat.get_animation_job(second_session["id"], str(second["id"]))
+        assert waiting["status"] == RUNNING
+        assert waiting["stage"] == QUEUED
+
+        gate.set()
+        assert chat.wait_for_animation_jobs(10)
+        for session, job in ((first_session, first), (second_session, second)):
+            assert chat.get_animation_job(session["id"], str(job["id"]))["status"] == READY
+        assert len(writer.calls) == 2
+    finally:
+        chat.close()
 
 
 def _result(**overrides) -> ResultMessage:
