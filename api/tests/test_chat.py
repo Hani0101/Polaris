@@ -401,7 +401,7 @@ def test_switching_sessions_does_not_wait_for_the_profile_pass(make_client):  # 
     assert read_profile(client) == {"facts": ["struggles with fractions"]}
 
 
-def test_a_reply_waits_for_a_pass_still_running(make_client):  # PR-01, PR-05
+def test_a_reply_waits_for_a_pass_still_running(make_client):  # PR-01, PR-02, PR-05
     writer = GatedPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
     client, _agent = make_client(profile_pass=writer)
     first = client.post("/api/sessions").json()
@@ -441,6 +441,79 @@ def test_a_later_ending_runs_the_profile_pass_again(make_client):
     assert read_profile(client) == {
         "facts": ["likes diagrams", "comfortable with Python"]
     }
+
+
+def test_a_later_ending_without_a_new_turn_runs_no_pass(make_client):  # PR-05
+    writer = StubPass((FactChange("ADD", "likes diagrams"),))
+    client, _agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+    for _ in range(3):
+        client.post(f"/api/sessions/{session['id']}/open")
+        client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert len(writer.calls) == 1
+
+
+def test_a_later_ending_after_a_failed_pass_runs_it_again(make_client):  # PR-05
+    class FailOncePass(StubPass):
+        async def run(self, *, turns, facts):
+            await super().run(turns=turns, facts=facts)
+            if len(self.calls) == 1:
+                raise RuntimeError("no result")
+            return (FactChange("ADD", "likes diagrams"),)
+
+    writer = FailOncePass()
+    client, _agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.post(f"/api/sessions/{session['id']}/open")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert len(writer.calls) == 2
+    assert read_profile(client) == {"facts": ["likes diagrams"]}
+
+
+def test_a_reply_does_not_wait_for_a_pass_when_the_profile_has_facts(make_client):  # PR-01
+    writer = GatedPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    client, _agent = make_client(
+        profile='{\n  "facts": ["struggles with fractions"]\n}\n', profile_pass=writer
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I like step-by-step walkthroughs")
+    second = client.post("/api/sessions").json()
+
+    reply = reply_text(post_turn(client, second["id"], "What is recursion?"))
+
+    assert reply == "Noted struggles with fractions. What is recursion?"
+    assert not writer.finished.is_set()
+    writer.release.set()
+    client.app.state.chat.wait_for_session_ends()
+
+
+def test_an_agent_closes_without_waiting_for_an_earlier_pass(make_client):  # CH-05
+    writer = GatedPass()
+    # A filled profile, so the second reply does not wait for the first pass.
+    client, agent = make_client(
+        profile='{\n  "facts": ["likes diagrams"]\n}\n', profile_pass=writer
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "First")
+    second = client.post("/api/sessions").json()
+    post_turn(client, second["id"], "Second")
+
+    client.post("/api/sessions")
+    client.app.state.chat.wait_for_agent_close(second["id"])
+
+    assert second["id"] in agent.closed
+    assert not writer.finished.is_set()
+    writer.release.set()
+    client.app.state.chat.wait_for_session_ends()
 
 
 def test_a_repeated_fact_is_not_stored_twice(make_client):

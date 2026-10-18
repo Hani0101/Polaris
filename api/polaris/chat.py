@@ -318,8 +318,12 @@ class Chat:
         self._animation_queue = WorkQueue("polaris-animation", animation_workers)
         # Session-end work runs after the request that ended the session: the
         # agent closes, then the profile pass runs, one session at a time
-        # (CH-05, PR-05). A reply, a profile read, and a delete wait for it.
+        # (CH-05, PR-05). A profile read and a delete wait for it; a reply waits
+        # only while the profile is empty (PR-01, PR-02).
         self._ends: dict[str, threading.Event] = {}
+        # session id -> set once that ending has closed its agent. A reply or a
+        # warm-up in the same session waits for this, not for the pass.
+        self._closes: dict[str, threading.Event] = {}
         self._last_end: threading.Event | None = None
         self._end_tasks: set[asyncio.Task[None]] = set()
         self._warm_tasks: set[asyncio.Task[None]] = set()
@@ -411,17 +415,20 @@ class Chat:
 
         The work runs on the calling event loop after the response, so starting,
         switching, or leaving a session does not wait for a model call (CH-05,
-        PR-05). Passes run one at a time, in the order the sessions ended.
+        PR-05). Each agent closes at once. Passes run one at a time, in the
+        order the sessions ended.
         """
 
         loop = asyncio.get_running_loop()
         for session_id in session_ids:
             done = threading.Event()
+            closed = threading.Event()
             with self._lock:
                 previous = self._last_end
                 self._last_end = done
                 self._ends[session_id] = done
-            task = loop.create_task(self._end(session_id, previous, done))
+                self._closes[session_id] = closed
+            task = loop.create_task(self._end(session_id, previous, done, closed))
             self._end_tasks.add(task)
             task.add_done_callback(self._end_tasks.discard)
 
@@ -430,11 +437,19 @@ class Chat:
         session_id: str,
         previous: threading.Event | None,
         done: threading.Event,
+        closed: threading.Event,
     ) -> None:
         try:
+            try:
+                # Closing does not wait behind other sessions' passes.
+                await self.agent.close_session(session_id)
+            finally:
+                with self._lock:
+                    if self._closes.get(session_id) is closed:
+                        del self._closes[session_id]
+                closed.set()
             if previous is not None:
                 await asyncio.to_thread(previous.wait)
-            await self.agent.close_session(session_id)
             await self.run_profile_pass(session_id)
         except ApiKeyPresent:
             self.api_key_seen = True
@@ -467,6 +482,18 @@ class Chat:
             done.wait()
         return bool(pending)
 
+    def wait_for_agent_close(self, session_id: str) -> None:
+        """Block until an ending of this session has closed its agent (CH-05).
+
+        Its profile pass may still be running. Never call this on the event
+        loop that runs the work.
+        """
+
+        with self._lock:
+            closed = self._closes.get(session_id)
+        if closed is not None:
+            closed.wait()
+
     def warm_in_background(self, session_id: str) -> None:
         """Start the agent's client for an open session the learner is typing in.
 
@@ -498,7 +525,7 @@ class Chat:
             if not await asyncio.to_thread(is_open):
                 return
             # An earlier ending of this session closes its old client first (CH-05).
-            await asyncio.to_thread(self.wait_for_session_ends, session_id)
+            await asyncio.to_thread(self.wait_for_agent_close, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             turns = await asyncio.to_thread(self._with_db, has_turns)
             await self.agent.warm(session_id, sdk_session_id, turns)  # type: ignore[attr-defined]
@@ -512,7 +539,8 @@ class Chat:
         """Read the ended session and store fact changes. Does not teach.
 
         Every run is recorded. A failed run keeps its error, so it is not lost
-        silently; the error is a type name, never learner text.
+        silently; the error is a type name, never learner text. No run starts
+        when the last one succeeded and the session has no turn since (PR-05).
         """
 
         if self._profile_pass is None:
@@ -520,11 +548,13 @@ class Chat:
         turns = await asyncio.to_thread(self._turns, session_id)
         if not turns:
             return
+        last_turn_id = turns[-1].id
+        if await asyncio.to_thread(self._pass_read_up_to, session_id, last_turn_id):
+            return
         facts = await asyncio.to_thread(self._with_db, self._read_facts)
         run_id = await asyncio.to_thread(
             self._with_db, lambda conn: start_pass(conn, session_id, "end", _now())
         )
-        last_turn_id = turns[-1].id
 
         def failed(error: str) -> None:
             self._with_db(
@@ -563,6 +593,30 @@ class Chat:
             )
 
         await asyncio.to_thread(self._with_db, store)
+
+    def _pass_read_up_to(self, session_id: str, last_turn_id: str | None) -> bool:
+        """Whether the latest pass on the session succeeded and read up to this turn."""
+
+        if last_turn_id is None:
+            return False
+
+        def read(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                """
+                SELECT status, last_turn_id FROM profile_passes
+                WHERE session_id = ? AND status != 'running'
+                ORDER BY started_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (session_id,),
+            ).fetchone()
+            return (
+                row is not None
+                and row["status"] != "failed"
+                and row["last_turn_id"] == last_turn_id
+            )
+
+        return self._with_db(read)
 
     def read_profile(self) -> Profile:
         """The profile as the teaching agent reads it (PR-01)."""
@@ -792,10 +846,14 @@ class Chat:
             for notice in self.take_animation_notices(session_id):
                 parts.append(notice)
                 yield notice
-            # A session that just ended may still be in its pass, and its agent
-            # may still be closing. Its facts are read for this reply (PR-01).
-            await asyncio.to_thread(self.wait_for_session_ends)
+            # An earlier ending of this session closes its old agent first (CH-05).
+            await asyncio.to_thread(self.wait_for_agent_close, session_id)
             profile = await asyncio.to_thread(self.read_profile)
+            # A pass still running is waited for only while the profile is empty,
+            # so answers given in a session just left stop the asking (PR-02).
+            # Otherwise the reply reads the profile as it stands (PR-01).
+            if not profile.facts and await asyncio.to_thread(self.wait_for_session_ends):
+                profile = await asyncio.to_thread(self.read_profile)
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)
