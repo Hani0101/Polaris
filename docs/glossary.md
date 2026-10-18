@@ -57,8 +57,12 @@ A whiteboard, quiz, animation, or flashcard deck kept so the learner can open it
 _Avoid_: file, attachment, output
 
 **Resource**:
-Material the learner gives Polaris to explain from: a PDF, a Word document, a text file, a typed note, or an image. It belongs to one session. The agent reads it and never writes it.
+Material the learner gives Polaris to explain from: a PDF, a Word document, a text file, a typed note, an image, or a web page added by its link. It belongs to one session. The agent reads it and never writes it.
 _Avoid_: attachment, upload, file, source
+
+**Web mode**:
+A toggle in the chat input. Only a message sent with it on lets the agent search and read public web pages for that reply.
+_Avoid_: browsing, internet mode, search mode
 
 **Whiteboard**:
 A drawing the agent and the learner use to explain an idea.

@@ -79,3 +79,13 @@ test('warmSession posts to the session warm route', async () => {
   expect(url).toBe('/api/sessions/session%201/warm')
   expect(init?.method).toBe('POST')
 })
+
+test('only a web-mode turn asks for the web (CH-23)', () => {
+  expect(turnBody('What is new?', null, null, null, null, null, true)).toEqual({
+    message: 'What is new?',
+    web: true,
+  })
+  expect(turnBody('What is new?', null, null, null, null, null, false)).toEqual({
+    message: 'What is new?',
+  })
+})

@@ -11,6 +11,7 @@ dependencies = [
     "pylatexenc==2.11",
     "pypdf==6.1.0",
     "simpleeval==1.0.8",
+    "truststore==0.10.5",
     "uvicorn[standard]==0.54.0",
 ]
 

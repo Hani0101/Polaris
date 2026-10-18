@@ -36,6 +36,7 @@ class ReplyAgent(Protocol):
         pinned: Whiteboard | None = None,
         resources: Sequence[str] = (),
         decks: Sequence[dict[str, object]] = (),
+        web: bool = False,
     ) -> AsyncIterator[str | ReplyResult]:
         """Stream reply text, then one ReplyResult when the stream reaches a result.
 
@@ -44,7 +45,9 @@ class ReplyAgent(Protocol):
         pinned only while a board is pinned above the conversation (WB-19).
         resources is one line per resource the learner gave the session, and is
         empty when there are none (RS-07). decks are the learner-visible payloads
-        of this session's flashcard decks, with their ratings (FC-15).
+        of this session's flashcard decks, with their ratings (FC-15). web is
+        True only when the learner sent this message in web mode, and only then
+        may the reply search or read the web (CH-23).
         """
 
     async def close_session(self, session_id: str) -> None:

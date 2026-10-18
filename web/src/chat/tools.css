@@ -316,9 +316,86 @@
   min-height: 0;
 }
 
-.resources.is-dropping {
+/* Add a web page by its link (RS-22): Text input with its button beside it. */
+.resource-web-row {
+  display: flex;
+  gap: var(--space-inline-default);
+}
+
+.resource-web-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-web-row button {
+  flex: none;
+}
+
+/* Link, external variant (DESIGN.md 7): the page a resource was fetched from. */
+.resource-source a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-height: var(--component-tap-target-min);
+  color: var(--color-text-link);
+  font-size: var(--font-size-sm);
+  text-decoration-line: underline;
+  text-decoration-thickness: var(--border-width-default);
+  text-underline-offset: var(--space-2xs);
+  overflow-wrap: anywhere;
+  transition: text-decoration-thickness var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.resource-source a:hover {
+  text-decoration-thickness: var(--border-width-emphasis);
+}
+
+/* The whole tab takes a drop. When the drop area is shown it is what lights up. */
+.resources.is-dropping:not(:has(.resource-drop)) {
   outline: var(--border-width-emphasis) dashed var(--color-accent);
   outline-offset: calc(-1 * var(--border-width-emphasis));
+}
+
+/* DS-GAP: a file drop area has no component in DESIGN.md 7; built from Card
+   (radius.md, card padding) and Empty state (centered icon and text), with a
+   dashed border in border.strong so the edge passes 3:1, used space.lg above and below. */
+.resource-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-lg) var(--space-card-padding);
+  border: var(--border-width-default) dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-align: center;
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.resources.is-dropping .resource-drop {
+  border: var(--border-width-emphasis) dashed var(--color-accent);
+  /* The thicker border would push the content down by a pixel. */
+  padding: calc(var(--space-lg) - var(--border-width-default))
+    calc(var(--space-card-padding) - var(--border-width-default));
+}
+
+.resource-drop-title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.resource-drop-body {
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
+/* Touch screens have nothing to drag from, so the area only lists what fits (RS-13). */
+@media (hover: none) and (pointer: coarse) {
+  .resource-drop-title {
+    display: none;
+  }
 }
 
 .resource-card {

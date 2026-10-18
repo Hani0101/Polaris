@@ -49,9 +49,10 @@ function renderTab(list: Resource[], onFocus?: () => void, withReply = false) {
 
 test('an empty session explains what can be added and the limits', async () => {
   renderTab([])
-  expect(await screen.findByText('No resources yet')).toBeTruthy()
-  expect(screen.getByText(/10 MB/)).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Add a resource' })).toBeTruthy()
+  expect(await screen.findByText('0 of 10 resources')).toBeTruthy()
+  expect(screen.getByText('Drop files here to add them')).toBeTruthy()
+  expect(screen.getByText(/10 MB and an image up to 5 MB/)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Add files' })).toBeTruthy()
   expect(screen.getByRole('button', { name: 'Write a note' })).toBeTruthy()
 })
 
@@ -61,11 +62,12 @@ test('resources are listed with their kind', async () => {
   expect(screen.getByText('PDF')).toBeTruthy()
   expect(screen.getByText('5 pages')).toBeTruthy()
   expect(screen.getByText('Note')).toBeTruthy()
+  expect(screen.getByText('2 of 10 resources')).toBeTruthy()
 })
 
 test('a file over the limit is refused before it is sent', async () => {
   const { container } = renderTab([])
-  await screen.findByText('No resources yet')
+  await screen.findByText('0 of 10 resources')
   const input = container.querySelector('input[type="file"]') as HTMLInputElement
   const big = new File(['x'], 'big.pdf', { type: 'application/pdf' })
   Object.defineProperty(big, 'size', { value: 11 * 1024 * 1024 })
@@ -79,7 +81,7 @@ test('a file over the limit is refused before it is sent', async () => {
 
 test('a file is sent as the body with its name in a header', async () => {
   const { container } = renderTab([])
-  await screen.findByText('No resources yet')
+  await screen.findByText('0 of 10 resources')
   handler = (url, init) => {
     if (init?.method === 'POST') return { ...PDF, name: 'Week 2 slides.pdf' }
     return { resources: [] }
@@ -149,7 +151,7 @@ test('removing a resource takes it off the list', async () => {
   await screen.findByRole('alertdialog')
   fireEvent.click(screen.getByRole('button', { name: 'Remove resource' }))
 
-  expect(await screen.findByText('No resources yet')).toBeTruthy()
+  expect(await screen.findByText('0 of 10 resources')).toBeTruthy()
   expect(calls.some((call) => call.init?.method === 'DELETE')).toBe(true)
 })
 
@@ -168,7 +170,7 @@ test('the tenth resource disables adding', async () => {
   const full = Array.from({ length: 10 }, (_, number) => ({ ...NOTE, id: `n${number}`, name: `Note ${number}` }))
   renderTab(full)
   expect(await screen.findByText(/at most 10 resources/)).toBeTruthy()
-  expect((screen.getByRole('button', { name: 'Add a resource' }) as HTMLButtonElement).disabled).toBe(true)
+  expect((screen.getByRole('button', { name: 'Add files' }) as HTMLButtonElement).disabled).toBe(true)
 })
 
 test('without a provider a citation does not break the reply', () => {
@@ -181,7 +183,7 @@ test('without a provider a citation does not break the reply', () => {
 
 test('an image over the image limit is refused before it is sent', async () => {
   const { container } = renderTab([])
-  await screen.findByText('No resources yet')
+  await screen.findByText('0 of 10 resources')
   const input = container.querySelector('input[type="file"]') as HTMLInputElement
   const big = new File(['x'], 'photo.png', { type: 'image/png' })
   Object.defineProperty(big, 'size', { value: 6 * 1024 * 1024 })
@@ -190,4 +192,51 @@ test('an image over the image limit is refused before it is sent', async () => {
 
   expect((await screen.findByRole('alert')).textContent).toContain('5 MB')
   expect(calls.some((call) => call.init?.method === 'POST')).toBe(false)
+})
+
+test('a web page is added by its link and shows where it came from (RS-22)', async () => {
+  renderTab([])
+  await screen.findByText('0 of 10 resources')
+  const page = { id: 'w1', kind: 'web', name: 'Photosynthesis basics', media_type: 'text/html', size: 900, pages: 1, url: 'https://www.example.org/plants' }
+  handler = (url, init) => {
+    if (url.endsWith('/resources/web') && init?.method === 'POST') return page
+    if (url.endsWith('/resources/w1')) return { ...page, text_pages: ['Plants make sugar from light.'] }
+    return { resources: [] }
+  }
+
+  fireEvent.change(screen.getByLabelText('Add a web page'), { target: { value: 'https://www.example.org/plants' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add page' }))
+
+  expect(await screen.findByText('Photosynthesis basics')).toBeTruthy()
+  expect(screen.getByText('Web page')).toBeTruthy()
+  expect(screen.getByText('example.org')).toBeTruthy()
+  const post = calls.find((call) => call.url.endsWith('/resources/web'))
+  expect(JSON.parse(String(post?.init?.body))).toEqual({ url: 'https://www.example.org/plants' })
+
+  fireEvent.click(screen.getByRole('button', { name: /^Photosynthesis basics/ }))
+  expect(await screen.findByText('Plants make sugar from light.')).toBeTruthy()
+  const source = screen.getByRole('link', { name: /Open the page on example.org/ })
+  expect(source.getAttribute('href')).toBe('https://www.example.org/plants')
+  expect(source.getAttribute('target')).toBe('_blank')
+})
+
+test('a refused link says why under the field (RS-23)', async () => {
+  renderTab([])
+  await screen.findByText('0 of 10 resources')
+  handler = (url, init) => {
+    if (url.endsWith('/resources/web') && init?.method === 'POST') {
+      return new Response(
+        JSON.stringify({ detail: 'Polaris only fetches public web pages, not addresses on this computer or its network.', code: 'not_public' }),
+        { status: 422, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
+    return { resources: [] }
+  }
+
+  const field = screen.getByLabelText('Add a web page')
+  fireEvent.change(field, { target: { value: 'http://localhost:8000' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Add page' }))
+
+  expect((await screen.findByRole('alert')).textContent).toContain('only fetches public web pages')
+  expect(field.getAttribute('aria-invalid')).toBe('true')
 })

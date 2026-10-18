@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode, Ref, RefObject } from 'react'
-import { Plus } from 'lucide-react'
+import { Globe, Plus } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Deck, Quiz, WhiteboardArtifact } from '../api.ts'
 import { askedStepLabel } from '../animation/askedStep.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
@@ -67,6 +67,9 @@ type ConversationProps = {
   // A picture of the learner's drawing goes with the next message.
   pictureAttached?: boolean
   onRemovePicture?: () => void
+  /** Web mode: the next message lets Polaris search and read the web (CH-23). */
+  webMode?: boolean
+  onToggleWeb?: () => void
   /** The animation step the next turn asks about, shown as a chip (AN-17). */
   animationStep?: AskedStep | null
   onRemoveAnimationStep?: () => void
@@ -141,6 +144,8 @@ export function Conversation({
   onRemovePoint,
   pictureAttached = false,
   onRemovePicture,
+  webMode = false,
+  onToggleWeb,
   animationStep = null,
   onRemoveAnimationStep,
   onAsk,
@@ -163,6 +168,7 @@ export function Conversation({
   const stop = useSteady(onStop)
   const removePoint = useSteady(onRemovePoint ?? noHandler)
   const removePicture = useSteady(onRemovePicture ?? noHandler)
+  const toggleWeb = useSteady(onToggleWeb ?? noHandler)
   const removeAnimationStep = useSteady(onRemoveAnimationStep ?? noHandler)
   const openTools = useSteady(onOpenTools ?? noHandler)
 
@@ -250,6 +256,8 @@ export function Conversation({
           onRemovePoint={onRemovePoint ? removePoint : undefined}
           pictureAttached={pictureAttached}
           onRemovePicture={onRemovePicture ? removePicture : undefined}
+          webMode={webMode}
+          onToggleWeb={onToggleWeb ? toggleWeb : undefined}
           animationStep={animationStep}
           onRemoveAnimationStep={onRemoveAnimationStep ? removeAnimationStep : undefined}
           onOpenTools={onOpenTools ? openTools : undefined}
@@ -275,6 +283,8 @@ const Composer = memo(function Composer({
   onRemovePoint,
   pictureAttached,
   onRemovePicture,
+  webMode,
+  onToggleWeb,
   animationStep,
   onRemoveAnimationStep,
   onOpenTools,
@@ -290,6 +300,8 @@ const Composer = memo(function Composer({
   onRemovePoint?: (elementId: string) => void
   pictureAttached: boolean
   onRemovePicture?: () => void
+  webMode: boolean
+  onToggleWeb?: () => void
   animationStep: AskedStep | null
   onRemoveAnimationStep?: () => void
   onOpenTools?: () => void
@@ -323,6 +335,7 @@ const Composer = memo(function Composer({
         <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
       ) : null}
       {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
+      {webMode ? <WebChip onRemove={onToggleWeb} /> : null}
       {animationStep ? <StepChip step={animationStep} onRemove={onRemoveAnimationStep} /> : null}
       <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
         {onOpenTools ? (
@@ -335,6 +348,21 @@ const Composer = memo(function Composer({
             onClick={onOpenTools}
           >
             <Plus size={20} strokeWidth={2} aria-hidden="true" />
+          </button>
+        ) : null}
+        {onToggleWeb ? (
+          <button
+            type="button"
+            className={
+              webMode
+                ? 'icon-btn icon-btn--ghost icon-btn--md web-toggle is-on'
+                : 'icon-btn icon-btn--ghost icon-btn--md web-toggle'
+            }
+            aria-label="Web mode"
+            aria-pressed={webMode}
+            onClick={onToggleWeb}
+          >
+            <Globe size={20} strokeWidth={2} aria-hidden="true" />
           </button>
         ) : null}
         <label className="visually-hidden" htmlFor="learner-message">
@@ -420,6 +448,22 @@ function PictureChip({ onRemove }: { onRemove?: () => void }) {
             aria-label={`Remove ${PICTURE_LABEL.toLowerCase()}`}
             onClick={onRemove}
           >
+            <span aria-hidden="true">×</span>
+          </button>
+        ) : null}
+      </li>
+    </ul>
+  )
+}
+
+/** Says in text that web mode is on, since the toggle is an icon (CH-28). */
+function WebChip({ onRemove }: { onRemove?: () => void }) {
+  return (
+    <ul className="point-chips" aria-label="Web mode">
+      <li className="point-chip">
+        <span>Web mode on: Polaris can search the web</span>
+        {onRemove ? (
+          <button type="button" className="ghost" aria-label="Turn off web mode" onClick={onRemove}>
             <span aria-hidden="true">×</span>
           </button>
         ) : null}

@@ -10,10 +10,10 @@ These docs are the language and the rules for Polaris. Read them before changing
 4. Use the feature page for the rules of that feature. Each rule has an id. A scenario names the rule it checks.
 5. Use [research](research/) for findings that propose a change. A research note changes no rule or decision until that change is accepted.
 
-- [Chat](features/chat.md)
+- [Chat](features/chat.md). Web mode lets one message use the web, and only public pages are read ([decision 0013](decisions/0013-web-only-on-request-and-public.md)).
 - [Profile](features/profile.md). PR-01 through PR-08 are in force. The session-end writer is accepted so it can run. The pass design still needs research; see [decision 0003](decisions/0003-profile-pass-is-a-proposal.md). During a session with an empty profile, every reply still asks and does not teach ([decision 0005](decisions/0005-empty-profile-keeps-asking.md)).
 - [Whiteboard](features/whiteboard.md). New drawings are one format version; see [decision 0006](decisions/0006-one-drawing-format-version.md).
-- [Resources](features/resources.md). Material the learner adds to a session for the agent to explain from and cite. The agent reads it and never writes it.
+- [Resources](features/resources.md). Material the learner adds to a session for the agent to explain from and cite, including a web page by its link. The agent reads it and never writes it.
 - [Quiz](features/quiz.md)
 - [Flashcards](features/flashcards.md). A deck for revision, built only from the session's turns and resources and checked by code before it is stored ([decision 0012](decisions/0012-deck-sources-checked-by-code.md)).
 - [Animation](features/animation.md). A new animation is data that Polaris plays, not code ([decision 0006](decisions/0006-animation-is-data-not-code.md)). On `feat/animation`, a small evaluation sends maths and heavy graphs to Manim and everything else to Lottie (AN-21). Both engines come from experiments that [decision 0006](decisions/0006-animation-is-data-not-code.md) has not yet accepted; see [the Lottie experiment](experiments/lottie-animation.md) and [the Manim research](research/0003-manim-experiment.md).

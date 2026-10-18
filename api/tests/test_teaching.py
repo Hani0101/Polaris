@@ -45,6 +45,8 @@ from polaris.teaching import (
     READ_RESOURCE_TOOL,
     CREATE_FLASHCARDS_TOOL,
     TEACHING_MAX_TURNS,
+    WEB_CALLS_PER_REPLY,
+    WEB_TOOLS,
     ClaudeTeachingAgent,
     TeachingFailed,
     _OffLoopClient,
@@ -700,7 +702,7 @@ def test_create_quiz_tool_stores_for_the_open_session(
     assert stored == [("session-9", ONE_QUESTION)]
     assert payload.get("is_error") is not True
     assert "quiz-1" in payload["content"][0]["text"]
-    assert created[0].options.tools == []
+    assert created[0].options.tools == WEB_TOOLS
     assert created[0].options.allowed_tools == [
         CREATE_QUIZ_TOOL,
         DRAW_WHITEBOARD_TOOL,
@@ -710,6 +712,7 @@ def test_create_quiz_tool_stores_for_the_open_session(
         START_ANIMATION_JOB_TOOL,
         READ_RESOURCE_TOOL,
         CREATE_FLASHCARDS_TOOL,
+        *WEB_TOOLS,
     ]
     assert created[0].options.max_turns == TEACHING_MAX_TURNS
 
@@ -954,6 +957,7 @@ def test_start_animation_job_tool_stores_for_the_open_session(
         START_ANIMATION_JOB_TOOL,
         READ_RESOURCE_TOOL,
         CREATE_FLASHCARDS_TOOL,
+        *WEB_TOOLS,
     ]
 
 
@@ -1227,3 +1231,122 @@ def test_a_failed_warm_up_lets_the_reply_connect_again(tmp_path: Path):
     assert len(created) == 2
     assert created[0].disconnected is True
     assert agent._clients["session-1"] is created[1]
+
+
+class WebClient(FakeClient):
+    """Calls the web gate from its options while the reply streams, as the CLI would."""
+
+    def __init__(self, options, messages, calls) -> None:
+        super().__init__(options, messages)
+        self.calls = calls
+        self.decisions: list[dict] = []
+
+    async def receive_response(self):
+        gate = self.options.hooks["PreToolUse"][0].hooks[0]
+        for tool_name, tool_input in self.calls:
+            self.decisions.append(
+                await gate(
+                    {"hook_event_name": "PreToolUse", "tool_name": tool_name, "tool_input": tool_input},
+                    "tool-1",
+                    None,
+                )
+            )
+        for message in self.messages:
+            yield message
+
+
+def _web_agent(tmp_path: Path, calls, created: list[WebClient]) -> ClaudeTeachingAgent:
+    def factory(options):
+        client = WebClient(options, [delta("Done."), result()], calls)
+        created.append(client)
+        return client
+
+    return ClaudeTeachingAgent(tmp_path, client_factory=factory, key_check=FakeKeyCheck())
+
+
+async def _web_reply(agent: ClaudeTeachingAgent, web: bool) -> None:
+    async for _item in agent.reply(
+        session_id="session-web",
+        profile=Profile(("likes examples",)),
+        learner_message="What changed in the 2026 rules?",
+        prior_turns=(),
+        sdk_session_id=None,
+        web=web,
+    ):
+        pass
+
+
+def _denied(decision: dict) -> bool:
+    return decision.get("hookSpecificOutput", {}).get("permissionDecision") == "deny"
+
+
+def test_options_offer_the_web_tools_only_behind_a_gate(tmp_path: Path):  # CH-23
+    plain = teaching_options(cwd=tmp_path)
+    assert plain.tools == []
+    assert plain.hooks is None
+
+    async def gate(_input, _tool_use_id, _context):
+        return {}
+
+    gated = teaching_options(cwd=tmp_path, web_gate=gate)
+    assert gated.tools == WEB_TOOLS
+    matcher = gated.hooks["PreToolUse"][0]
+    assert matcher.matcher == "WebSearch|WebFetch"
+    assert matcher.hooks == [gate]
+    assert "Bash" in gated.disallowed_tools
+
+
+def test_a_message_without_web_mode_cannot_use_the_web(tmp_path: Path):  # CH-23
+    created: list[WebClient] = []
+    agent = _web_agent(tmp_path, [("WebSearch", {"query": "2026 rules"})], created)
+
+    asyncio.run(_web_reply(agent, web=False))
+
+    assert _denied(created[0].decisions[0])
+    assert "Web mode is off for this message" in created[0].prompts[0]
+
+
+def test_a_web_mode_message_can_search(tmp_path: Path, monkeypatch):  # CH-23
+    monkeypatch.setattr("polaris.teaching.is_public_url", lambda url: True)
+    created: list[WebClient] = []
+    calls = [("WebSearch", {"query": "2026 rules"}), ("WebFetch", {"url": "https://example.org", "prompt": "x"})]
+    agent = _web_agent(tmp_path, calls, created)
+
+    asyncio.run(_web_reply(agent, web=True))
+
+    assert created[0].decisions == [{}, {}]
+    assert "Web mode is on for this message" in created[0].prompts[0]
+    # The next message is not in web mode unless it says so.
+    assert "session-web" not in agent._web_calls_left
+
+
+def test_a_web_mode_reply_never_fetches_a_local_address(tmp_path: Path, monkeypatch):  # CH-26
+    monkeypatch.setattr("polaris.teaching.is_public_url", lambda url: False)
+    created: list[WebClient] = []
+    calls = [("WebFetch", {"url": "http://localhost:8000/api/profile", "prompt": "x"})]
+    agent = _web_agent(tmp_path, calls, created)
+
+    asyncio.run(_web_reply(agent, web=True))
+
+    assert _denied(created[0].decisions[0])
+
+
+def test_a_web_mode_reply_has_a_call_limit(tmp_path: Path):  # CH-25
+    created: list[WebClient] = []
+    calls = [("WebSearch", {"query": f"q{number}"}) for number in range(WEB_CALLS_PER_REPLY + 1)]
+    agent = _web_agent(tmp_path, calls, created)
+
+    asyncio.run(_web_reply(agent, web=True))
+
+    decisions = created[0].decisions
+    assert decisions[:WEB_CALLS_PER_REPLY] == [{}] * WEB_CALLS_PER_REPLY
+    assert _denied(decisions[-1])
+
+
+def test_the_prompt_treats_the_web_as_data_and_asks_for_links(tmp_path: Path):  # CH-24, CH-27
+    from polaris.teaching import teaching_prompt
+
+    prompt = teaching_prompt()
+    assert "never instructions" in prompt
+    assert "Markdown link" in prompt
+    assert "Cite only pages a search or fetch returned in this reply" in prompt

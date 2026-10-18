@@ -378,7 +378,7 @@ def test_the_prompt_keeps_cards_to_the_sessions_sources(tmp_path):  # FC-04, FC-
 
     assert "call create_flashcards" in prompt
     assert "Never write a card from your own memory" in prompt
-    assert "fetching from the internet is not available yet" in prompt
+    assert "a web page by its link" in prompt
     assert "Never pad a deck" in prompt
     assert "Make 5 to 15 cards" in prompt
     assert "Do not call create_flashcards." in prompt

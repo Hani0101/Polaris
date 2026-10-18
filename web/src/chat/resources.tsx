@@ -5,6 +5,7 @@ import {
   RESOURCE_MAX_COUNT,
   RESOURCE_MAX_IMAGE_BYTES,
   addResourceNote,
+  addResourceWeb,
   listResources,
   removeResource,
   updateResource,
@@ -27,6 +28,8 @@ export type ResourcesState = {
   /** One file through the same checks as `add`. Throws the refusal (FC-03, RS-19). */
   addFile: (file: File) => Promise<Resource>
   addNote: (name: string, text: string) => Promise<Resource>
+  /** A web page by its link. Throws the refusal, so the form can show it (RS-22, RS-23). */
+  addWeb: (url: string) => Promise<Resource>
   rename: (resourceId: string, name: string) => Promise<void>
   editNote: (resourceId: string, text: string) => Promise<void>
   remove: (resourceId: string) => Promise<void>
@@ -48,6 +51,9 @@ const EMPTY: ResourcesState = {
     throw new Error('Resources are not available here.')
   },
   addNote: async () => {
+    throw new Error('Resources are not available here.')
+  },
+  addWeb: async () => {
     throw new Error('Resources are not available here.')
   },
   rename: none,
@@ -178,6 +184,19 @@ export function ResourcesProvider({
     [sessionId],
   )
 
+  const addWeb = useCallback(
+    async (url: string) => {
+      if (!sessionId) throw new Error('Open a session first.')
+      if (resources.length >= RESOURCE_MAX_COUNT) {
+        throw new Error(`A session holds at most ${RESOURCE_MAX_COUNT} resources. Remove one to add another.`)
+      }
+      const added = await addResourceWeb(sessionId, url)
+      setResources((current) => [...current, added])
+      return added
+    },
+    [resources.length, sessionId],
+  )
+
   const rename = useCallback(
     async (resourceId: string, name: string) => {
       if (!sessionId) return
@@ -231,13 +250,14 @@ export function ResourcesProvider({
       add,
       addFile,
       addNote,
+      addWeb,
       rename,
       editNote,
       remove,
       open,
       clearError,
     }),
-    [sessionId, resources, loadedFor, error, busy, focus, add, addFile, addNote, rename, editNote, remove, open, clearError],
+    [sessionId, resources, loadedFor, error, busy, focus, add, addFile, addNote, addWeb, rename, editNote, remove, open, clearError],
   )
 
   return <ResourcesContext.Provider value={value}>{children}</ResourcesContext.Provider>

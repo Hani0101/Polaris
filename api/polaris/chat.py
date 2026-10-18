@@ -763,6 +763,7 @@ class Chat:
         picture: BoardPicture | None = None,
         animation_step: AnimationStep | None = None,
         pinned: Whiteboard | None = None,
+        web: bool = False,
     ) -> AsyncIterator[str | dict[str, object]]:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
@@ -795,7 +796,10 @@ class Chat:
             extra: dict[str, Any] = {"picture": picture} if picture is not None else {}
             if pinned is not None:
                 extra["pinned"] = pinned
-            animations = await asyncio.to_thread(self.animations_for_reply, session_id)
+            # Only a web-mode reply gets the web tools (CH-23).
+            if web:
+                extra["web"] = True
+            animations =await asyncio.to_thread(self.animations_for_reply, session_id)
             # The agent sees the resource list as it stands now (RS-17).
             resource_lines = await asyncio.to_thread(
                 self.resources.prompt_lines, session_id
@@ -920,6 +924,14 @@ class Chat:
         self._require_open_for_resource(session_id)
         return self._guard_late_resource(
             session_id, lambda: self.resources.add_note(session_id, name, text)
+        )
+
+    def add_resource_web(self, session_id: str, url: str) -> dict[str, object]:
+        """Fetch a public page by its link (RS-22). The fetch runs before the late-file check."""
+
+        self._require_open_for_resource(session_id)
+        return self._guard_late_resource(
+            session_id, lambda: self.resources.add_web(session_id, url)
         )
 
     def _guard_late_resource(

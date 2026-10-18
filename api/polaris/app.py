@@ -80,11 +80,17 @@ class TurnBody(BaseModel):
     animation_step: AnimationStepBody | None = None
     # The board pinned above the conversation. The turn is about it (WB-19).
     pinned_whiteboard_id: str | None = None
+    # Web mode: the agent may search and read the web for this reply only (CH-23).
+    web: bool = False
 
 
 class NoteBody(BaseModel):
     name: str = ""
     text: str
+
+
+class WebPageBody(BaseModel):
+    url: str
 
 
 class ResourceEditBody(BaseModel):
@@ -335,7 +341,7 @@ def create_app(
 
     @app.exception_handler(ResourceRefused)
     async def resource_refused(_request, exc: ResourceRefused) -> JSONResponse:
-        status = 413 if exc.code == "too_big" else 422
+        status = {"too_big": 413, "fetch_failed": 502}.get(exc.code, 422)
         return JSONResponse(
             status_code=status, content={"detail": str(exc), "code": exc.code}
         )
@@ -547,6 +553,7 @@ def create_app(
                     picture=picture,
                     animation_step=animation_step,
                     pinned=pinned,
+                    web=body.web,
                 ):
                     if isinstance(chunk, str):
                         yield _sse({"text": chunk})
@@ -615,6 +622,12 @@ def create_app(
     @app.post("/api/sessions/{session_id}/resources/notes", status_code=201)
     def add_resource_note(session_id: str, body: NoteBody) -> dict[str, object]:
         return chat.add_resource_note(session_id, body.name, body.text)
+
+    @app.post("/api/sessions/{session_id}/resources/web", status_code=201)
+    async def add_resource_web(session_id: str, body: WebPageBody) -> dict[str, object]:
+        """Fetch a public page by its link (RS-22). The fetch blocks, so it runs off the loop."""
+
+        return await asyncio.to_thread(chat.add_resource_web, session_id, body.url)
 
     @app.get("/api/sessions/{session_id}/resources/{resource_id}")
     def read_resource(session_id: str, resource_id: str) -> dict[str, object]:

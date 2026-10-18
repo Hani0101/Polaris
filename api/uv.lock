@@ -50,6 +50,7 @@ dependencies = [
     { name = "pylatexenc" },
     { name = "pypdf" },
     { name = "simpleeval" },
+    { name = "truststore" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -68,6 +69,7 @@ requires-dist = [
     { name = "pylatexenc", specifier = "==2.11" },
     { name = "pypdf", specifier = "==6.1.0" },
     { name = "simpleeval", specifier = "==1.0.8" },
+    { name = "truststore", specifier = "==0.10.5" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.54.0" },
 ]
 

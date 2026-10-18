@@ -10,7 +10,7 @@ FC-03  The dialog asks what the flashcards should be about. The learner can type
 FC-04  A deck can be built only from the turns of its session and from its resources. Nothing else is a source in v1.
 FC-05  A flashcard has a front, a back, and a source. The front is a question or a term for one concept. The back is a summary of at most about three sentences. The source is shown on the back: a PDF as the resource and page, for example "Notes.pdf, p. 4", another resource as its name and the quoted phrase (RS-09), and a turn as its number, for example "Turn 3".
 FC-06  Before a deck is stored, code checks the source of every card. A cited PDF page must exist, a quoted phrase must appear in that resource's extracted text, and a cited turn must exist in the session. A card that fails is a refusal of the whole deck. The agent is told which card to fix and may send the deck once more in the same reply. No second model is used.
-FC-07  When no turn or resource covers what the learner asked for, no deck is stored. The agent says so, offers what works now, which is teaching the topic in the chat first or adding a resource to the session, and says that fetching from the internet is not available yet. It never writes cards from its own memory.
+FC-07  When no turn or resource covers what the learner asked for, no deck is stored. The agent says so, offers what works now, which is teaching the topic in the chat first or adding a resource to the session, such as a web page by its link (RS-22). It never writes cards from its own memory.
 FC-08  A deck is never padded. When the sources support fewer cards than asked for, the deck has fewer, and the agent says how many the sources supported.
 FC-09  A deck has 5 to 15 cards unless the learner asks for more. A request for more is honored up to 30 cards. Past 30 the agent says so and offers a second deck.
 FC-10  Card text is plain text. A card has no image and no whiteboard. Raw HTML in a card is shown as text and never rendered.
@@ -97,8 +97,7 @@ Scenario: no source means no deck  [FC-07]
   Given a session with no turns on and no resource about volcanoes
   When the learner asks for volcano flashcards
   Then no deck is stored
-  And the agent offers to teach the topic or take a resource
-  And it says fetching from the internet is not available yet
+  And the agent offers to teach the topic or take a resource, such as a web page by its link
 
 Scenario: a deck is not padded  [FC-08]
   Given a note that supports only 8 cards

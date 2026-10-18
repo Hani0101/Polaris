@@ -10,4 +10,4 @@ The second defence is a check in code before the deck is stored (FC-06). A cited
 
 The quiz uses a second model to answer the questions without the key (QZ-12). Flashcards do not. The check is mechanical, costs no model call, and catches the failure that matters most, an invented citation. The cost is that it does not prove a card's claim matches the text it cites. A card can quote a real phrase and still summarise it badly. That gap is accepted for v1. A check that asks a model whether the claim follows from the quote is parked in `later.md`.
 
-The check applies to the sources v1 has. Fetching from the internet is a later source ([product](../product.md)); until it ships, the agent says it is not available (FC-07). When it does, a fetched page becomes a source the same code can check, and this decision is revisited then.
+The check applies to the sources v1 has. A web page the learner adds by its link is a resource, so the same code checks a card that cites it (RS-22). Revisited for [decision 0013](0013-web-only-on-request-and-public.md): the check stays as it is.

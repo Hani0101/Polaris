@@ -41,20 +41,6 @@
   transform: translateY(-50%);
 }
 
-.text-input.is-error,
-.text-input.is-error:hover {
-  border: var(--border-width-emphasis) solid var(--color-state-error);
-}
-
-.field-error {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  font-size: var(--font-size-sm);
-  line-height: var(--font-line-height-normal);
-  color: var(--color-state-error);
-}
-
 /* Button loading: the spinner replaces the text and the width is kept. */
 .si-submit {
   position: relative;

@@ -258,6 +258,9 @@ function App() {
   const [boards, setBoards] = useState<WhiteboardArtifact[]>([])
   const [creatingBoard, setCreatingBoard] = useState(false)
   const [askedStep, setAskedStep] = useState<AskedStep | null>(null)
+  // Web mode stays on for the session's next messages until turned off. Every
+  // session opens with it off (CH-23).
+  const [webMode, setWebMode] = useState(false)
   // Steps asked about in this visit, so a saved turn's chip can name them.
   const [knownSteps, setKnownSteps] = useState<ReadonlyMap<string, AskedStep>>(() => new Map())
   const [pending, setPending] = useState<PendingTurn | null>(null)
@@ -484,6 +487,7 @@ function App() {
     setPinnedId(null)
     setBoards([])
     setAskedStep(null)
+    setWebMode(false)
     setSendError(null)
   }
 
@@ -768,6 +772,7 @@ function App() {
           picture: sentPicture,
           animationStep: step,
           pinnedWhiteboardId: sentPinned,
+          web: webMode,
         },
       )
       if (controller.signal.aborted) return
@@ -866,6 +871,7 @@ function App() {
     onSimpler: (id: string) => void askSimpler(id),
     onRemovePoint: removePoint,
     onRemovePicture: () => setPicture(null),
+    onToggleWeb: () => setWebMode((current) => !current),
     onAsk: askAbout,
     onAskAboutStep: askAboutStep,
     onRemoveAnimationStep: () => setAskedStep(null),
@@ -995,6 +1001,7 @@ function App() {
           sendError={sendError}
           pointing={pointing}
           pictureAttached={sendablePicture !== null}
+          webMode={webMode}
           animationStep={askedStep}
           toast={toast}
           artifacts={artifacts}

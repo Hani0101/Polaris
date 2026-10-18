@@ -1,12 +1,12 @@
 # Resources
 
-A resource is material the learner gives Polaris to explain from. It is not an artifact: the learner provides it, and the agent only reads it.
+A resource is material the learner gives Polaris to explain from, including a web page they add by its link. It is not an artifact: the learner provides it, and the agent only reads it.
 
 ## Rules
 
 RS-01  A resource belongs to one session. Anonymous and signed-in sessions treat resources the same way.
 RS-02  Resources are in a Resources tab in the right panel, next to the whiteboard and animation tabs. On a phone the tab behaves like the other tabs.
-RS-03  A resource is one of: a PDF, a Word document (`.docx`), a plain-text or Markdown file, a note the learner types in the panel, or an image (PNG or JPEG). Other types are refused.
+RS-03  A resource is one of: a PDF, a Word document (`.docx`), a plain-text or Markdown file, a note the learner types in the panel, an image (PNG or JPEG), or a web page added by its link (RS-22). Other types are refused.
 RS-04  A file is at most 10 MB, an image is at most 5 MB (the most Claude can view), and a session holds at most 10 resources. The server enforces both limits and the client shows them early. A refusal names the limit.
 RS-05  The server checks a file's type by its content. The extension is only a hint. A file whose content does not match an allowed type is refused as the wrong type.
 RS-06  Text is taken out of a PDF or Word document by Polaris code when the file is added. An image is given to Claude as an image. A PDF with no readable text is refused with "no readable text in this file". A PDF that needs a password to open is refused and says so. One that only limits copying or printing is read as normal. There is no OCR.
@@ -25,6 +25,9 @@ RS-18  Polaris keeps each resource's original file and its extracted text on thi
 RS-19  With no resources, the tab says what can be added and states the limits. A refusal says why: too big, wrong type, no readable text, or limit reached.
 RS-20  The Resources tab fits a phone from 320px wide with no horizontal scroll, and works by keyboard and screen reader (WCAG AA).
 RS-21  The profile pass never reads a resource's content (PR-10).
+RS-22  The learner can add a web page by pasting its link in the Resources tab. Polaris fetches it once, when it is added, and takes its text out; scripts, styles, and markup are dropped (RS-12). A link to a PDF, Word document, text file, or image is checked by its content as that type (RS-05). The resource is named by the page title, shows where it came from, and links to the page. It is cited like any non-PDF resource, or by page when it is a PDF (RS-09).
+RS-23  Polaris fetches a page only from a public address: never one on this machine or its local network (CH-26). It follows at most 5 redirects and checks each one, gives up after 15 seconds, and refuses a page over 10 MB. A refusal says why: not a web address, not a public address, could not be fetched, too big, wrong type, or no readable text (RS-19).
+RS-24  A web page resource is the page as it was when added. Polaris does not fetch it again. To get a newer version, remove it and add the link again (RS-14).
 
 ## Scenarios
 
@@ -197,6 +200,32 @@ Scenario: the profile ignores resource content  [RS-21, PR-10]
   Given a signed-in session with a textbook resource
   When the learner leaves the session
   Then no fact stored in the profile came from the textbook
+
+Scenario: a web page is added by its link  [RS-22]
+  Given the Resources tab is open
+  When the learner pastes the link of a public article and adds it
+  Then it is listed as a web page named by its title
+  And its preview shows the page text and a link to the page
+
+Scenario: a linked PDF is checked as a PDF  [RS-22, RS-05]
+  Given a link to a public PDF
+  When the learner adds it
+  Then it is listed as a PDF and previews page by page
+
+Scenario: a local link is refused  [RS-23, CH-26]
+  Given the link http://localhost:8000/api/profile
+  When the learner adds it
+  Then it is refused as not a public address and nothing is stored
+
+Scenario: a page that cannot be fetched says so  [RS-23]
+  Given a link to a site that does not answer
+  When the learner adds it
+  Then the field says the page could not be fetched
+
+Scenario: a web page is kept as it was  [RS-24]
+  Given a web page resource added yesterday
+  When the page changes on the web
+  Then the resource still shows the text from when it was added
 
 ## Evals
 

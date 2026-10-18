@@ -1,15 +1,17 @@
 import { useEffect, useId, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, ReactNode } from 'react'
+import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from 'react'
 import {
   ArrowLeft,
-  BookOpen,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
   FileText,
+  Globe,
   Image as ImageIcon,
   NotebookPen,
   Pencil,
   Trash2,
+  Upload,
 } from 'lucide-react'
 import {
   RESOURCE_ACCEPT,
@@ -23,7 +25,8 @@ import {
 import type { Resource, ResourceKind, ResourceView } from '../api.ts'
 import { Modal } from './Modal.tsx'
 import { useResources } from './resources.tsx'
-import { AlertBanner, Badge, IconButton } from './ui.tsx'
+import { AlertBanner, AlertIcon, Badge, IconButton } from './ui.tsx'
+import '../quiz.css'
 
 const KIND_LABEL: Record<ResourceKind, string> = {
   pdf: 'PDF',
@@ -31,6 +34,16 @@ const KIND_LABEL: Record<ResourceKind, string> = {
   text: 'Text',
   note: 'Note',
   image: 'Image',
+  web: 'Web page',
+}
+
+function hostOf(url: string | null | undefined): string {
+  if (!url) return ''
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
 }
 
 const LIMIT_MB = RESOURCE_MAX_BYTES / (1024 * 1024)
@@ -40,15 +53,86 @@ function KindIcon({ kind }: { kind: ResourceKind }) {
   const props = { size: 16, strokeWidth: 2, 'aria-hidden': true } as const
   if (kind === 'image') return <ImageIcon {...props} />
   if (kind === 'note') return <NotebookPen {...props} />
+  if (kind === 'web') return <Globe {...props} />
   return <FileText {...props} />
 }
 
 function describe(resource: Resource): string {
+  if (resource.kind === 'web') return hostOf(resource.url)
+  const from = resource.url ? ` from ${hostOf(resource.url)}` : ''
   if (resource.kind === 'pdf') {
-    return resource.pages === 1 ? '1 page' : `${resource.pages} pages`
+    return (resource.pages === 1 ? '1 page' : `${resource.pages} pages`) + from
   }
-  if (resource.kind === 'image') return `${Math.max(1, Math.round(resource.size / 1024))} KB`
-  return `${Math.max(1, Math.round(resource.size / 1024))} KB of text`
+  if (resource.kind === 'image') return `${Math.max(1, Math.round(resource.size / 1024))} KB${from}`
+  return `${Math.max(1, Math.round(resource.size / 1024))} KB of text${from}`
+}
+
+/** Add a public web page by its link (RS-22). A refusal shows under the field (RS-19, RS-23). */
+function WebPageForm({ disabled }: { disabled: boolean }) {
+  const { addWeb } = useResources()
+  const [url, setUrl] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const id = useId()
+
+  async function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const link = url.trim()
+    if (!link) {
+      setError('Paste the link of a web page.')
+      return
+    }
+    setAdding(true)
+    setError(null)
+    try {
+      await addWeb(link)
+      setUrl('')
+    } catch (caught) {
+      setError(caught instanceof Error && caught.message ? caught.message : "Couldn't add that page. Try again.")
+    } finally {
+      setAdding(false)
+    }
+  }
+
+  return (
+    <form className="field resource-web" onSubmit={(event) => void onSubmit(event)} noValidate>
+      <label className="field-label" htmlFor={id}>
+        Add a web page
+      </label>
+      <div className="resource-web-row">
+        <input
+          id={id}
+          type="url"
+          inputMode="url"
+          className={error ? 'text-input is-error' : 'text-input'}
+          placeholder="https://example.org/article"
+          value={url}
+          autoComplete="off"
+          spellCheck={false}
+          disabled={disabled || adding}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={`${id}-note`}
+          onChange={(event) => {
+            setUrl(event.target.value)
+            if (error) setError(null)
+          }}
+        />
+        <button type="submit" className="secondary" disabled={disabled || adding}>
+          {adding ? 'Adding' : 'Add page'}
+        </button>
+      </div>
+      {error ? (
+        <p id={`${id}-note`} className="field-error" role="alert">
+          <AlertIcon />
+          <span>{error}</span>
+        </p>
+      ) : (
+        <p id={`${id}-note`} className="field-help">
+          Polaris reads the page once, from its public address.
+        </p>
+      )}
+    </form>
+  )
 }
 
 /**
@@ -125,9 +209,16 @@ export function ResourcesTab() {
         />
       ) : (
         <>
+          <WebPageForm disabled={full} />
           <div className="tools-actions">
-            <button type="button" onClick={() => picker.current?.click()} disabled={state.busy || full}>
-              {state.busy ? 'Adding' : 'Add a resource'}
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => picker.current?.click()}
+              disabled={state.busy || full}
+            >
+              <Upload size={20} strokeWidth={2} aria-hidden="true" />
+              {state.busy ? 'Adding' : 'Add files'}
             </button>
             <button
               type="button"
@@ -135,6 +226,7 @@ export function ResourcesTab() {
               onClick={() => setNoteFor({ resource: null, text: '' })}
               disabled={full}
             >
+              <NotebookPen size={20} strokeWidth={2} aria-hidden="true" />
               Write a note
             </button>
             <input
@@ -148,16 +240,23 @@ export function ResourcesTab() {
               onChange={onPick}
             />
           </div>
-          {resources.length === 0 ? (
-            <div className="empty-state tools-empty">
-              <BookOpen size={24} strokeWidth={2} aria-hidden="true" />
-              <h3 className="empty-state-title">No resources yet</h3>
-              <p className="empty-state-body">
-                Add a PDF, Word document, text file, image, or your own note, and Polaris explains
-                from it. A file can be up to {LIMIT_MB} MB, an image up to {IMAGE_LIMIT_MB} MB, and a session holds {RESOURCE_MAX_COUNT}.
+          {full ? (
+            <p className="field-help">
+              A session holds at most {RESOURCE_MAX_COUNT} resources. Remove one to add another.
+            </p>
+          ) : (
+            <div className="resource-drop">
+              <Upload size={24} strokeWidth={2} aria-hidden="true" />
+              <p className="resource-drop-title">Drop files here to add them</p>
+              <p className="resource-drop-body">
+                Polaris explains from a PDF, Word document, text or Markdown file, PNG or JPEG
+                image, or your own note. A file can be up to {LIMIT_MB} MB and an image up to{' '}
+                {IMAGE_LIMIT_MB} MB.
               </p>
             </div>
-          ) : (
+          )}
+          {state.loaded ? <ResourceCount count={resources.length} /> : null}
+          {resources.length > 0 ? (
             <ul className="tools-artifacts" aria-label="Resources in this session">
               {resources.map((resource) => (
                 <li key={resource.id}>
@@ -170,11 +269,6 @@ export function ResourcesTab() {
                 </li>
               ))}
             </ul>
-          )}
-          {full ? (
-            <p className="field-help">
-              A session holds at most {RESOURCE_MAX_COUNT} resources. Remove one to add another.
-            </p>
           ) : null}
         </>
       )}
@@ -210,6 +304,20 @@ export function ResourcesTab() {
           setNoteFor(null)
         }}
       />
+    </div>
+  )
+}
+
+/** How many of the session's resources are used (RS-04). The text says the same as the bar. */
+function ResourceCount({ count }: { count: number }) {
+  return (
+    <div className="qz-progress">
+      <p className="qz-progress-text">
+        {count} of {RESOURCE_MAX_COUNT} resources
+      </p>
+      <div className="qz-progress-track" aria-hidden="true">
+        <div className="qz-progress-fill" style={{ width: `${(count / RESOURCE_MAX_COUNT) * 100}%` }} />
+      </div>
     </div>
   )
 }
@@ -330,6 +438,9 @@ function ResourcePreview({
         {resource.kind === 'docx' ? (
           <p className="field-help">This shows the text of the document only.</p>
         ) : null}
+        {resource.kind === 'web' ? (
+          <p className="field-help">This shows the text of the page as it was when you added it.</p>
+        ) : null}
         <pre className="resource-text">{pages.join('\n\n')}</pre>
       </>
     )
@@ -357,6 +468,15 @@ function ResourcePreview({
             Edit note
           </button>
         </div>
+      ) : null}
+      {resource.url ? (
+        <p className="resource-source">
+          <a href={resource.url} target="_blank" rel="noreferrer noopener">
+            Open the page on {hostOf(resource.url)}
+            <ExternalLink size={16} strokeWidth={2} aria-hidden="true" />
+            <span className="visually-hidden"> (opens in a new tab)</span>
+          </a>
+        </p>
       ) : null}
       <div className="resource-preview-body" role="region" aria-labelledby={heading}>
         {body}

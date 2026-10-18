@@ -267,6 +267,8 @@ export type TurnBody = {
   picture?: BoardPicture
   animation_step?: TurnAnimationStep
   pinned_whiteboard_id?: string
+  /** Web mode: the agent may search and read the web for this reply only (CH-23). */
+  web?: boolean
 }
 
 /** A PNG of one whiteboard, sent with the next turn only. data is base64. */
@@ -283,6 +285,7 @@ export function turnBody(
   picture?: BoardPicture | null,
   animationStep?: { jobId: string; stepId: string } | null,
   pinnedWhiteboardId?: string | null,
+  web?: boolean,
 ): TurnBody {
   const body: TurnBody = { message }
   if (pointing && pointing.parts.length > 0) {
@@ -297,6 +300,7 @@ export function turnBody(
     body.animation_step = { job_id: animationStep.jobId, step_id: animationStep.stepId }
   }
   if (pinnedWhiteboardId) body.pinned_whiteboard_id = pinnedWhiteboardId
+  if (web) body.web = true
   return body
 }
 
@@ -516,6 +520,7 @@ export async function sendTurn(
     picture?: BoardPicture | null
     animationStep?: { jobId: string; stepId: string } | null
     pinnedWhiteboardId?: string | null
+    web?: boolean
   },
 ): Promise<void> {
   const response = await fetch(`/api/sessions/${sessionId}/turns`, {
@@ -533,6 +538,7 @@ export async function sendTurn(
         options?.picture,
         options?.animationStep,
         options?.pinnedWhiteboardId,
+        options?.web,
       ),
     ),
     signal: options?.signal,
@@ -560,7 +566,7 @@ export async function sendTurn(
   if (!sawDone) throw new Error('The reply ended early.')
 }
 
-export type ResourceKind = 'pdf' | 'docx' | 'text' | 'note' | 'image'
+export type ResourceKind = 'pdf' | 'docx' | 'text' | 'note' | 'image' | 'web'
 
 export type Resource = {
   id: string
@@ -570,6 +576,8 @@ export type Resource = {
   size: number
   /** PDF pages, or parts of other text. Zero for an image. */
   pages: number
+  /** The page a resource added by its link came from (RS-22). Null for a file or a note. */
+  url?: string | null
 }
 
 export type ResourceView = Resource & {
@@ -612,6 +620,15 @@ export function addResourceNote(sessionId: string, name: string, text: string): 
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name, text }),
+  })
+}
+
+/** Polaris fetches the page once, from a public address only (RS-22, RS-23). */
+export function addResourceWeb(sessionId: string, url: string): Promise<Resource> {
+  return request<Resource>(`${resourcesPath(sessionId)}/web`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
   })
 }
 

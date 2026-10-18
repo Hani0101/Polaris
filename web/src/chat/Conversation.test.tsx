@@ -671,3 +671,36 @@ test('the composer keeps the typed text in the draft, and the app can clear and 
   act(() => draft.set('What is a vertex?'))
   expect(box.value).toBe('What is a vertex?')
 })
+
+test('web mode is a pressed toggle with a chip that names it (CH-23, CH-28)', () => {
+  const onToggleWeb = vi.fn()
+  const props = {
+    turns: [],
+    draft: createDraft(''),
+    sending: false,
+    sendError: null,
+    sessionOpen: true,
+    onDraftChange: noop,
+    onSend: noop,
+    onStop: noop,
+    onCopy: noop,
+    onTryAgain: noop,
+    onOpenQuiz: noop,
+    onOpenWhiteboard: noop,
+    onStart: noop,
+    onToggleWeb,
+  }
+  const { rerender } = render(<Conversation {...props} webMode={false} />)
+
+  const toggle = screen.getByRole('button', { name: 'Web mode' })
+  expect(toggle.getAttribute('aria-pressed')).toBe('false')
+  expect(screen.queryByRole('list', { name: 'Web mode' })).toBeNull()
+  fireEvent.click(toggle)
+  expect(onToggleWeb).toHaveBeenCalledTimes(1)
+
+  rerender(<Conversation {...props} webMode />)
+  expect(screen.getByRole('button', { name: 'Web mode' }).getAttribute('aria-pressed')).toBe('true')
+  expect(screen.getByRole('list', { name: 'Web mode' }).textContent).toContain('Polaris can search the web')
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off web mode' }))
+  expect(onToggleWeb).toHaveBeenCalledTimes(2)
+})

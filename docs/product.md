@@ -23,7 +23,8 @@ Once Polaris is hosted, it is meant for students, people learning for their work
 - Animation. A later long-running job uses the same notice rules as animation (AN-02, AN-03, AN-07, AN-08).
 - Flashcards, a deck for revision. Every card is tied to a source in the session's turns or resources, and a deck is checked by code before it is stored. See [Flashcards](features/flashcards.md) and [A deck's sources are checked by code](decisions/0012-deck-sources-checked-by-code.md).
 - Artifacts: a stored whiteboard, quiz, animation, or flashcard deck, reopened from the session that created it
-- Resources: PDFs, Word documents, text files, typed notes, and images the learner gives a session, which the agent explains from and cites. See [Resources](features/resources.md).
+- Resources: PDFs, Word documents, text files, typed notes, images, and web pages added by their link that the learner gives a session, which the agent explains from and cites. See [Resources](features/resources.md).
+- Web mode, a toggle in the chat input. Only a message sent with it on lets the agent search and read public web pages, and the reply links what it used. See [Chat](features/chat.md) and [The web is used only on request](decisions/0013-web-only-on-request-and-public.md).
 - Settings, with one section for now: the appearance mode (System, Light, or Dark), kept in the browser. See [Settings](features/settings.md).
 
 Success for this scope is a correct explanation, an animation that plays, a quiz whose score matches the stored key, and evals that pass.
@@ -34,7 +35,7 @@ Success for this scope is a correct explanation, an animation that plays, a quiz
 - Mobile first
 - Structured replies
 - Honest about limits
-- Inputs in v1 are typed chat, drawing on the whiteboard, comments on the whiteboard, and resources the learner adds to a session
+- Inputs in v1 are typed chat, drawing on the whiteboard, comments on the whiteboard, resources the learner adds to a session, and the web when the learner turns on web mode
 
 ## Not in v1
 
@@ -47,7 +48,7 @@ Success for this scope is a correct explanation, an animation that plays, a quiz
 
 ## Security
 
-v1 security is three rules already written: the browser never receives the key of a question before that question is checked (QZ-03), grading is done in code (QZ-04), and no agent-written animation code runs (AN-04). See [An animation is data, not code](decisions/0006-animation-is-data-not-code.md).
+v1 security is four rules already written: the browser never receives the key of a question before that question is checked (QZ-03), grading is done in code (QZ-04), no agent-written animation code runs (AN-04), and Polaris reads only public web pages, never an address on the learner's machine or network (CH-26, RS-23). See [An animation is data, not code](decisions/0006-animation-is-data-not-code.md) and [The web is used only on request](decisions/0013-web-only-on-request-and-public.md).
 
 ## Limits
 

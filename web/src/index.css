@@ -707,6 +707,21 @@ button.avatar-btn:active:not(:disabled) {
   color: var(--color-text-secondary);
 }
 
+/* Text input, error state (DESIGN.md 7): a 2px error border, and an icon and message under it. */
+.text-input.is-error,
+.text-input.is-error:hover {
+  border: var(--border-width-emphasis) solid var(--color-state-error);
+}
+
+.field-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+  color: var(--color-state-error);
+}
+
 .session-item-title {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -875,6 +890,15 @@ button.avatar-btn:active:not(:disabled) {
 
 .chat-input:hover {
   border-color: var(--color-text-secondary);
+}
+
+/* DS-GAP: a web mode toggle in the chat input; used the Whiteboard toolbar's
+   selected tool (amber fill, icon in text.onAccent) for its on state. */
+.web-toggle.is-on,
+.web-toggle.is-on:hover:not(:disabled),
+.web-toggle.is-on:active:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
 }
 
 .chat-input:focus-within {
