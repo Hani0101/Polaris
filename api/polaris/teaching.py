@@ -26,6 +26,9 @@ If the stream stops before a ResultMessage, the client is disconnected.
 Otherwise the unread tail would be returned as the next reply. interrupt()
 does not clear that buffer (Python SDK reference, "Using interrupts").
 Disconnecting drops the client instead of interrupting and draining.
+A session's client can connect before its first reply (warm), because
+starting the CLI is most of that reply's wait. The reply then awaits that
+same connect instead of starting a second client.
 On Windows, uvicorn --reload uses SelectorEventLoop, which cannot spawn
 the Claude CLI. That client then runs on a ProactorEventLoop in a worker
 thread.
@@ -1516,6 +1519,23 @@ class _OffLoopClient:
                 self._loop.close()
 
 
+@dataclass(frozen=True)
+class _ClientStart:
+    """What a client was started with: the Claude session it resumes, if any.
+
+    Without one, the first reply carries the earlier turns as a transcript.
+    """
+
+    resume: str | None
+    include_transcript: bool
+
+    @classmethod
+    def of(cls, sdk_session_id: str | None, has_turns: bool) -> "_ClientStart":
+        if sdk_session_id:
+            return cls(resume=sdk_session_id, include_transcript=False)
+        return cls(resume=None, include_transcript=has_turns)
+
+
 class ClaudeTeachingAgent:
     """One ClaudeSDKClient per open Polaris session. Disconnect when the learner leaves."""
 
@@ -1530,6 +1550,11 @@ class ClaudeTeachingAgent:
         self.work_dir.mkdir(parents=True, exist_ok=True)
         self._client_factory = client_factory
         self._clients: dict[str, Any] = {}
+        # session id -> the connect under way for it. A reply and a warm-up
+        # await the same one, so a session never starts two clients.
+        self._connecting: dict[str, asyncio.Task[Any]] = {}
+        # session id -> how its client was started, until a reply first uses it.
+        self._unused: dict[str, _ClientStart] = {}
         self._store_quiz = store_quiz
         self._key_check = key_check or ClaudeKeyCheck(work_dir)
         self._store_whiteboard: WhiteboardStore | None = None
@@ -1883,15 +1908,41 @@ class ClaudeTeachingAgent:
 
         return self._drawing_failures.get(session_id, 0)
 
+    async def warm(
+        self, session_id: str, sdk_session_id: str | None, has_turns: bool
+    ) -> None:
+        """Connect the session's client before its first reply, so it skips the CLI start.
+
+        Connecting needs only the resume id and whether the session has turns.
+        The profile, the transcript, and the turn prompt are still read and
+        sent by the reply, so warming changes nothing the model sees. The CLI
+        reports its credential in the reply's stream, where ReplyWatch checks it
+        (decision 0001). A failed connect is dropped; the reply connects again.
+        """
+
+        if session_id in self._clients:
+            return
+        task = self._connecting.get(session_id)
+        if task is None:
+            task = self._start_connect(session_id, _ClientStart.of(sdk_session_id, has_turns))
+        with contextlib.suppress(Exception):
+            await asyncio.shield(task)
+
     async def close_session(self, session_id: str) -> None:
         self._drawing_failures.pop(session_id, None)
         self._quiz_refusals.pop(session_id, None)
+        pending = self._connecting.get(session_id)
+        if pending is not None:
+            # A connect under way finishes first, so its CLI is closed, not left running.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(pending)
+        self._unused.pop(session_id, None)
         client = self._clients.pop(session_id, None)
         if client is not None:
             await client.disconnect()
 
     async def close_all(self) -> None:
-        for session_id in list(self._clients):
+        for session_id in {*self._clients, *self._connecting}:
             await self.close_session(session_id)
 
     async def _ensure_client(
@@ -1900,9 +1951,42 @@ class ClaudeTeachingAgent:
         sdk_session_id: str | None,
         prior_turns: Sequence[Turn],
     ) -> tuple[Any, bool]:
+        wanted = _ClientStart.of(sdk_session_id, bool(prior_turns))
+        pending = self._connecting.get(session_id)
+        if pending is not None:
+            # A warm-up for this session is connecting. Use it, not a second client.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(pending)
         existing = self._clients.get(session_id)
         if existing is not None:
-            return existing, False
+            started = self._unused.pop(session_id, None)
+            if started is None:
+                return existing, False
+            if started == wanted:
+                return existing, started.include_transcript
+            # Warmed before the resume id or the turns changed. Start it again.
+            self._clients.pop(session_id, None)
+            with contextlib.suppress(Exception):
+                await existing.disconnect()
+        client = await asyncio.shield(self._start_connect(session_id, wanted))
+        self._unused.pop(session_id, None)
+        return client, wanted.include_transcript
+
+    def _start_connect(self, session_id: str, start: _ClientStart) -> asyncio.Task[Any]:
+        task = asyncio.get_running_loop().create_task(self._connect(session_id, start))
+        self._connecting[session_id] = task
+
+        def finished(done: asyncio.Task[Any]) -> None:
+            if self._connecting.get(session_id) is done:
+                del self._connecting[session_id]
+            # Read the error here so a warm-up nobody awaits does not log it.
+            if not done.cancelled():
+                done.exception()
+
+        task.add_done_callback(finished)
+        return task
+
+    async def _connect(self, session_id: str, start: _ClientStart) -> Any:
         options = teaching_options(
             cwd=self.work_dir,
             create_quiz=self._handler_for(session_id),
@@ -1913,11 +1997,8 @@ class ClaudeTeachingAgent:
             start_animation_job=self._animation_handler_for(session_id),
             read_resource=self._resource_handler_for(session_id),
         )
-        include_transcript = False
-        if sdk_session_id:
-            options = replace(options, resume=sdk_session_id)
-        elif prior_turns:
-            include_transcript = True
+        if start.resume:
+            options = replace(options, resume=start.resume)
         client = self._client_factory(options)
         if isinstance(client, ClaudeSDKClient) and _off_loop_required():
             client = _OffLoopClient(client)
@@ -1928,4 +2009,6 @@ class ClaudeTeachingAgent:
                 await client.disconnect()
             raise
         self._clients[session_id] = client
-        return client, include_transcript
+        self._unused[session_id] = start
+        return client
+

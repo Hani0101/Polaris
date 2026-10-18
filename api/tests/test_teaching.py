@@ -1072,3 +1072,154 @@ def test_off_loop_client_forwards_connect_query_and_stream():
     assert inner.disconnected is True
     assert any(isinstance(message, StreamEvent) for message in messages)
 
+
+
+class GatedConnectClient(FakeClient):
+    """Connect waits until released, like a first CLI start on a slow disk."""
+
+    def __init__(self, options, messages, gate: asyncio.Event) -> None:
+        super().__init__(options, messages)
+        self.gate = gate
+        self.connects = 0
+
+    async def connect(self) -> None:
+        self.connects += 1
+        await self.gate.wait()
+
+
+def _gated_agent(tmp_path: Path, created: list[GatedConnectClient], gate: asyncio.Event):
+    def factory(options):
+        client = GatedConnectClient(options, [delta("Ok"), result()], gate)
+        created.append(client)
+        return client
+
+    return ClaudeTeachingAgent(tmp_path, client_factory=factory, key_check=FakeKeyCheck())
+
+
+def test_a_reply_during_a_warm_up_uses_the_same_client(tmp_path: Path):
+    created: list[GatedConnectClient] = []
+
+    async def run():
+        gate = asyncio.Event()
+        agent = _gated_agent(tmp_path, created, gate)
+        warming = asyncio.create_task(agent.warm("session-1", None, False))
+        await asyncio.sleep(0)
+        again = asyncio.create_task(agent.warm("session-1", None, False))
+        replying = asyncio.create_task(_collect(agent))
+        await asyncio.sleep(0)
+        gate.set()
+        await asyncio.gather(warming, again)
+        return agent, await replying
+
+    agent, (text, _done) = asyncio.run(run())
+
+    assert text == "Ok"
+    assert len(created) == 1
+    assert created[0].connects == 1
+    assert agent._clients["session-1"] is created[0]
+
+
+def test_a_second_warm_up_starts_no_second_client(tmp_path: Path):
+    created: list[FakeClient] = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], created)
+
+    async def run():
+        await asyncio.gather(
+            agent.warm("session-1", None, False), agent.warm("session-1", None, False)
+        )
+        await agent.warm("session-1", None, False)
+        await _collect(agent)
+        await _collect(agent, learner_message="And then?")
+
+    asyncio.run(run())
+
+    assert len(created) == 1
+    assert len(created[0].prompts) == 2
+
+
+def test_a_warmed_client_sends_what_a_cold_one_would(tmp_path: Path):
+    earlier = (Turn("Remember this", "A fraction is a part of a whole."),)
+    created: list[FakeClient] = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], created)
+
+    async def run():
+        await agent.warm("session-1", None, True)
+        await _collect(agent, prior_turns=earlier, sdk_session_id=None)
+        await agent.warm("session-2", "sdk-9", True)
+        await _collect(agent, session_id="session-2", prior_turns=earlier, sdk_session_id="sdk-9")
+
+    asyncio.run(run())
+
+    assert created[0].options.resume is None
+    assert "Earlier turns:" in created[0].prompts[0]
+    assert "Remember this" in created[0].prompts[0]
+    assert created[1].options.resume == "sdk-9"
+    assert "Earlier turns" not in created[1].prompts[0]
+
+
+def test_a_warm_up_for_another_resume_id_is_replaced(tmp_path: Path):
+    created: list[FakeClient] = []
+    agent = _agent(tmp_path, [delta("Ok"), result()], created)
+
+    async def run():
+        await agent.warm("session-1", None, False)
+        await _collect(agent, sdk_session_id="sdk-9", prior_turns=(Turn("a", "b"),))
+
+    asyncio.run(run())
+
+    assert len(created) == 2
+    assert created[0].disconnected is True
+    assert created[1].options.resume == "sdk-9"
+    assert agent._clients["session-1"] is created[1]
+
+
+def test_closing_during_a_warm_up_leaves_no_client(tmp_path: Path):
+    created: list[GatedConnectClient] = []
+
+    async def run():
+        gate = asyncio.Event()
+        agent = _gated_agent(tmp_path, created, gate)
+        warming = asyncio.create_task(agent.warm("session-1", None, False))
+        await asyncio.sleep(0)
+        closing = asyncio.create_task(agent.close_session("session-1"))
+        await asyncio.sleep(0)
+        assert not closing.done()
+        gate.set()
+        await asyncio.gather(warming, closing)
+        return agent
+
+    agent = asyncio.run(run())
+
+    assert len(created) == 1
+    assert created[0].disconnected is True
+    assert agent._clients == {}
+    assert agent._connecting == {}
+
+
+def test_a_failed_warm_up_lets_the_reply_connect_again(tmp_path: Path):
+    created: list[FakeClient] = []
+    attempts = {"count": 0}
+
+    class FailingOnce(FakeClient):
+        async def connect(self) -> None:
+            attempts["count"] += 1
+            if attempts["count"] == 1:
+                raise CLIConnectionError("no CLI yet")
+
+    def factory(options):
+        client = FailingOnce(options, [delta("Ok"), result()])
+        created.append(client)
+        return client
+
+    agent = ClaudeTeachingAgent(tmp_path, client_factory=factory, key_check=FakeKeyCheck())
+
+    async def run():
+        await agent.warm("session-1", None, False)
+        return await _collect(agent)
+
+    text, _done = asyncio.run(run())
+
+    assert text == "Ok"
+    assert len(created) == 2
+    assert created[0].disconnected is True
+    assert agent._clients["session-1"] is created[1]

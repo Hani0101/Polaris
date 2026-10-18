@@ -4,13 +4,15 @@ The teaching agent does not write the profile. The session-end pass does.
 """
 
 import asyncio
+import functools
 import json
+import pickle
 import re
 import shutil
 import sqlite3
 import threading
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -210,6 +212,26 @@ def quizzes_for_reply(turns: tuple[Turn, ...]) -> list[dict[str, object]]:
     ]
 
 
+@functools.lru_cache(maxsize=128)
+def _checked_board(raw: str) -> bytes | None:
+    """The drawing check of a stored board's JSON, or None when it fails.
+
+    The check re-plots graphs and re-parses LaTeX, and gives the same answer for
+    the same text, so a reply that reads every board pays for it once. The board
+    is kept pickled: bytes cannot be changed, and each read gets its own copy.
+    """
+
+    checked = check_drawing(json.loads(raw))
+    if checked.whiteboard is None:
+        return None
+    return pickle.dumps(checked.whiteboard, pickle.HIGHEST_PROTOCOL)
+
+
+def _stored_board(raw: str) -> Whiteboard | None:
+    pickled = _checked_board(raw)
+    return None if pickled is None else pickle.loads(pickled)
+
+
 # Files of a Manim job the browser may read. The scene code is not one.
 _MANIM_ASSETS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"manim\.json"), "application/json"),
@@ -252,6 +274,15 @@ class Chat:
         self._animation_notices: dict[str, list[str]] = {}
         # job id -> worker writing that animation off the turn (AN-01).
         self._animation_threads: dict[str, threading.Thread] = {}
+        # Session-end work runs after the request that ended the session: the
+        # agent closes, then the profile pass runs, one session at a time
+        # (CH-05, PR-05). A reply, a profile read, and a delete wait for it.
+        self._ends: dict[str, threading.Event] = {}
+        self._last_end: threading.Event | None = None
+        self._end_tasks: set[asyncio.Task[None]] = set()
+        self._warm_tasks: set[asyncio.Task[None]] = set()
+        # Set when a pass after the response sees an API key. The app then stops.
+        self.api_key_seen = False
         self._conn: sqlite3.Connection | None = None
         self._open_db()
         self.resources = ResourceStore(data_dir, self._with_db, _now)
@@ -323,6 +354,108 @@ class Chat:
 
         self._with_db(write)
         return self._payload(session_id), ended
+
+    def end_in_background(self, session_ids: Iterable[str]) -> None:
+        """Close the agent and run the profile pass for sessions that just ended.
+
+        The work runs on the calling event loop after the response, so starting,
+        switching, or leaving a session does not wait for a model call (CH-05,
+        PR-05). Passes run one at a time, in the order the sessions ended.
+        """
+
+        loop = asyncio.get_running_loop()
+        for session_id in session_ids:
+            done = threading.Event()
+            with self._lock:
+                previous = self._last_end
+                self._last_end = done
+                self._ends[session_id] = done
+            task = loop.create_task(self._end(session_id, previous, done))
+            self._end_tasks.add(task)
+            task.add_done_callback(self._end_tasks.discard)
+
+    async def _end(
+        self,
+        session_id: str,
+        previous: threading.Event | None,
+        done: threading.Event,
+    ) -> None:
+        try:
+            if previous is not None:
+                await asyncio.to_thread(previous.wait)
+            await self.agent.close_session(session_id)
+            await self.run_profile_pass(session_id)
+        except ApiKeyPresent:
+            self.api_key_seen = True
+        except Exception:
+            # run_profile_pass records a pass that failed. This is a close that
+            # failed, or the database closing while Polaris stops.
+            pass
+        finally:
+            with self._lock:
+                if self._ends.get(session_id) is done:
+                    del self._ends[session_id]
+                if self._last_end is done:
+                    self._last_end = None
+            done.set()
+
+    def wait_for_session_ends(self, session_id: str | None = None) -> bool:
+        """Block until session-end work has finished: one session's, or all of it.
+
+        Returns whether there was any to wait for. Never call this on the event
+        loop that runs the work.
+        """
+
+        with self._lock:
+            if session_id is None:
+                pending = list(self._ends.values())
+            else:
+                found = self._ends.get(session_id)
+                pending = [] if found is None else [found]
+        for done in pending:
+            done.wait()
+        return bool(pending)
+
+    def warm_in_background(self, session_id: str) -> None:
+        """Start the agent's client for an open session the learner is typing in.
+
+        Only a speed-up: the first reply then skips the CLI start. It does
+        nothing for an ended session, and it closes a client whose session
+        ended while it connected.
+        """
+
+        if not callable(getattr(self.agent, "warm", None)):
+            return
+        task = asyncio.get_running_loop().create_task(self._warm(session_id))
+        self._warm_tasks.add(task)
+        task.add_done_callback(self._warm_tasks.discard)
+
+    async def _warm(self, session_id: str) -> None:
+        def is_open() -> bool:
+            try:
+                return self._require(session_id)["ended_at"] is None
+            except MissingSession:
+                return False
+
+        def has_turns(conn: sqlite3.Connection) -> bool:
+            row = conn.execute(
+                "SELECT 1 FROM turns WHERE session_id = ? LIMIT 1", (session_id,)
+            ).fetchone()
+            return row is not None
+
+        try:
+            if not await asyncio.to_thread(is_open):
+                return
+            # An earlier ending of this session closes its old client first (CH-05).
+            await asyncio.to_thread(self.wait_for_session_ends, session_id)
+            sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
+            turns = await asyncio.to_thread(self._with_db, has_turns)
+            await self.agent.warm(session_id, sdk_session_id, turns)  # type: ignore[attr-defined]
+            if not await asyncio.to_thread(is_open):
+                await self.agent.close_session(session_id)
+        except Exception:
+            # The reply connects on its own. This is only a speed-up.
+            pass
 
     async def run_profile_pass(self, session_id: str) -> None:
         """Read the ended session and store fact changes. Does not teach.
@@ -438,10 +571,14 @@ class Chat:
                 if session_id not in self._busy:
                     break
                 await asyncio.sleep(0.1)
+            # A pass from an earlier ending of this session finishes first.
+            ended_earlier = await asyncio.to_thread(self.wait_for_session_ends, session_id)
             facts_saved = True
             if row["ended_at"] is None:
                 await asyncio.to_thread(self.leave, session_id)
                 await self.run_profile_pass(session_id)
+                facts_saved = await asyncio.to_thread(self._last_pass_kept, session_id)
+            elif ended_earlier:
                 facts_saved = await asyncio.to_thread(self._last_pass_kept, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             job_ids = await asyncio.to_thread(self._delete_rows, session_id)
@@ -599,6 +736,9 @@ class Chat:
             for notice in self.take_animation_notices(session_id):
                 parts.append(notice)
                 yield notice
+            # A session that just ended may still be in its pass, and its agent
+            # may still be closing. Its facts are read for this reply (PR-01).
+            await asyncio.to_thread(self.wait_for_session_ends)
             profile = await asyncio.to_thread(self.read_profile)
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
@@ -1148,8 +1288,15 @@ class Chat:
 
     def list_whiteboards(self, session_id: str) -> list[dict[str, object]]:
         self._require(session_id)
+        shown: list[dict[str, object]] = []
+        for raw in self._session_drawing_jsons(session_id):
+            payload = self._whiteboard_payload(raw)
+            if payload is not None:
+                shown.append(payload)
+        return shown
 
-        def read(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    def _session_drawing_jsons(self, session_id: str) -> list[str]:
+        def read(conn: sqlite3.Connection) -> list[str]:
             rows = conn.execute(
                 """
                 SELECT w.drawing_json
@@ -1160,12 +1307,7 @@ class Chat:
                 """,
                 (session_id,),
             ).fetchall()
-            shown: list[dict[str, object]] = []
-            for row in rows:
-                payload = self._whiteboard_payload(json.loads(row["drawing_json"]))
-                if payload is not None:
-                    shown.append(payload)
-            return shown
+            return [row["drawing_json"] for row in rows]
 
         return self._with_db(read)
 
@@ -1189,7 +1331,7 @@ class Chat:
         raw = self._with_db(read)
         if raw is None:
             raise MissingWhiteboard()
-        payload = self._whiteboard_payload(json.loads(raw))
+        payload = self._whiteboard_payload(raw)
         if payload is None:
             raise WhiteboardUnreadable()
         return payload
@@ -1257,10 +1399,10 @@ class Chat:
         raw = self._drawing_json(session_id, whiteboard_id)
         if raw is None:
             raise MissingWhiteboard()
-        checked_stored = check_drawing(json.loads(raw))
-        if checked_stored.whiteboard is None:
+        stored = _stored_board(raw)
+        if stored is None:
             raise WhiteboardUnreadable()
-        checked = apply_marks(checked_stored.whiteboard, action)
+        checked = apply_marks(stored, action)
         if checked.whiteboard is None:
             raise InvalidDrawing(checked.errors)
         return checked.whiteboard, raw
@@ -1372,14 +1514,9 @@ class Chat:
             self._with_db(write)
 
     def whiteboards_for_reply(self, session_id: str) -> list[Whiteboard]:
-        boards: list[Whiteboard] = []
-        for payload in self.list_whiteboards(session_id):
-            drawing = dict(payload)
-            drawing.pop("kind", None)
-            checked = check_drawing(drawing)
-            if checked.whiteboard is not None:
-                boards.append(checked.whiteboard)
-        return boards
+        self._require(session_id)
+        boards = (_stored_board(raw) for raw in self._session_drawing_jsons(session_id))
+        return [board for board in boards if board is not None]
 
     def _drawing_json(self, session_id: str, whiteboard_id: str) -> str | None:
         def read(conn: sqlite3.Connection) -> str | None:
@@ -1414,18 +1551,19 @@ class Chat:
         raw = self._drawing_json(session_id, whiteboard_id)
         if raw is None:
             raise MissingWhiteboard()
-        checked = check_drawing(json.loads(raw))
-        if checked.whiteboard is None:
+        whiteboard = _stored_board(raw)
+        if whiteboard is None:
             raise WhiteboardUnreadable()
-        return checked.whiteboard
+        return whiteboard
 
-    def _whiteboard_payload(self, drawing: object) -> dict[str, object] | None:
-        checked = check_drawing(drawing)
-        if checked.whiteboard is None or not isinstance(drawing, dict):
+    def _whiteboard_payload(self, raw: str) -> dict[str, object] | None:
+        if _checked_board(raw) is None:
             return None
-        payload = dict(drawing)
-        payload["kind"] = "whiteboard"
-        return payload
+        drawing = json.loads(raw)
+        if not isinstance(drawing, dict):
+            return None
+        drawing["kind"] = "whiteboard"
+        return drawing
 
     def get_quiz(self, quiz_id: str) -> dict[str, object]:
         def read(conn: sqlite3.Connection) -> sqlite3.Row | None:
@@ -1534,7 +1672,7 @@ class Chat:
                 if turn_id is None:
                     continue
                 if row["kind"] == "whiteboard":
-                    payload = self._whiteboard_payload(json.loads(row["drawing_json"]))
+                    payload = self._whiteboard_payload(row["drawing_json"])
                     if payload is not None:
                         by_turn.setdefault(turn_id, []).append(payload)
                     continue
@@ -1867,6 +2005,9 @@ class Chat:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode = WAL").fetchone()
+        # In WAL mode this cannot corrupt the database, and a commit no longer
+        # waits for the disk. A power cut can lose the last few commits.
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.execute("PRAGMA foreign_keys = ON")
         self._conn = conn
 

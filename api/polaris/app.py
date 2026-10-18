@@ -145,6 +145,8 @@ def create_app(
         try:
             yield
         finally:
+            # A session that ended just before Polaris stops still gets its pass.
+            await asyncio.to_thread(app.state.chat.wait_for_session_ends)
             closer = getattr(app.state.chat.agent, "close_all", None)
             try:
                 if closer is not None:
@@ -158,7 +160,7 @@ def create_app(
 
     @app.middleware("http")
     async def stop_when_api_key_seen(request, call_next):
-        if app.state.api_key_stop:
+        if app.state.api_key_stop or chat.api_key_seen:
             return JSONResponse(
                 status_code=503,
                 content={
@@ -260,21 +262,18 @@ def create_app(
 
     @app.get("/api/profile")
     def read_profile() -> dict[str, list[str]]:
+        # The profile includes facts from a pass still running (PR-05).
+        chat.wait_for_session_ends()
         return {"facts": list(chat.read_profile().facts)}
 
     @app.get("/api/sessions")
     def list_sessions() -> dict[str, list[dict[str, object]]]:
         return {"sessions": chat.list_sessions()}
 
-    async def close_ended(session_ids: tuple[str, ...]) -> None:
-        for session_id in session_ids:
-            await chat.agent.close_session(session_id)
-            await chat.run_profile_pass(session_id)
-
     @app.post("/api/sessions")
     async def start_session() -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.start)
-        await close_ended(ended_ids)
+        chat.end_in_background(ended_ids)
         return session
 
     @app.get("/api/sessions/{session_id}")
@@ -292,15 +291,20 @@ def create_app(
     @app.post("/api/sessions/{session_id}/open")
     async def open_session(session_id: str) -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.open, session_id)
-        await close_ended(ended_ids)
+        chat.end_in_background(ended_ids)
         return session
+
+    @app.post("/api/sessions/{session_id}/warm", status_code=202)
+    async def warm_session(session_id: str) -> dict[str, str]:
+        """The learner started typing: connect the agent before the reply needs it."""
+
+        chat.warm_in_background(session_id)
+        return {"id": session_id}
 
     @app.post("/api/sessions/{session_id}/leave")
     async def leave_session(session_id: str) -> dict[str, object]:
-        should_close = await asyncio.to_thread(chat.leave, session_id)
-        if should_close:
-            await chat.agent.close_session(session_id)
-            await chat.run_profile_pass(session_id)
+        if await asyncio.to_thread(chat.leave, session_id):
+            chat.end_in_background((session_id,))
         return await asyncio.to_thread(chat.get, session_id)
 
     @app.post("/api/sessions/{session_id}/turns")

@@ -40,6 +40,22 @@ class StubPass:
         return self.changes
 
 
+class GatedPass(StubPass):
+    """Holds the session-end pass until released, so a test can act while it runs."""
+
+    def __init__(self, changes: tuple[FactChange, ...] = ()) -> None:
+        super().__init__(changes)
+        self.release = threading.Event()
+        self.finished = threading.Event()
+
+    async def run(self, *, turns, facts):
+        await asyncio.to_thread(self.release.wait, 10)
+        try:
+            return await super().run(turns=turns, facts=facts)
+        finally:
+            self.finished.set()
+
+
 class TeachingStub:
     """Echoes profile facts into the reply so a test can see they were read."""
 
@@ -273,6 +289,7 @@ def test_leaving_a_session_ends_it(make_client):
 
     assert left.json()["ended"] is True
     assert client.get(f"/api/sessions/{session['id']}").json()["ended"] is True
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [session["id"]]
 
 
@@ -283,12 +300,14 @@ def test_switching_sessions_ends_the_one_left(make_client):
 
     assert client.get(f"/api/sessions/{first['id']}").json()["ended"] is True
     assert second["ended"] is False
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [first["id"]]
 
     reopened = client.post(f"/api/sessions/{first['id']}/open")
     assert reopened.status_code == 200
     assert reopened.json()["ended"] is False
     assert client.get(f"/api/sessions/{second['id']}").json()["ended"] is True
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [first["id"], second["id"]]
 
 
@@ -349,6 +368,33 @@ def test_switching_sessions_stores_facts_from_the_one_left(make_client):
     assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
 
 
+def test_switching_sessions_does_not_wait_for_the_profile_pass(make_client):  # CH-05, PR-05
+    writer = GatedPass((FactChange("ADD", "struggles with fractions"),))
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I struggle with fractions")
+
+    second = client.post("/api/sessions")
+
+    assert second.status_code == 200
+    assert not writer.finished.is_set()
+    writer.release.set()
+    assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
+
+
+def test_a_reply_waits_for_a_pass_still_running(make_client):  # PR-01, PR-05
+    writer = GatedPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I like step-by-step walkthroughs")
+    second = client.post("/api/sessions").json()
+
+    threading.Timer(0.2, writer.release.set).start()
+    reply = reply_text(post_turn(client, second["id"], "What is recursion?"))
+
+    assert reply == "Noted likes step-by-step walkthroughs. What is recursion?"
+
+
 def test_a_later_ending_runs_the_profile_pass_again(make_client):
     texts = ("likes diagrams", "comfortable with Python")
 
@@ -370,6 +416,7 @@ def test_a_later_ending_runs_the_profile_pass_again(make_client):
     client.post(f"/api/sessions/{session['id']}/open")
     post_turn(client, session["id"], "I know Python")
     client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
 
     assert writer.calls == 2
     assert client.get("/api/profile").json() == {
@@ -404,7 +451,9 @@ def test_profile_pass_api_key_stops_the_app(make_client):
 
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
-    assert left.status_code == 503
+    # The session ends at once. The pass runs after, and its API key stops the app.
+    assert left.status_code == 200
+    client.app.state.chat.wait_for_session_ends()
     assert client.get("/health").status_code == 503
 
 
@@ -426,6 +475,8 @@ def test_a_failed_profile_pass_does_not_block_leaving(make_client):
 
 
 def _passes(client) -> list[dict[str, object]]:
+    client.app.state.chat.wait_for_session_ends()
+
     def read(conn):
         rows = conn.execute(
             """
@@ -852,3 +903,149 @@ def test_a_failed_profile_pass_does_not_block_deleting(make_client):  # CH-16
     assert deleted.status_code == 200
     assert deleted.json() == {"id": session["id"], "facts_saved": False}
     assert client.get("/api/sessions").json() == {"sessions": []}
+
+
+def test_deleting_an_ended_session_waits_for_its_pass(make_client):  # CH-16
+    class GatedFailingPass(GatedPass):
+        async def run(self, *, turns, facts):
+            del turns, facts
+            await asyncio.to_thread(self.release.wait, 10)
+            raise RuntimeError("pass failed")
+
+    writer = GatedFailingPass()
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "hello")
+    client.post("/api/sessions")
+
+    threading.Timer(0.2, writer.release.set).start()
+    deleted = client.delete(f"/api/sessions/{first['id']}")
+
+    assert deleted.json() == {"id": first["id"], "facts_saved": False}
+
+
+class WarmClient:
+    """A stand-in SDK client whose connect can be held, like a cold CLI start."""
+
+    def __init__(self, options, gate: threading.Event | None = None) -> None:
+        from test_teaching import delta, result
+
+        self.options = options
+        self.messages = [delta("Hi"), result()]
+        self.gate = gate
+        self.connects = 0
+        self.prompts: list[str] = []
+        self.disconnected = False
+
+    async def connect(self) -> None:
+        self.connects += 1
+        if self.gate is not None:
+            await asyncio.to_thread(self.gate.wait, 10)
+
+    async def query(self, prompt, session_id: str = "default") -> None:
+        del session_id
+        self.prompts.append(prompt)
+
+    async def receive_response(self):
+        for message in self.messages:
+            yield message
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+
+def _warm_agent(tmp_path, gate: threading.Event | None = None):
+    from polaris.teaching import ClaudeTeachingAgent
+    from test_teaching import FakeKeyCheck
+
+    created: list[WarmClient] = []
+
+    def factory(options):
+        client = WarmClient(options, gate)
+        created.append(client)
+        return client
+
+    agent = ClaudeTeachingAgent(
+        tmp_path / "claude-work", client_factory=factory, key_check=FakeKeyCheck()
+    )
+    return agent, created
+
+
+def wait_for_warm_ups(client: TestClient) -> None:
+    chat = client.app.state.chat
+    for _ in range(200):
+        if not chat._warm_tasks:
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError("A warm-up did not finish.")
+
+
+def test_typing_warms_the_client_the_first_reply_uses(make_client, tmp_path):
+    agent, created = _warm_agent(tmp_path)
+    client, _agent = make_client(agent=agent)
+    session = client.post("/api/sessions").json()
+
+    warmed = client.post(f"/api/sessions/{session['id']}/warm")
+    wait_for_warm_ups(client)
+    assert warmed.status_code == 202
+    assert len(created) == 1
+    assert created[0].connects == 1
+    assert created[0].prompts == []
+
+    assert reply_text(post_turn(client, session["id"], "What is a half?")) == "Hi"
+    client.post(f"/api/sessions/{session['id']}/warm")
+    wait_for_warm_ups(client)
+
+    assert len(created) == 1
+    assert created[0].connects == 1
+    assert len(created[0].prompts) == 1
+
+
+def test_a_reply_waits_for_a_warm_up_still_connecting(make_client, tmp_path):
+    gate = threading.Event()
+    agent, created = _warm_agent(tmp_path, gate)
+    client, _agent = make_client(agent=agent)
+    session = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{session['id']}/warm")
+    threading.Timer(0.2, gate.set).start()
+    assert reply_text(post_turn(client, session["id"], "What is a half?")) == "Hi"
+
+    assert len(created) == 1
+    assert created[0].connects == 1
+
+
+def test_warming_an_ended_session_does_nothing(make_client, tmp_path):
+    agent, created = _warm_agent(tmp_path)
+    client, _agent = make_client(agent=agent)
+    first = client.post("/api/sessions").json()
+    client.post("/api/sessions")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert client.post(f"/api/sessions/{first['id']}/warm").status_code == 202
+    assert client.post("/api/sessions/nope/warm").status_code == 202
+    wait_for_warm_ups(client)
+
+    assert created == []
+    assert agent._clients == {}
+
+
+def test_ending_a_session_while_it_warms_leaves_no_client(make_client, tmp_path):  # CH-05
+    gate = threading.Event()
+    agent, created = _warm_agent(tmp_path, gate)
+    client, _agent = make_client(agent=agent)
+    first = client.post("/api/sessions").json()
+    client.post(f"/api/sessions/{first['id']}/warm")
+    for _ in range(200):
+        if created:
+            break
+        threading.Event().wait(0.01)
+
+    client.post("/api/sessions")
+    gate.set()
+    client.app.state.chat.wait_for_session_ends()
+    wait_for_warm_ups(client)
+
+    assert len(created) == 1
+    assert created[0].disconnected is True
+    assert agent._clients == {}
