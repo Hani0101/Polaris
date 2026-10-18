@@ -196,10 +196,14 @@ export type WhiteboardArtifact = Whiteboard & {
 }
 
 /**
- * What a running job is doing (AN-19), or that it waits for a free place
- * (AN-25). A ready or failed job has no stage.
+ * What a running job is doing (AN-19), or that it waits for the learner to
+ * choose an engine (AN-21) or for a free place (AN-25). A ready or failed
+ * job has no stage.
  */
-export type AnimationStage = 'queued' | 'writing' | 'checking' | 'fixing'
+export type AnimationStage = 'choosing' | 'queued' | 'writing' | 'checking' | 'fixing'
+
+/** The two animation engines the learner chooses between (AN-21). */
+export type AnimationEngine = 'manim' | 'lottie'
 
 export type AnimationArtifact = {
   id: string
@@ -410,6 +414,19 @@ export function getAnimationJob(
   signal?: AbortSignal,
 ): Promise<AnimationArtifact> {
   return request<AnimationArtifact>(`/api/sessions/${sessionId}/jobs/${jobId}`, { signal })
+}
+
+/** Start a waiting animation job with the engine the learner chose (AN-21). */
+export function chooseAnimationEngine(
+  sessionId: string,
+  jobId: string,
+  engine: AnimationEngine,
+): Promise<AnimationArtifact> {
+  return request<AnimationArtifact>(`/api/sessions/${sessionId}/jobs/${jobId}/engine`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ engine }),
+  })
 }
 
 export function getQuiz(quizId: string, signal?: AbortSignal): Promise<Quiz> {

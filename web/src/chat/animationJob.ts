@@ -5,9 +5,12 @@ import { getAnimationJob } from '../api.ts'
 import type { AnimationArtifact, AnimationStage } from '../api.ts'
 
 export const RUNNING = 'running'
+// The job waits for the learner to pick Manim or Lottie (AN-21).
+export const CHOOSING = 'choosing'
 const POLL_MS = 10_000
 
 const STAGE_TEXT: Record<AnimationStage, string> = {
+  choosing: 'Waiting for you to choose Manim or Lottie',
   queued: 'Waiting for another animation to finish',
   writing: 'Writing the animation',
   checking: 'Checking the animation',
@@ -86,6 +89,13 @@ export function subscribeAnimationJob(
     poll.listeners.delete(listener)
     if (poll.listeners.size === 0) stopPoll(key, poll)
   }
+}
+
+/** Tell everyone hearing this job about news that did not come from a poll. */
+export function shareAnimationJob(job: AnimationArtifact): void {
+  const poll = polls.get(`${job.session_id}:${job.id}`)
+  if (!poll) return
+  for (const listener of [...poll.listeners]) listener(job)
 }
 
 /** Test seam: replace the fetch and timers behind every poll. */

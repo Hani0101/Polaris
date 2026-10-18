@@ -11,7 +11,8 @@ import type { PointedPart } from '../whiteboard/pointing.ts'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
-import { stageText, useAnimationJob } from './animationJob.ts'
+import { CHOOSING, stageText, useAnimationJob } from './animationJob.ts'
+import { EnginePicker } from './EnginePicker.tsx'
 import { ResourcesTab } from './ResourcesTab.tsx'
 import { useResources } from './resources.tsx'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
@@ -453,6 +454,7 @@ function AnimationCard({
   onOpen: (sessionId: string, jobId: string) => void
 }) {
   const { status, stage } = useAnimationJob(animation)
+  const choosing = status === 'running' && stage === CHOOSING
   if (status === 'ready') {
     return (
       <ClickableCard
@@ -466,14 +468,16 @@ function AnimationCard({
     <div className="tools-card">
       <span className="tools-card-row">
         <span className="tools-card-title">Animation</span>
-        {status === 'running' ? <Badge variant="neutral">In progress</Badge> : null}
+        {choosing ? <Badge variant="accent">Waiting for you</Badge> : null}
+        {status === 'running' && !choosing ? <Badge variant="neutral">In progress</Badge> : null}
       </span>
-      {status === 'running' && stageText(stage) ? (
+      {choosing ? <EnginePicker job={animation} /> : null}
+      {status === 'running' && !choosing && stageText(stage) ? (
         <span className="tools-card-body" role="status">
           {stageText(stage)}
         </span>
       ) : null}
-      {status === 'running' ? (
+      {status === 'running' && !choosing ? (
         <span className="tools-card-body">Still working. You can keep talking.</span>
       ) : null}
       {status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}

@@ -1,6 +1,7 @@
 import { Clapperboard } from 'lucide-react'
 import type { AnimationArtifact } from '../api.ts'
-import { RUNNING, stageText, useAnimationJob } from './animationJob.ts'
+import { CHOOSING, RUNNING, stageText, useAnimationJob } from './animationJob.ts'
+import { EnginePicker } from './EnginePicker.tsx'
 import { AlertBanner, Badge } from './ui.tsx'
 import './artifacts.css'
 
@@ -18,12 +19,13 @@ type AnimationCardProps = {
 /**
  * An animation job in the turn that started it (AN-01, AN-06). While the job
  * runs the card says so and names its stage (AN-19); the chat text carries
- * the waiting notice (AN-02). When ready, the learner can open the finished
- * animation again.
+ * the waiting notice (AN-02). A job waiting for an engine shows the choice
+ * (AN-21). When ready, the learner can open the finished animation again.
  */
 export function AnimationCard({ job, onOpen, onStatus }: AnimationCardProps) {
   const { status, stage } = useAnimationJob(job, onStatus)
-  const stageLine = status === RUNNING ? stageText(stage) : null
+  const choosing = status === RUNNING && stage === CHOOSING
+  const stageLine = status === RUNNING && !choosing ? stageText(stage) : null
 
   const canOpen = status === READY && Boolean(onOpen)
 
@@ -45,12 +47,14 @@ export function AnimationCard({ job, onOpen, onStatus }: AnimationCardProps) {
     <div className="animation-card">
       <Clapperboard size={20} strokeWidth={2} aria-hidden="true" />
       <p className="animation-card-title">Animation</p>
-      {status === RUNNING ? <Badge>In progress</Badge> : null}
+      {choosing ? <Badge variant="accent">Waiting for you</Badge> : null}
+      {status === RUNNING && !choosing ? <Badge>In progress</Badge> : null}
       {stageLine ? (
         <p className="animation-card-stage" role="status">
           {stageLine}
         </p>
       ) : null}
+      {choosing ? <EnginePicker job={job} /> : null}
       {status === FAILED ? (
         <AlertBanner>{FAILURE_NOTICE}</AlertBanner>
       ) : null}

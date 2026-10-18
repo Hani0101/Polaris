@@ -64,3 +64,73 @@
   font-size: var(--font-size-sm);
   line-height: var(--font-line-height-normal);
 }
+
+/* The engine choice (AN-21). Each engine is a full-width row, styled like
+   the Answer option (section 7): the whole row is the tap target. */
+.engine-picker {
+  display: flex;
+  flex-basis: 100%;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+}
+
+.engine-picker-question {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+}
+
+.engine-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: var(--space-2xs);
+  width: 100%;
+  min-height: var(--component-tap-target-min);
+  padding: var(--space-md);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+/* Overrides the global button:hover and :active fills. */
+.engine-option:hover:not(:disabled),
+.engine-option:active:not(:disabled) {
+  background: var(--color-surface-default);
+}
+
+.engine-option:not([aria-disabled='true']):hover {
+  border-color: var(--color-text-secondary);
+}
+
+.engine-option[aria-disabled='true'] {
+  cursor: default;
+}
+
+/* A 2px border takes 1px more, so padding gives it back and the row does not shift. */
+.engine-option.is-picked {
+  padding: calc(var(--space-md) - var(--border-width-emphasis) + var(--border-width-default));
+  border-width: var(--border-width-emphasis);
+  border-color: var(--color-accent);
+}
+
+.engine-option-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.engine-option-hint {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}

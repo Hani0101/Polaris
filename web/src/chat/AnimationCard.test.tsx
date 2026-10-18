@@ -179,3 +179,77 @@ test('a finished job shows no stage', () => {
 
   expect(screen.queryByText('Fixing the animation')).toBeNull()
 })
+
+test('a job waiting for a choice offers Manim and Lottie (AN-21)', () => {
+  render(<AnimationCard job={{ ...job, status: 'running', stage: 'choosing' }} />)
+
+  expect(screen.getByText('Waiting for you')).toBeTruthy()
+  expect(screen.getByRole('group', { name: 'How should Polaris draw this animation?' })).toBeTruthy()
+  const manim = screen.getByRole('button', { name: /animate with manim/i })
+  const lottie = screen.getByRole('button', { name: /animate with lottie/i })
+  expect(manim.textContent).toContain('Best for scientific topics')
+  expect(lottie.textContent).toContain('Best for other topics')
+  expect(screen.queryByText('In progress')).toBeNull()
+})
+
+test('choosing an engine starts the job once (AN-21)', async () => {
+  let answer: (response: Response) => void = () => {}
+  const fetchMock = vi.fn(
+    () =>
+      new Promise<Response>((resolve) => {
+        answer = resolve
+      }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    render(<AnimationCard job={{ ...job, status: 'running', stage: 'choosing' }} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /animate with lottie/i }))
+    fireEvent.click(screen.getByRole('button', { name: /animate with manim/i }))
+    await act(async () => {})
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/sessions/session-1/jobs/job-1/engine',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ engine: 'lottie' }) }),
+    )
+    expect(screen.getByText('Starting the animation')).toBeTruthy()
+
+    await act(async () => {
+      answer(
+        new Response(JSON.stringify({ ...job, status: 'running', stage: 'writing' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      )
+    })
+
+    expect(screen.queryByRole('group')).toBeNull()
+    expect(screen.getByRole('status').textContent).toBe('Writing the animation')
+    expect(screen.getByText('In progress')).toBeTruthy()
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
+
+test('a failed choice says so and lets the learner choose again', async () => {
+  const fetchMock = vi.fn(async () => new Response('{}', { status: 500 }))
+  vi.stubGlobal('fetch', fetchMock)
+  try {
+    render(<AnimationCard job={{ ...job, status: 'running', stage: 'choosing' }} />)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /animate with manim/i }))
+    })
+
+    expect(screen.getByRole('alert').textContent).toBe(
+      "Couldn't start the animation. Check your connection and try again.",
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /animate with manim/i }))
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.unstubAllGlobals()
+  }
+})
