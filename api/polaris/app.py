@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from polaris.agent import ReplyAgent
 from polaris.animation import MissingJob, MissingPlayback
 from polaris.animation_writer import AnimationWriter, ClaudeAnimationWriter
-from polaris.animation_router import AnimationRouter
+from polaris.animation_engines import AnimationEngines, EngineChoiceClosed, UnknownEngine
 from polaris.lottie_writer import LottieAnimationWriter
 from polaris.manim_writer import ClaudeManimWriter
 from polaris.chat import (
@@ -102,6 +102,10 @@ class ResourceEditBody(BaseModel):
 class AnswerBody(BaseModel):
     question_id: str
     choice_id: str
+
+
+class EngineBody(BaseModel):
+    engine: str
 
 
 class RatingBody(BaseModel):
@@ -202,17 +206,17 @@ def create_app(
 
     assert_claude_login()
     data_dir.mkdir(parents=True, exist_ok=True)
-    animation_writer: AnimationWriter | None = None
+    animation_writer: AnimationWriter | AnimationEngines | None = None
     if agent is None:
         agent = ClaudeTeachingAgent(data_dir / "claude-work")
         if profile_pass is None:
             profile_pass = ClaudeProfilePass(data_dir / "claude-work")
         if title_writer is None:
             title_writer = ClaudeTitleWriter(data_dir / "claude-work")
-        # A router sends maths and heavy graphs to Manim and the rest to
-        # Lottie (AN-21). POLARIS_ANIMATION_ENGINE=manim, lottie, or data
-        # forces one writer for every job.
-        engine = os.environ.get("POLARIS_ANIMATION_ENGINE", "auto")
+        # The learner chooses Manim or Lottie for each job (AN-21).
+        # POLARIS_ANIMATION_ENGINE=manim, lottie, or data forces one writer
+        # for every job and skips the choice.
+        engine = os.environ.get("POLARIS_ANIMATION_ENGINE", "choose")
         if engine == "data":
             animation_writer = ClaudeAnimationWriter(data_dir / "claude-work")
         elif engine == "manim":
@@ -220,10 +224,9 @@ def create_app(
         elif engine == "lottie":
             animation_writer = LottieAnimationWriter(data_dir / "lottie-work")
         else:
-            animation_writer = AnimationRouter(
+            animation_writer = AnimationEngines(
                 manim=ClaudeManimWriter(data_dir / "claude-work"),
                 lottie=LottieAnimationWriter(data_dir / "lottie-work"),
-                work_dir=data_dir / "claude-work",
             )
     chat = Chat(
         data_dir,
@@ -311,6 +314,14 @@ def create_app(
     @app.exception_handler(MissingPlayback)
     async def missing_playback(_request, exc: MissingPlayback) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
+
+    @app.exception_handler(UnknownEngine)
+    async def unknown_engine(_request, exc: UnknownEngine) -> JSONResponse:
+        return JSONResponse(status_code=422, content={"detail": str(exc)})
+
+    @app.exception_handler(EngineChoiceClosed)
+    async def engine_choice_closed(_request, exc: EngineChoiceClosed) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": str(exc)})
 
     @app.exception_handler(MissingWhiteboard)
     async def missing_whiteboard(_request, exc: MissingWhiteboard) -> JSONResponse:
@@ -670,6 +681,10 @@ def create_app(
     @app.get("/api/sessions/{session_id}/jobs/{job_id}")
     def read_job(session_id: str, job_id: str) -> dict[str, object]:
         return chat.get_animation_job(session_id, job_id)
+
+    @app.post("/api/sessions/{session_id}/jobs/{job_id}/engine")
+    def choose_job_engine(session_id: str, job_id: str, body: EngineBody) -> dict[str, object]:
+        return chat.choose_animation_engine(session_id, job_id, body.engine)
 
     @app.get("/api/sessions/{session_id}/jobs/{job_id}/media")
     def read_job_media(session_id: str, job_id: str) -> FileResponse:

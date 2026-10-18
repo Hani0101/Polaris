@@ -28,8 +28,10 @@ RUNNING = "running"
 READY = "ready"
 FAILED = "failed"
 
-# Stages of a running job (AN-19). A ready or failed job has none. A queued
-# job waits for a free place to run (AN-25).
+# Stages of a running job (AN-19). A ready or failed job has none. A choosing
+# job waits for the learner to pick Manim or Lottie (AN-21). A queued job
+# waits for a free place to run (AN-25).
+CHOOSING = "choosing"
 QUEUED = "queued"
 WRITING = "writing"
 CHECKING = "checking"
@@ -46,6 +48,11 @@ WAITING_NOTICE = (
     "This animation may take some time. "
     "You can keep talking in this session or another. "
     "The operating system will notify you when it is ready."
+)
+
+# AN-02 and AN-21: the job waits on its card until the learner picks an engine.
+CHOOSING_NOTICE = (
+    "Choose Manim or Lottie on the animation card to start it. " + WAITING_NOTICE
 )
 
 FAILURE_NOTICE = (
@@ -163,15 +170,18 @@ def waiting_notice_chunk(
 ) -> str:
     """Text to append when this turn started a job that is still running."""
 
-    started = any(
-        artifact.get("kind") == "animation" and artifact.get("status") == RUNNING
+    started = [
+        artifact
         for artifact in artifacts
-    )
+        if artifact.get("kind") == "animation" and artifact.get("status") == RUNNING
+    ]
     if not started or reply_so_far.endswith(WAITING_NOTICE):
         return ""
+    choosing = any(artifact.get("stage") == CHOOSING for artifact in started)
+    notice = CHOOSING_NOTICE if choosing else WAITING_NOTICE
     if reply_so_far and not reply_so_far.endswith("\n"):
-        return "\n\n" + WAITING_NOTICE
-    return WAITING_NOTICE
+        return "\n\n" + notice
+    return notice
 
 
 def submit_animation(

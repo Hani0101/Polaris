@@ -21,6 +21,7 @@ from claude_agent_sdk import delete_session
 
 from polaris.agent import ReplyAgent, ReplyResult, ToolReturned
 from polaris.animation import (
+    CHOOSING as JOB_CHOOSING,
     FAILED as JOB_FAILED,
     FAILURE_NOTICE,
     QUEUED as JOB_QUEUED,
@@ -39,7 +40,7 @@ from polaris.animation import (
     waiting_notice_chunk,
 )
 from polaris.animation import StoredAnimation as Animation
-from polaris.animation_router import AnimationRouter, save_route
+from polaris.animation_engines import AnimationEngines, EngineChoiceClosed
 from polaris.animation_writer import AnimationWriter, new_cli_loop
 from polaris.manim_job import (
     ManimDraftData,
@@ -284,7 +285,7 @@ class Chat:
         data_dir: Path,
         agent: ReplyAgent,
         profile_pass: ProfilePass | None = None,
-        animation_writer: AnimationWriter | None = None,
+        animation_writer: AnimationWriter | AnimationEngines | None = None,
         title_writer: TitleWriter | None = None,
         animation_workers: int = ANIMATION_WORKERS,
     ) -> None:
@@ -301,9 +302,6 @@ class Chat:
         self._busy: set[str] = set()
         # Sessions being deleted (CH-14): a reply running in one stops and saves nothing.
         self._deleting: set[str] = set()
-        # session id -> the learner's message of the turn now running, so an
-        # animation job started in that turn can route on what was asked.
-        self._turn_messages: dict[str, str] = {}
         self._pending: dict[str, list[dict[str, object]]] = {}
         self._mark_rollbacks: dict[str, list[tuple[str, str]]] = {}
         # session id -> (whiteboard id, step id) the agent added this turn. A
@@ -829,7 +827,6 @@ class Chat:
         text = await asyncio.to_thread(self.validate_turn, session_id, message)
         self.raise_if_busy(session_id)
         self._busy.add(session_id)
-        self._turn_messages[session_id] = text
         parts: list[str] = []
         created: list[dict[str, object]] = []
         completed = False
@@ -909,7 +906,6 @@ class Chat:
             completed = True
         finally:
             self._busy.discard(session_id)
-            self._turn_messages.pop(session_id, None)
             if completed:
                 await asyncio.to_thread(
                     self._save_turn,
@@ -1133,8 +1129,9 @@ class Chat:
         """Store a running job and return its id before any animation exists (AN-01).
 
         The animation is written and run by a worker, outside the turn, so
-        the learner can keep talking in this session or another. When every
-        worker is busy the job starts queued (AN-25).
+        the learner can keep talking in this session or another. With both
+        engines, the job waits for the learner to choose one (AN-21). When
+        every worker is busy the job starts queued (AN-25).
         """
 
         self._require(session_id)
@@ -1142,8 +1139,11 @@ class Chat:
         if not brief:
             raise ValueError("An animation job needs a brief.")
         job_id = str(uuid.uuid4())
-        waits = self._animation_writer is not None and not self._animation_queue.has_free_worker()
-        stage = JOB_QUEUED if waits else JOB_WRITING
+        writer = self._animation_writer
+        if isinstance(writer, AnimationEngines):
+            stage = JOB_CHOOSING
+        else:
+            stage = self._start_stage() if writer is not None else JOB_WRITING
         payload = job_payload(job_id, session_id, status=JOB_RUNNING, stage=stage)
 
         def write(conn: sqlite3.Connection) -> None:
@@ -1156,34 +1156,71 @@ class Chat:
             )
             conn.execute(
                 """
-                INSERT INTO animation_jobs (id, status, stage)
-                VALUES (?, ?, ?)
+                INSERT INTO animation_jobs (id, status, stage, brief)
+                VALUES (?, ?, ?, ?)
                 """,
-                (job_id, JOB_RUNNING, stage),
+                (job_id, JOB_RUNNING, stage, brief),
             )
 
         self._with_db(write)
         with self._lock:
             self._pending.setdefault(session_id, []).append(payload)
-        self._launch_animation(
-            session_id, job_id, brief, self._turn_messages.get(session_id)
-        )
+        if writer is not None and not isinstance(writer, AnimationEngines):
+            self._launch_animation(writer, session_id, job_id, brief)
         return payload
+
+    def choose_animation_engine(
+        self, session_id: str, job_id: str, engine: str
+    ) -> dict[str, object]:
+        """Start a waiting job with the engine the learner chose (AN-21).
+
+        Raises UnknownEngine for a name other than manim or lottie, and
+        EngineChoiceClosed when the job is not waiting for a choice, so a
+        second click never starts a second writer.
+        """
+
+        engines = self._animation_writer
+        if not isinstance(engines, AnimationEngines):
+            raise EngineChoiceClosed()
+        writer = engines.writer_for(engine)
+        self.get_animation_job(session_id, job_id)
+        stage = self._start_stage()
+
+        def write(conn: sqlite3.Connection) -> str | None:
+            chosen = conn.execute(
+                """
+                UPDATE animation_jobs SET stage = ?
+                WHERE id = ? AND status = ? AND stage = ?
+                """,
+                (stage, job_id, JOB_RUNNING, JOB_CHOOSING),
+            )
+            if chosen.rowcount != 1:
+                return None
+            row = conn.execute(
+                "SELECT brief FROM animation_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+            return row["brief"]
+
+        brief = self._with_db(write)
+        if not brief:
+            raise EngineChoiceClosed()
+        self._launch_animation(writer, session_id, job_id, brief)
+        return job_payload(job_id, session_id, status=JOB_RUNNING, stage=stage)
+
+    def _start_stage(self) -> str:
+        """Queued when every worker is busy (AN-25), otherwise writing."""
+
+        return JOB_WRITING if self._animation_queue.has_free_worker() else JOB_QUEUED
 
     def _launch_animation(
         self,
+        writer: AnimationWriter,
         session_id: str,
         job_id: str,
         brief: str,
-        learner_message: str | None = None,
     ) -> None:
-        writer = self._animation_writer
-        if writer is None:
-            return
         self._animation_queue.submit(
-            functools.partial(
-                self._run_animation_job, writer, session_id, job_id, brief, learner_message
-            )
+            functools.partial(self._run_animation_job, writer, session_id, job_id, brief)
         )
 
     def _run_animation_job(
@@ -1192,22 +1229,16 @@ class Chat:
         session_id: str,
         job_id: str,
         brief: str,
-        learner_message: str | None = None,
     ) -> None:
         """Worker: write, check, and fix one animation (AN-05, AN-09, AN-10).
 
-        Runs on its own loop, one that can spawn the Claude CLI. With a
-        router, a small evaluation first picks Manim or Lottie (AN-21).
+        Runs on its own loop, one that can spawn the Claude CLI.
         """
 
         loop = new_cli_loop()
         try:
             # A job that waited in the queue starts now (AN-25).
             self._set_animation_stage(job_id, JOB_WRITING)
-            if isinstance(writer, AnimationRouter):
-                route = loop.run_until_complete(writer.route(brief, learner_message))
-                save_route(self.animation_work_dir(job_id), route)
-                writer = writer.writer_for(route)
             if getattr(writer, "engine", None) == "manim":
                 self._run_manim_job(writer, loop, session_id, job_id, brief)
             else:
@@ -1300,7 +1331,11 @@ class Chat:
             self._animation_notices.setdefault(session_id, []).append(FAILURE_NOTICE)
 
     def _fail_interrupted_jobs(self) -> None:
-        """A job running or queued at startup was cut off when Polaris stopped (AN-24)."""
+        """A job running or queued at startup was cut off when Polaris stopped (AN-24).
+
+        A job still waiting for the learner's engine choice lost no work, so
+        it keeps waiting.
+        """
 
         def write(conn: sqlite3.Connection) -> list[str]:
             rows = conn.execute(
@@ -1308,13 +1343,16 @@ class Chat:
                 SELECT DISTINCT a.session_id
                 FROM animation_jobs j
                 JOIN artifacts a ON a.id = j.id
-                WHERE j.status = ?
+                WHERE j.status = ? AND j.stage IS NOT ?
                 """,
-                (JOB_RUNNING,),
+                (JOB_RUNNING, JOB_CHOOSING),
             ).fetchall()
             conn.execute(
-                "UPDATE animation_jobs SET status = ?, stage = NULL WHERE status = ?",
-                (JOB_FAILED, JOB_RUNNING),
+                """
+                UPDATE animation_jobs SET status = ?, stage = NULL
+                WHERE status = ? AND stage IS NOT ?
+                """,
+                (JOB_FAILED, JOB_RUNNING, JOB_CHOOSING),
             )
             return [row["session_id"] for row in rows]
 
@@ -2329,7 +2367,8 @@ class Chat:
                 CREATE TABLE IF NOT EXISTS animation_jobs (
                     id TEXT PRIMARY KEY REFERENCES artifacts(id),
                     status TEXT NOT NULL,
-                    stage TEXT
+                    stage TEXT,
+                    brief TEXT
                 )
                 """
             )
@@ -2339,6 +2378,9 @@ class Chat:
             }
             if "stage" not in job_columns:
                 conn.execute("ALTER TABLE animation_jobs ADD COLUMN stage TEXT")
+            # The brief waits here while the learner chooses an engine (AN-21).
+            if "brief" not in job_columns:
+                conn.execute("ALTER TABLE animation_jobs ADD COLUMN brief TEXT")
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS artifacts_session_id_turn_id

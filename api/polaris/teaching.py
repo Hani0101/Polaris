@@ -790,7 +790,8 @@ def teaching_prompt() -> str:
         "Do not put code in the brief.\n"
         "The animation is not ready when the tool returns. Do not say it is ready "
         "and do not describe it as finished. Keep teaching in text meanwhile.\n"
-        "Polaris tells the learner how long it may take and how they will be told.\n"
+        "Polaris asks the learner to choose Manim or Lottie for it, and tells them how "
+        "long it may take and how they will be told.\n"
         "Animations listed in the prompt are ready, and you can see each step. "
         "When the learner asks about a step, answer about that step.\n"
         "When the turn lists resources, the learner gave you that material to explain from. "
@@ -2119,15 +2120,22 @@ class ClaudeTeachingAgent:
         job_id = payload.get("id") if isinstance(payload, dict) else None
         if not isinstance(job_id, str) or not job_id:
             return _tool_error("The animation job did not return an id.")
+        # AN-21: a job with both engines waits for the learner's choice.
+        choosing = (
+            "The learner first chooses on the animation card whether Manim or Lottie "
+            "draws it. "
+            if payload.get("stage") == "choosing"
+            else ""
+        )
         return {
             "content": [
                 {
                     "type": "text",
                     "text": (
                         f"Animation job started as id {job_id}. "
-                        "The animation is not ready yet. Polaris writes and checks it "
-                        "after this turn and tells the learner when it is ready. "
-                        "The learner can keep talking."
+                        f"The animation is not ready yet. {choosing}"
+                        "Polaris writes and checks it after this turn and tells the "
+                        "learner when it is ready. The learner can keep talking."
                     ),
                 }
             ]
