@@ -4,7 +4,7 @@ A session is the conversation. A turn is one typed message and the reply that fo
 
 ## Rules
 
-CH-01  The learner's side of a turn is a typed message.
+CH-01  The learner's side of a turn is a typed message. Resources the learner adds to the session are not part of a turn (RS-17).
 CH-02  The reply can include text and any artifacts created in that turn: a whiteboard, a quiz, or an animation job.
 CH-03  The learner sees the reply as it is produced.
 CH-04  The learner can start a new session and reopen an earlier one.
@@ -15,9 +15,9 @@ CH-08  Naming a session changes its label only. It does not open or end the sess
 CH-09  The reply text is drawn from a small Markdown subset: headings, numbered and bulleted lists, paragraphs, bold, key terms (`==term==`), struck text (`~~text~~`), inline code, code blocks with syntax colors when they name a language, tables, quotes, callouts (`> [!NOTE]`, `> [!TIP]`, `> [!WARNING]`), maths (`$...$` and `$$...$$`), and web links. Anything else is shown as plain text, and italic is never shown.
 CH-10  Raw HTML in a reply is shown as text and never rendered. Only http and https links become links. Maths that cannot be read is shown as its source.
 CH-11  The learner can delete a session from its row in the session list, after one confirmation. The confirmation names the session, says it cannot be undone, and says the profile keeps what it learned.
-CH-12  Deleting removes the session, its turns, and the whiteboards, quizzes, and animation jobs made in it. Nothing is archived and there is no undo. The profile is not changed by the delete.
+CH-12  Deleting removes the session, its turns, its resources (RS-18), and the whiteboards, quizzes, and animation jobs made in it. Nothing is archived and there is no undo. The profile is not changed by the delete.
 CH-13  The learner can delete the session they have open. It ends first (CH-05), and then a new empty session opens.
-CH-14  A reply or animation job still running in the session is stopped before it is deleted. A write that arrives for a deleted session is dropped.
+CH-14  A reply or animation job still running in the session is stopped before it is deleted. A write that arrives for a deleted session, including a resource upload, is dropped.
 CH-15  A learner can delete only their own sessions. An anonymous session can be deleted too.
 CH-16  In a signed-in session, deleting waits for the profile pass on it to finish (PR-05). If the pass fails, the session is still deleted and the learner is told that its facts were not saved.
 CH-17  Opening a session that no longer exists tells the learner so and opens a new empty session.

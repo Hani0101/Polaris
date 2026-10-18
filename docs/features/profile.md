@@ -15,7 +15,9 @@ PR-08  A fact already stored is not added again. A repeat is UPDATE or IGNORE.
 
 PR-09  A turn is marked signed-in or anonymous when it is saved. An anonymous session reads no profile, asks no profile questions, and runs no pass. An anonymous turn never reaches the profile, even when the same session is signed in later. See [decision 0008](../decisions/0008-optional-sign-in-protects-the-profile.md).
 
-PR-01 through PR-09 are in force. The pass design still needs research; see [decision 0003](../decisions/0003-profile-pass-is-a-proposal.md).
+PR-10  The pass reads turns only. It never reads the content of a resource (RS-21). It may see that a resource was named in a turn.
+
+PR-01 through PR-10 are in force. The pass design still needs research; see [decision 0003](../decisions/0003-profile-pass-is-a-proposal.md).
 
 ## Scenarios
 

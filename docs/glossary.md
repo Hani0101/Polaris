@@ -48,6 +48,10 @@ _Avoid_: achievement, badge, progress
 A whiteboard, quiz, or animation kept so the learner can open it again.
 _Avoid_: file, attachment, output
 
+**Resource**:
+Material the learner gives Polaris to explain from: a PDF, a Word document, a text file, a typed note, or an image. It belongs to one session. The agent reads it and never writes it.
+_Avoid_: attachment, upload, file, source
+
 **Whiteboard**:
 A drawing the agent and the learner use to explain an idea.
 _Avoid_: canvas, diagram
