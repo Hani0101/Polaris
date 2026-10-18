@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from 'vitest'
-import { sendTurn, turnBody } from './api.ts'
+import { sendTurn, turnBody, warmSession } from './api.ts'
 import { SIMPLER_REQUEST } from './whiteboard/simpler.ts'
 
 afterEach(() => {
@@ -61,4 +61,21 @@ test('a turn names the pinned whiteboard, and only while one is pinned (WB-19)',
   expect(turnBody('Is this right?', null, null, null, null, null)).toEqual({
     message: 'Is this right?',
   })
+})
+
+test('warmSession posts to the session warm route', async () => {
+  const fetchMock = vi.fn(
+    async (_input: RequestInfo, _init?: RequestInit) =>
+      new Response(JSON.stringify({ id: 'session 1' }), {
+        status: 202,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+  )
+  vi.stubGlobal('fetch', fetchMock)
+
+  await expect(warmSession('session 1')).resolves.toEqual({ id: 'session 1' })
+
+  const [url, init] = fetchMock.mock.calls[0]
+  expect(url).toBe('/api/sessions/session%201/warm')
+  expect(init?.method).toBe('POST')
 })

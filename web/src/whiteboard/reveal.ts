@@ -5,6 +5,15 @@ export type RevealPhase = 'streaming' | 'stopped' | 'done'
 const COMPLETE_MARKER = /\[\[step:[^\]]*\]\]/g
 const MARKER_OPENS = ['[[step:', '[[cite:']
 
+// The board last revealed for each stored board, by how many steps it shows.
+// While a reply streams, a board that shows the same steps is the same object,
+// so it is not converted and drawn again on every chunk.
+const revealed = new WeakMap<Whiteboard, { count: number; board: Whiteboard }>()
+const added = new WeakMap<
+  Whiteboard,
+  { known: ReadonlySet<string>; count: number; board: Whiteboard }
+>()
+
 export function revealWhiteboard<T extends Whiteboard>(
   whiteboard: T,
   rawReply: string,
@@ -13,11 +22,15 @@ export function revealWhiteboard<T extends Whiteboard>(
   if (phase === 'done') return whiteboard
   const steps = stepsUnlockedBy(whiteboard.steps, rawReply)
   if (steps.length === 0) return null
-  return {
+  const last = revealed.get(whiteboard)
+  if (last?.count === steps.length) return last.board as T
+  const board = {
     ...whiteboard,
     steps,
     comments: commentsWithSteps(whiteboard, steps),
   }
+  revealed.set(whiteboard, { count: steps.length, board })
+  return board
 }
 
 export function visibleReply(raw: string, streaming: boolean, markers: readonly string[] = []): string {
@@ -47,14 +60,20 @@ export function revealAddedSteps<T extends Whiteboard>(
     (step) => knownStepIds.has(step.id) || (step.reply_part !== '' && rawReply.includes(step.reply_part)),
   )
   if (steps.length === whiteboard.steps.length) return whiteboard
+  // A marker stays once it has arrived, so with the same known steps the count
+  // names the shown steps.
+  const last = added.get(whiteboard)
+  if (last?.known === knownStepIds && last.count === steps.length) return last.board as T
   const shown = new Set(steps.flatMap((step) => step.elements.map((element) => element.id)))
-  return {
+  const board = {
     ...whiteboard,
     steps,
     comments: whiteboard.comments.filter(
       (comment) => !comment.element_id || shown.has(comment.element_id),
     ),
   }
+  added.set(whiteboard, { known: knownStepIds, count: steps.length, board })
+  return board
 }
 
 function stepsUnlockedBy(steps: WhiteboardStep[], rawReply: string): WhiteboardStep[] {

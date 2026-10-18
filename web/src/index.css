@@ -856,6 +856,8 @@ button:disabled:not(.tl-container *) {
   background: transparent;
   color: var(--color-text-primary);
   padding: var(--space-sm);
+  /* The box grows with its text, up to six lines, without a layout forced by script. */
+  field-sizing: content;
   max-height: calc(1.5em * 6);
   line-height: var(--font-line-height-normal);
 }
@@ -1175,6 +1177,19 @@ a.whiteboard-original {
 .whiteboard-surface > .tl-container {
   inset: 0;
   position: absolute;
+}
+
+/* A board with no editor yet shows the board color the editor opens on (toolbar.css). */
+.whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-default);
+}
+
+.whiteboard[data-board='light'] .whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-white);
+}
+
+.whiteboard[data-board='dark'] .whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-night);
 }
 
 .whiteboard-skipped {

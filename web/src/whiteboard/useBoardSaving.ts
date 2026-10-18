@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Editor } from 'tldraw'
 import { saveWhiteboard } from '../api.ts'
 import type { BoardPicture, Whiteboard, WhiteboardArtifact } from '../api.ts'
+import { useSteady } from '../useSteady.ts'
 import { boardPicture } from './picture.ts'
 
 const LEARNER_SAVE_DELAY_MS = 300
@@ -27,6 +28,10 @@ type BoardSavingOptions = {
 export function useBoardSaving({ sessionId, whiteboardId, onSaved, onPicture }: BoardSavingOptions) {
   const [saveError, setSaveError] = useState<string | null>(null)
   const pendingRef = useRef<Whiteboard | null>(null)
+  // Counts the learner's changes, so a save can tell it is no longer the latest.
+  const changesRef = useRef(0)
+  // A saved change whose picture was left to the save after it.
+  const pictureOwedRef = useRef(false)
   const timerRef = useRef<number | null>(null)
   const editorRef = useRef<Editor | null>(null)
   const callbacks = useRef({ onSaved, onPicture })
@@ -46,6 +51,7 @@ export function useBoardSaving({ sessionId, whiteboardId, onSaved, onPicture }: 
 
   async function persist(drawing: Whiteboard) {
     const sent = JSON.stringify(drawing)
+    const change = changesRef.current
     try {
       const saved = await saveWhiteboard(sessionId, whiteboardId, drawing)
       const pending = pendingRef.current
@@ -53,8 +59,16 @@ export function useBoardSaving({ sessionId, whiteboardId, onSaved, onPicture }: 
       setSaveError(null)
     } catch (caught) {
       setSaveError(errorText(caught))
+      // An earlier saved change left its picture to this save, so take it.
+      if (!pictureOwedRef.current) return
+    }
+    // The learner drew again during the save, so a picture now is already out
+    // of date. The save of that change takes the picture instead.
+    if (changesRef.current !== change) {
+      pictureOwedRef.current = true
       return
     }
+    pictureOwedRef.current = false
     const editor = editorRef.current
     const report = callbacks.current.onPicture
     if (!editor || !report) return
@@ -62,7 +76,9 @@ export function useBoardSaving({ sessionId, whiteboardId, onSaved, onPicture }: 
     if (picture) report(picture)
   }
 
-  function onDrawingChange(next: Whiteboard) {
+  // One identity, so a memoized board is not drawn again when its page is.
+  const onDrawingChange = useSteady((next: Whiteboard) => {
+    changesRef.current += 1
     pendingRef.current = next
     if (timerRef.current !== null) window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(() => {
@@ -71,7 +87,7 @@ export function useBoardSaving({ sessionId, whiteboardId, onSaved, onPicture }: 
       pendingRef.current = null
       if (pending) void persist(pending)
     }, LEARNER_SAVE_DELAY_MS)
-  }
+  })
 
   /** Saves a change still waiting for its delay, then resolves. */
   async function flush() {

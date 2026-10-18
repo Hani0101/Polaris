@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   RESOURCE_MAX_BYTES,
@@ -189,13 +189,17 @@ export function ResourcesProvider({
     [sessionId],
   )
 
-  const open = useCallback(
-    (resourceId: string, page: number | null = null) => {
-      setFocus((current) => ({ id: resourceId, page, nonce: (current?.nonce ?? 0) + 1 }))
-      onFocus?.()
-    },
-    [onFocus],
-  )
+  // The shell passes a new onFocus on every render. A ref keeps `open`, and so
+  // the context, the same, or every citation would draw again on each chunk.
+  const onFocusRef = useRef(onFocus)
+  useEffect(() => {
+    onFocusRef.current = onFocus
+  })
+
+  const open = useCallback((resourceId: string, page: number | null = null) => {
+    setFocus((current) => ({ id: resourceId, page, nonce: (current?.nonce ?? 0) + 1 }))
+    onFocusRef.current?.()
+  }, [])
 
   const clearError = useCallback(() => setError(null), [])
 

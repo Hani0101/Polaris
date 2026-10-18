@@ -1,5 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from 'react'
-import type { FormEvent, KeyboardEvent, ReactNode, Ref } from 'react'
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent, ReactNode, Ref, RefObject } from 'react'
 import { Plus } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
 import { askedStepLabel } from '../animation/askedStep.ts'
@@ -8,8 +8,11 @@ import { revealWhiteboard, visibleReply } from '../whiteboard/reveal.ts'
 import type { RevealPhase } from '../whiteboard/reveal.ts'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
 import { whiteboardPagePath } from '../whiteboard/simpler.ts'
-import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
+import { Whiteboard, WhiteboardPlaceholder } from '../whiteboard/LazyWhiteboard.tsx'
+import { useSteady } from '../useSteady.ts'
 import { AnimationCard } from './AnimationCard.tsx'
+import { useDraftText } from './draft.ts'
+import type { Draft } from './draft.ts'
 import { ReplyText } from './ReplyText.tsx'
 import {
   AlertBanner,
@@ -38,7 +41,8 @@ export type ViewTurn = {
 
 type ConversationProps = {
   turns: ViewTurn[]
-  draft: string
+  /** The message being typed. Only the composer reads it, so a key draws the composer alone. */
+  draft: Draft
   sending: boolean
   sendError: string | null
   sessionOpen: boolean
@@ -77,18 +81,41 @@ type ConversationProps = {
 
 const PHONE_QUERY = '(max-width: 639px)'
 
+// Where the browser sizes the message box to its text, no script measures it.
+const BOX_SIZES_ITSELF =
+  typeof CSS !== 'undefined' &&
+  typeof CSS.supports === 'function' &&
+  CSS.supports('field-sizing', 'content')
+
 const noHandler = () => {}
 
+// How close to the bottom the learner must be for the view to follow a reply.
+const NEAR_BOTTOM_PX = 64
+
+// The scrolling turns, so a board can tell how far it is from the screen.
+const ScrollRoot = createContext<RefObject<HTMLElement | null> | null>(null)
+
 /**
- * A function that keeps one identity and always calls the latest handler, so a
- * turn is not drawn again (and its whiteboards redrawn) on every typed key.
+ * Whether the element is on screen or within a screen of it. Hidden behind another page, it
+ * is not. Without IntersectionObserver it always is.
  */
-function useSteady<A extends unknown[], R>(handler: (...args: A) => R): (...args: A) => R {
-  const latest = useRef(handler)
+function useNearScreen(target: RefObject<HTMLElement | null>): boolean {
+  const root = useContext(ScrollRoot)
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
   useEffect(() => {
-    latest.current = handler
-  })
-  return useCallback((...args: A) => latest.current(...args), [])
+    const node = target.current
+    if (!node || typeof IntersectionObserver === 'undefined') return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const latest = entries.at(-1)
+        if (latest) setNear(latest.isIntersecting)
+      },
+      { root: root?.current ?? null, rootMargin: '100% 0px' },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [target, root])
+  return near
 }
 
 export function Conversation({
@@ -121,7 +148,6 @@ export function Conversation({
   pinnedWhiteboardId = null,
 }: ConversationProps) {
   const scroller = useRef<HTMLDivElement>(null)
-  const textarea = useRef<HTMLTextAreaElement>(null)
   const copy = useSteady(onCopy)
   const tryAgain = useSteady(onTryAgain)
   const openQuiz = useSteady(onOpenQuiz)
@@ -129,30 +155,43 @@ export function Conversation({
   const openAnimation = useSteady(onOpenAnimation ?? noHandler)
   const simpler = useSteady(onSimpler ?? noHandler)
   const ask = useSteady(onAsk ?? noHandler)
+  const draftChange = useSteady(onDraftChange)
+  const send = useSteady(onSend)
+  const stop = useSteady(onStop)
+  const removePoint = useSteady(onRemovePoint ?? noHandler)
+  const removePicture = useSteady(onRemovePicture ?? noHandler)
+  const removeAnimationStep = useSteady(onRemoveAnimationStep ?? noHandler)
+  const openTools = useSteady(onOpenTools ?? noHandler)
+
+  // The view follows a reply only while the learner is at the bottom, so reading an
+  // earlier turn is not pulled down. Sending or opening a session goes back down.
+  const following = useRef(true)
 
   useEffect(() => {
     const node = scroller.current
     if (!node) return
-    node.scrollTop = node.scrollHeight
-  }, [turns])
+    const onScroll = () => {
+      following.current = node.scrollHeight - node.scrollTop - node.clientHeight <= NEAR_BOTTOM_PX
+    }
+    node.addEventListener('scroll', onScroll, { passive: true })
+    return () => node.removeEventListener('scroll', onScroll)
+  }, [])
 
   useEffect(() => {
-    const node = textarea.current
-    if (!node) return
-    node.style.height = 'auto'
-    const max = 1.5 * 16 * 6
-    node.style.height = `${Math.min(node.scrollHeight, max)}px`
-  }, [draft])
+    following.current = true
+  }, [sessionId])
 
-  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key !== 'Enter' || event.shiftKey) return
-    if (window.matchMedia(PHONE_QUERY).matches) return
-    event.preventDefault()
-    event.currentTarget.form?.requestSubmit()
-  }
+  useEffect(() => {
+    if (sending) following.current = true
+  }, [sending])
+
+  useEffect(() => {
+    const node = scroller.current
+    if (!node || !following.current) return
+    node.scrollTop = node.scrollHeight
+  }, [turns, sending, sessionId])
 
   const empty = sessionOpen && turns.length === 0
-  const canSend = draft.trim() !== '' && !sending
 
   return (
     <section className="conversation" aria-label="Conversation">
@@ -175,84 +214,159 @@ export function Conversation({
           {empty ? (
             <p className="conversation-hint">Ask Polaris to start this session.</p>
           ) : null}
-          {turns.map((turn) => (
-            <TurnBlock
-              key={turn.key}
-              turn={turn}
-              onCopy={copy}
-              onTryAgain={tryAgain}
-              onOpenQuiz={openQuiz}
-              onOpenWhiteboard={openWhiteboard}
-              onOpenAnimation={onOpenAnimation ? openAnimation : undefined}
-              onSimpler={onSimpler ? simpler : undefined}
-              sending={sending}
-              sessionId={sessionId}
-              onAsk={onAsk ? ask : undefined}
-              pinnedWhiteboardId={pinnedWhiteboardId}
-            />
-          ))}
+          <ScrollRoot.Provider value={scroller}>
+            {turns.map((turn) => (
+              <TurnBlock
+                key={turn.key}
+                turn={turn}
+                onCopy={copy}
+                onTryAgain={tryAgain}
+                onOpenQuiz={openQuiz}
+                onOpenWhiteboard={openWhiteboard}
+                onOpenAnimation={onOpenAnimation ? openAnimation : undefined}
+                onSimpler={onSimpler ? simpler : undefined}
+                sending={sending}
+                sessionId={sessionId}
+                onAsk={onAsk ? ask : undefined}
+                pinnedWhiteboardId={pinnedWhiteboardId}
+              />
+            ))}
+          </ScrollRoot.Provider>
         </div>
       </div>
       {sessionOpen ? (
-        <form className="chat-input-bar" onSubmit={onSend}>
-          {pointing && pointing.parts.length > 0 ? (
-            <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
-          ) : null}
-          {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
-          {animationStep ? (
-            <StepChip step={animationStep} onRemove={onRemoveAnimationStep} />
-          ) : null}
-          <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
-            {onOpenTools ? (
-              <button
-                ref={toolsButtonRef}
-                type="button"
-                className="icon-btn icon-btn--ghost icon-btn--md"
-                aria-label="Open tools"
-                aria-haspopup="dialog"
-                onClick={onOpenTools}
-              >
-                <Plus size={20} strokeWidth={2} aria-hidden="true" />
-              </button>
-            ) : null}
-            <label className="visually-hidden" htmlFor="learner-message">
-              Message to Polaris
-            </label>
-            <textarea
-              id="learner-message"
-              ref={textarea}
-              value={draft}
-              rows={1}
-              placeholder="Ask about a topic"
-              onChange={(event) => onDraftChange(event.target.value)}
-              onKeyDown={onComposerKeyDown}
-            />
-            {sending ? (
-              <IconButton label="Stop" variant="primary" onClick={onStop}>
-                <StopIcon />
-              </IconButton>
-            ) : (
-              <IconButton
-                label="Send"
-                variant="primary"
-                type="submit"
-                disabled={!canSend}
-              >
-                <SendIcon />
-              </IconButton>
-            )}
-          </div>
-          {sendError ? (
-            <p className="chat-input-error">
-              <AlertIcon />
-              {sendError}
-            </p>
-          ) : null}
-        </form>
+        <Composer
+          draft={draft}
+          sending={sending}
+          sendError={sendError}
+          onDraftChange={draftChange}
+          onSend={send}
+          onStop={stop}
+          pointing={pointing}
+          onRemovePoint={onRemovePoint ? removePoint : undefined}
+          pictureAttached={pictureAttached}
+          onRemovePicture={onRemovePicture ? removePicture : undefined}
+          animationStep={animationStep}
+          onRemoveAnimationStep={onRemoveAnimationStep ? removeAnimationStep : undefined}
+          onOpenTools={onOpenTools ? openTools : undefined}
+          toolsButtonRef={toolsButtonRef}
+        />
       ) : null}
     </section>
   )
 }
+
+/**
+ * The message box and what goes with the next message. It alone reads the draft, so a
+ * typed key draws it and nothing else.
+ */
+const Composer = memo(function Composer({
+  draft,
+  sending,
+  sendError,
+  onDraftChange,
+  onSend,
+  onStop,
+  pointing,
+  onRemovePoint,
+  pictureAttached,
+  onRemovePicture,
+  animationStep,
+  onRemoveAnimationStep,
+  onOpenTools,
+  toolsButtonRef,
+}: {
+  draft: Draft
+  sending: boolean
+  sendError: string | null
+  onDraftChange: (value: string) => void
+  onSend: (event: FormEvent<HTMLFormElement>) => void
+  onStop: () => void
+  pointing: Pointing | null
+  onRemovePoint?: (elementId: string) => void
+  pictureAttached: boolean
+  onRemovePicture?: () => void
+  animationStep: AskedStep | null
+  onRemoveAnimationStep?: () => void
+  onOpenTools?: () => void
+  toolsButtonRef?: Ref<HTMLButtonElement>
+}) {
+  const text = useDraftText(draft)
+  const textarea = useRef<HTMLTextAreaElement>(null)
+
+  // A browser without CSS field-sizing gets the box sized here. Reading scrollHeight
+  // makes it lay out the page at once, so the CSS way is used where it exists.
+  useEffect(() => {
+    const node = textarea.current
+    if (!node || BOX_SIZES_ITSELF) return
+    node.style.height = 'auto'
+    const max = 1.5 * 16 * 6
+    node.style.height = `${Math.min(node.scrollHeight, max)}px`
+  }, [text])
+
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey) return
+    if (window.matchMedia(PHONE_QUERY).matches) return
+    event.preventDefault()
+    event.currentTarget.form?.requestSubmit()
+  }
+
+  const canSend = text.trim() !== '' && !sending
+
+  return (
+    <form className="chat-input-bar" onSubmit={onSend}>
+      {pointing && pointing.parts.length > 0 ? (
+        <PointChips parts={pointing.parts} onRemove={onRemovePoint} />
+      ) : null}
+      {pictureAttached ? <PictureChip onRemove={onRemovePicture} /> : null}
+      {animationStep ? <StepChip step={animationStep} onRemove={onRemoveAnimationStep} /> : null}
+      <div className={sendError ? 'chat-input is-error' : 'chat-input'}>
+        {onOpenTools ? (
+          <button
+            ref={toolsButtonRef}
+            type="button"
+            className="icon-btn icon-btn--ghost icon-btn--md"
+            aria-label="Open tools"
+            aria-haspopup="dialog"
+            onClick={onOpenTools}
+          >
+            <Plus size={20} strokeWidth={2} aria-hidden="true" />
+          </button>
+        ) : null}
+        <label className="visually-hidden" htmlFor="learner-message">
+          Message to Polaris
+        </label>
+        <textarea
+          id="learner-message"
+          ref={textarea}
+          value={text}
+          rows={1}
+          placeholder="Ask about a topic"
+          onChange={(event) => {
+            draft.set(event.target.value)
+            onDraftChange(event.target.value)
+          }}
+          onKeyDown={onKeyDown}
+        />
+        {sending ? (
+          <IconButton label="Stop" variant="primary" onClick={onStop}>
+            <StopIcon />
+          </IconButton>
+        ) : (
+          <IconButton label="Send" variant="primary" type="submit" disabled={!canSend}>
+            <SendIcon />
+          </IconButton>
+        )}
+      </div>
+      {sendError ? (
+        <p className="chat-input-error">
+          <AlertIcon />
+          {sendError}
+        </p>
+      ) : null}
+    </form>
+  )
+})
 
 function revealPhase(turn: ViewTurn): RevealPhase {
   if (turn.streaming) return 'streaming'
@@ -438,45 +552,15 @@ const TurnBlock = memo(function TurnBlock({
             </div>
           ))}
           {whiteboards.map((whiteboard) => (
-            <div className="turn-whiteboard" key={whiteboard.id}>
-              <div className="turn-whiteboard-actions">
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => onOpenWhiteboard(whiteboard.id)}
-                >
-                  Open whiteboard
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={sending || !onSimpler}
-                  onClick={() => onSimpler?.(whiteboard.id)}
-                >
-                  Simpler
-                </button>
-                {sessionId && whiteboard.simplifies ? (
-                  <a
-                    className="whiteboard-original"
-                    href={whiteboardPagePath(sessionId, whiteboard.simplifies)}
-                    onClick={(event) => {
-                      const originalId = whiteboard.simplifies
-                      if (!originalId) return
-                      event.preventDefault()
-                      onOpenWhiteboard(originalId)
-                    }}
-                  >
-                    Original whiteboard
-                  </a>
-                ) : null}
-              </div>
-              <div className="turn-whiteboard-board">
-                <Whiteboard
-                  whiteboard={whiteboard}
-                  onAsk={onAsk ? (parts) => onAsk(whiteboard.id, parts) : undefined}
-                />
-              </div>
-            </div>
+            <TurnWhiteboard
+              key={whiteboard.id}
+              whiteboard={whiteboard}
+              sending={sending}
+              sessionId={sessionId}
+              onOpenWhiteboard={onOpenWhiteboard}
+              onSimpler={onSimpler}
+              onAsk={onAsk}
+            />
           ))}
           {finished ? (
             <div className="tutor-actions">
@@ -495,5 +579,72 @@ const TurnBlock = memo(function TurnBlock({
         </div>
       ) : null}
     </article>
+  )
+})
+
+/** A board in a turn, with its actions. It is drawn again only when the board changes. */
+const TurnWhiteboard = memo(function TurnWhiteboard({
+  whiteboard,
+  sending,
+  sessionId,
+  onOpenWhiteboard,
+  onSimpler,
+  onAsk,
+}: {
+  whiteboard: WhiteboardArtifact
+  sending: boolean
+  sessionId: string | null
+  onOpenWhiteboard: (whiteboardId: string) => void
+  onSimpler?: (whiteboardId: string) => void
+  onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+}) {
+  const ask = useCallback(
+    (parts: PointedPart[]) => onAsk?.(whiteboard.id, parts),
+    [onAsk, whiteboard.id],
+  )
+  // A tldraw editor draws every frame while mounted, so a board far off screen has none.
+  const frame = useRef<HTMLDivElement>(null)
+  const near = useNearScreen(frame)
+  return (
+    <div className="turn-whiteboard">
+      <div className="turn-whiteboard-actions">
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => onOpenWhiteboard(whiteboard.id)}
+        >
+          Open whiteboard
+        </button>
+        <button
+          type="button"
+          className="secondary"
+          disabled={sending || !onSimpler}
+          onClick={() => onSimpler?.(whiteboard.id)}
+        >
+          Simpler
+        </button>
+        {sessionId && whiteboard.simplifies ? (
+          <a
+            className="whiteboard-original"
+            href={whiteboardPagePath(sessionId, whiteboard.simplifies)}
+            onClick={(event) => {
+              const originalId = whiteboard.simplifies
+              if (!originalId) return
+              event.preventDefault()
+              onOpenWhiteboard(originalId)
+            }}
+          >
+            Original whiteboard
+          </a>
+        ) : null}
+      </div>
+      <div className="turn-whiteboard-board" ref={frame}>
+        {near ? (
+          <Whiteboard whiteboard={whiteboard} onAsk={onAsk ? ask : undefined} />
+        ) : (
+          <WhiteboardPlaceholder whiteboard={whiteboard} />
+        )}
+      </div>
+    </div>
   )
 })

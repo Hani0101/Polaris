@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useCallback, useState } from 'react'
 import { Ellipsis, Pencil, Settings, Trash2 } from 'lucide-react'
 import { ApiError, sessionLabel } from '../api.ts'
 import type { SessionSummary } from '../api.ts'
@@ -20,7 +20,8 @@ type SessionPanelProps = {
   onOpenSettings: () => void
 }
 
-export function SessionPanel({
+/** The session list. Memoized, so a streamed chunk does not draw every row again. */
+export const SessionPanel = memo(function SessionPanel({
   sessions,
   openId,
   loading,
@@ -41,12 +42,12 @@ export function SessionPanel({
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  function startRename(session: SessionSummary) {
+  const startRename = useCallback((session: SessionSummary) => {
     setTarget(session)
     setValue(session.name)
     setRenameError(null)
     setRenaming(true)
-  }
+  }, [])
 
   async function saveRename() {
     if (!target) return
@@ -62,11 +63,11 @@ export function SessionPanel({
     }
   }
 
-  function startDelete(session: SessionSummary) {
+  const startDelete = useCallback((session: SessionSummary) => {
     setTarget(session)
     setDeleteError(null)
     setDeleting(true)
-  }
+  }, [])
 
   async function confirmDelete() {
     if (!target || deleteBusy) return
@@ -116,44 +117,14 @@ export function SessionPanel({
       {!loading && sessions.length > 0 ? (
         <ul className="session-list">
           {sessions.map((session) => (
-            <li
+            <SessionRow
               key={session.id}
-              className={openId === session.id ? 'session-row is-current' : 'session-row'}
-            >
-              <button
-                type="button"
-                className="session-item"
-                aria-current={openId === session.id ? 'page' : undefined}
-                onClick={() => onOpen(session.id)}
-              >
-                <span className="session-item-title">{sessionLabel(session)}</span>
-                {session.ended ? (
-                  <span className="session-item-meta">Ended</span>
-                ) : null}
-              </button>
-              <DropdownMenu
-                label={`Actions for ${sessionLabel(session)}`}
-                triggerClassName="icon-btn icon-btn--ghost icon-btn--sm"
-                overDrawer
-                items={[
-                  {
-                    id: 'rename',
-                    label: 'Rename',
-                    icon: <Pencil size={20} strokeWidth={2} aria-hidden="true" />,
-                    onSelect: () => startRename(session),
-                  },
-                  {
-                    id: 'delete',
-                    label: 'Delete',
-                    icon: <Trash2 size={20} strokeWidth={2} aria-hidden="true" />,
-                    destructive: true,
-                    onSelect: () => startDelete(session),
-                  },
-                ]}
-              >
-                <Ellipsis size={20} strokeWidth={2} aria-hidden="true" />
-              </DropdownMenu>
-            </li>
+              session={session}
+              current={openId === session.id}
+              onOpen={onOpen}
+              onRename={startRename}
+              onDelete={startDelete}
+            />
           ))}
         </ul>
       ) : null}
@@ -183,4 +154,55 @@ export function SessionPanel({
       />
     </nav>
   )
-}
+})
+
+/** One session in the list, with its menu. It is drawn again only when it changes. */
+const SessionRow = memo(function SessionRow({
+  session,
+  current,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  session: SessionSummary
+  current: boolean
+  onOpen: (sessionId: string) => void
+  onRename: (session: SessionSummary) => void
+  onDelete: (session: SessionSummary) => void
+}) {
+  return (
+    <li className={current ? 'session-row is-current' : 'session-row'}>
+      <button
+        type="button"
+        className="session-item"
+        aria-current={current ? 'page' : undefined}
+        onClick={() => onOpen(session.id)}
+      >
+        <span className="session-item-title">{sessionLabel(session)}</span>
+        {session.ended ? <span className="session-item-meta">Ended</span> : null}
+      </button>
+      <DropdownMenu
+        label={`Actions for ${sessionLabel(session)}`}
+        triggerClassName="icon-btn icon-btn--ghost icon-btn--sm"
+        overDrawer
+        items={[
+          {
+            id: 'rename',
+            label: 'Rename',
+            icon: <Pencil size={20} strokeWidth={2} aria-hidden="true" />,
+            onSelect: () => onRename(session),
+          },
+          {
+            id: 'delete',
+            label: 'Delete',
+            icon: <Trash2 size={20} strokeWidth={2} aria-hidden="true" />,
+            destructive: true,
+            onSelect: () => onDelete(session),
+          },
+        ]}
+      >
+        <Ellipsis size={20} strokeWidth={2} aria-hidden="true" />
+      </DropdownMenu>
+    </li>
+  )
+})

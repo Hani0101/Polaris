@@ -4,7 +4,7 @@ import type { BoardPicture, WhiteboardArtifact } from './api.ts'
 import type { PointedPart } from './whiteboard/pointing.ts'
 import { whiteboardPagePath } from './whiteboard/simpler.ts'
 import { useBoardSaving } from './whiteboard/useBoardSaving.ts'
-import { Whiteboard as WhiteboardBoard } from './whiteboard/Whiteboard.tsx'
+import { Whiteboard as WhiteboardBoard } from './whiteboard/LazyWhiteboard.tsx'
 
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message

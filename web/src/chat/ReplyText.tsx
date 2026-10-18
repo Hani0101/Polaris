@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { memo, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
@@ -32,7 +32,17 @@ function text(value: string): string {
   return value.replace(/\\\$/g, '$')
 }
 
-function Maths({ tex, display, source }: { tex: string; display: boolean; source: string }) {
+// Maths and code blocks are memoized: while a reply streams, only the block still
+// being written is typeset or colored again.
+const Maths = memo(function Maths({
+  tex,
+  display,
+  source,
+}: {
+  tex: string
+  display: boolean
+  source: string
+}) {
   let html: string
   try {
     // Display maths is set in inline mode with \displaystyle so a long line can
@@ -43,7 +53,15 @@ function Maths({ tex, display, source }: { tex: string; display: boolean; source
   }
   const Tag = display ? 'div' : 'span'
   return <Tag className={display ? 'reply-math-block' : 'reply-math'} dangerouslySetInnerHTML={{ __html: html }} />
-}
+})
+
+const CodeBlock = memo(function CodeBlock({ code, language }: { code: string; language: string }) {
+  return (
+    <pre>
+      <code data-language={language || undefined}>{highlightCode(code, language) ?? code}</code>
+    </pre>
+  )
+})
 
 /**
  * A citation of a learner's resource, written by the agent as [[cite:id:page]].
@@ -130,13 +148,7 @@ function renderBlock(block: ReplyBlock, key: string): ReactNode {
     return <h3 key={key}>{renderInline(block.text, key)}</h3>
   }
   if (block.kind === 'code') {
-    return (
-      <pre key={key}>
-        <code data-language={block.language || undefined}>
-          {highlightCode(block.code, block.language) ?? block.code}
-        </code>
-      </pre>
-    )
+    return <CodeBlock key={key} code={block.code} language={block.language} />
   }
   if (block.kind === 'math') {
     return <Maths key={key} tex={block.tex} display source={block.tex} />

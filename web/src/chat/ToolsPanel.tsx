@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Clapperboard, Layers, ListChecks, Presentation } from 'lucide-react'
 import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
@@ -42,8 +42,11 @@ type ToolsPanelProps = {
   creatingWhiteboard?: boolean
 }
 
-/** The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs. */
-export function ToolsPanel({
+/**
+ * The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs.
+ * Memoized, so a streamed chunk does not draw it again.
+ */
+export const ToolsPanel = memo(function ToolsPanel({
   artifacts,
   headingId,
   onClose,
@@ -113,7 +116,7 @@ export function ToolsPanel({
       </Tabs>
     </div>
   )
-}
+})
 
 function isQuiz(artifact: Artifact): artifact is Quiz {
   return artifact.kind === 'quiz'

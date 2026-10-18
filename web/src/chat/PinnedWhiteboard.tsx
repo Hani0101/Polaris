@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { Maximize2, Minimize2 } from 'lucide-react'
 import { getWhiteboard } from '../api.ts'
@@ -7,7 +7,7 @@ import type { PointedPart } from '../whiteboard/pointing.ts'
 import { revealAddedSteps } from '../whiteboard/reveal.ts'
 import type { RevealPhase } from '../whiteboard/reveal.ts'
 import { useBoardSaving } from '../whiteboard/useBoardSaving.ts'
-import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
+import { Whiteboard } from '../whiteboard/LazyWhiteboard.tsx'
 import { ResizeHandle, useSize } from './ResizeHandle.tsx'
 import { AlertIcon, CloseIcon, IconButton } from './ui.tsx'
 import './pinned.css'
@@ -36,8 +36,9 @@ type PinnedWhiteboardProps = {
 /**
  * The board pinned above the conversation (WB-19). The learner draws on it as
  * usual, and the agent's added steps appear on it as the reply reaches them.
+ * Memoized, so the app drawing again does not draw tldraw's tree again.
  */
-export function PinnedWhiteboard({
+export const PinnedWhiteboard = memo(function PinnedWhiteboard({
   sessionId,
   whiteboardId,
   turn,
@@ -174,4 +175,4 @@ export function PinnedWhiteboard({
       )}
     </section>
   )
-}
+})

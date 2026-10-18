@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { PanelRight } from 'lucide-react'
 import { IconButton, MenuIcon } from './ui.tsx'
 
@@ -13,7 +14,7 @@ type TopBarProps = {
   onToggleTools?: () => void
 }
 
-export function TopBar({
+export const TopBar = memo(function TopBar({
   sessionTitle,
   sessionListOpen,
   onToggleSessions,
@@ -49,4 +50,4 @@ export function TopBar({
       </div>
     </header>
   )
-}
+})

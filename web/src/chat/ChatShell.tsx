@@ -1,12 +1,14 @@
-import { useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, FormEvent } from 'react'
 import type { Artifact, BoardPicture, Quiz, SessionSummary, WhiteboardArtifact } from '../api.ts'
 import type { AskedStep } from '../animation/askedStep.ts'
 import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
 import type { PointedPart, Pointing } from '../whiteboard/pointing.ts'
+import { useSteady } from '../useSteady.ts'
 import { BottomSheet } from './BottomSheet.tsx'
 import { Conversation } from './Conversation.tsx'
 import type { ViewTurn } from './Conversation.tsx'
+import type { Draft } from './draft.ts'
 import { PinnedWhiteboard } from './PinnedWhiteboard.tsx'
 import type { PinnedTurn } from './PinnedWhiteboard.tsx'
 import { ResizeHandle, useSize } from './ResizeHandle.tsx'
@@ -22,14 +24,16 @@ const PANEL_MIN = 200
 const PANEL_MAX = 640
 
 function useMediaQuery(query: string): boolean {
-  return useSyncExternalStore(
-    (notify) => {
-      const media = window.matchMedia(query)
+  // One query list per query, read on every render, not a new one each time.
+  const media = useMemo(() => window.matchMedia(query), [query])
+  const subscribe = useCallback(
+    (notify: () => void) => {
       media.addEventListener('change', notify)
       return () => media.removeEventListener('change', notify)
     },
-    () => window.matchMedia(query).matches,
+    [media],
   )
+  return useSyncExternalStore(subscribe, () => media.matches)
 }
 
 type ChatShellProps = {
@@ -49,7 +53,7 @@ type ChatShellProps = {
   onOpenSettings: () => void
   onLeave: () => void
   turns: ViewTurn[]
-  draft: string
+  draft: Draft
   sending: boolean
   sendError: string | null
   onDraftChange: (value: string) => void
@@ -92,6 +96,9 @@ type ChatShellProps = {
 }
 
 const noTools = () => {}
+// Defaults with one identity, so a memoized panel does not see a new list each render.
+const noArtifacts: Artifact[] = []
+const noWhiteboards: WhiteboardArtifact[] = []
 
 export function ChatShell({
   sessions,
@@ -132,12 +139,12 @@ export function ChatShell({
   onRemoveAnimationStep,
   toast,
   onCloseToast,
-  artifacts = [],
+  artifacts = noArtifacts,
   toolsOpen = false,
   onToggleTools = noTools,
   onCloseTools = noTools,
   onQuizChecked = noTools,
-  whiteboards = [],
+  whiteboards = noWhiteboards,
   onNewWhiteboard,
   creatingWhiteboard = false,
   pinnedWhiteboardId = null,
@@ -164,22 +171,26 @@ export function ChatShell({
   if (sheetOpen && (!phone || !sessionOpen)) setSheetOpen(false)
 
   // On a phone the sheet closes, so the board pinned above the chat is in view.
-  function openBoard(whiteboardId: string) {
+  const openBoard = useSteady((whiteboardId: string) => {
     setSheetOpen(false)
     onOpenWhiteboard(whiteboardId)
-  }
+  })
+  const newBoard = useSteady(() => {
+    setSheetOpen(false)
+    onNewWhiteboard?.()
+  })
+  const closeSheet = useCallback(() => setSheetOpen(false), [])
+  const openSheet = useCallback(() => setSheetOpen(true), [])
+  const askPinned = useSteady((parts: PointedPart[]) => {
+    if (pinnedWhiteboardId) onAsk(pinnedWhiteboardId, parts)
+  })
 
   const toolsProps = {
     artifacts,
     whiteboards,
     pinnedWhiteboardId,
     creatingWhiteboard,
-    onNewWhiteboard: onNewWhiteboard
-      ? () => {
-          setSheetOpen(false)
-          onNewWhiteboard()
-        }
-      : undefined,
+    onNewWhiteboard: onNewWhiteboard ? newBoard : undefined,
     onOpenQuiz,
     onOpenWhiteboard: openBoard,
     onOpenAnimation,
@@ -276,7 +287,7 @@ export function ChatShell({
             animationStep={animationStep}
             onRemoveAnimationStep={onRemoveAnimationStep}
             onAsk={onAsk}
-            onOpenTools={phone ? () => setSheetOpen(true) : undefined}
+            onOpenTools={phone ? openSheet : undefined}
             toolsButtonRef={toolsButton}
             pinnedWhiteboardId={pinnedWhiteboardId}
             pinned={
@@ -287,7 +298,7 @@ export function ChatShell({
                   whiteboardId={pinnedWhiteboardId}
                   turn={pinnedTurn}
                   onClose={onClosePinned}
-                  onAsk={(parts) => onAsk(pinnedWhiteboardId, parts)}
+                  onAsk={askPinned}
                   onPicture={onPicture}
                 />
               ) : null
@@ -314,12 +325,12 @@ export function ChatShell({
           <BottomSheet
             open={sheetOpen}
             labelledBy={sheetHeading}
-            onClose={() => setSheetOpen(false)}
+            onClose={closeSheet}
             returnFocus={toolsButton}
           >
             <ToolsPanel
               headingId={sheetHeading}
-              onClose={() => setSheetOpen(false)}
+              onClose={closeSheet}
               {...toolsProps}
             />
           </BottomSheet>

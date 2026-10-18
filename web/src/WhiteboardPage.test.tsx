@@ -1,11 +1,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeAll, expect, test, vi } from 'vitest'
 import type { WhiteboardArtifact } from './api.ts'
 import { readableDescription } from './whiteboard/description.ts'
+import { prefetchWhiteboard } from './whiteboard/LazyWhiteboard.tsx'
 import { sampleWhiteboard } from './whiteboard/sampleWhiteboard.ts'
 import { WhiteboardPage } from './WhiteboardPage.tsx'
 
 const whiteboard: WhiteboardArtifact = { ...sampleWhiteboard, kind: 'whiteboard' }
+
+// The board code loads on first use. Loading it first keeps each test's wait short.
+beforeAll(() => prefetchWhiteboard(), 60_000)
 
 afterEach(() => {
   cleanup()

@@ -1,4 +1,6 @@
 import {
+  memo,
+  useCallback,
   useEffect,
   useId,
   useMemo,
@@ -41,7 +43,10 @@ const TOOLS_KEY = 'polaris.whiteboard.tools'
 
 const penTools = new Set<ToolId>(learnerDrawingTools.map((item) => item.id))
 
-type WhiteboardProps = {
+// One list for every board, so tldraw does not see new shape utils on each render.
+const shapeUtils = [...mathCodeShapeUtils, ...graphShapeUtils]
+
+export type WhiteboardProps = {
   whiteboard: WhiteboardData
   mode?: 'view' | 'draw'
   onChange?: (whiteboard: WhiteboardData) => void
@@ -156,7 +161,8 @@ function drawShapes(editor: Editor, converted: WhiteboardShapes) {
   if (converted.bindings.length > 0) editor.createBindings(converted.bindings)
 }
 
-export function Whiteboard({
+/** Memoized, so a parent drawing again does not draw tldraw's providers and toolbar again. */
+export const Whiteboard = memo(function Whiteboard({
   whiteboard,
   mode = 'view',
   onChange,
@@ -475,9 +481,19 @@ export function Whiteboard({
     onChange?.(next)
   }
 
+  // The wheel and a touchpad zoom the board; pinch zooms on a phone.
+  // tldraw's saved input mode would override the wheel setting below.
+  const onMount = useCallback((mounted: Editor) => {
+    mounted.user.updateUserPreferences({ inputMode: null })
+    mounted.setCameraOptions({ ...mounted.getCameraOptions(), wheelBehavior: 'zoom' })
+    setEditor(mounted)
+  }, [])
+
   const shown = mode === 'draw' ? comments : whiteboard.comments
-  const described = mode === 'draw' ? { ...drawn, comments: shown } : whiteboard
-  const caption = readableDescription(described)
+  const caption = useMemo(
+    () => readableDescription(mode === 'draw' ? { ...drawn, comments: shown } : whiteboard),
+    [mode, drawn, shown, whiteboard],
+  )
 
   return (
     <section
@@ -498,14 +514,8 @@ export function Whiteboard({
           hideUi
           autoFocus={false}
           colorScheme={tone}
-          onMount={(mounted) => {
-            // The wheel and a touchpad zoom the board; pinch zooms on a phone.
-            // tldraw's saved input mode would override the wheel setting below.
-            mounted.user.updateUserPreferences({ inputMode: null })
-            mounted.setCameraOptions({ ...mounted.getCameraOptions(), wheelBehavior: 'zoom' })
-            setEditor(mounted)
-          }}
-          shapeUtils={[...mathCodeShapeUtils, ...graphShapeUtils]}
+          onMount={onMount}
+          shapeUtils={shapeUtils}
         />
         <CommentPins editor={editor} comments={shown} />
         {mode === 'draw' ? (
@@ -582,4 +592,4 @@ export function Whiteboard({
       ) : null}
     </section>
   )
-}
+})

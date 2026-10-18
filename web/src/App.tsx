@@ -13,6 +13,7 @@ import {
   openSession,
   sendTurn,
   startSession,
+  warmSession,
 } from './api.ts'
 import type {
   Artifact,
@@ -30,12 +31,15 @@ import { AnimationPage } from './AnimationPage.tsx'
 import { watchRunningAnimations } from './chat/animationNotices.ts'
 import { ChatShell } from './chat/ChatShell.tsx'
 import type { ViewTurn } from './chat/Conversation.tsx'
+import { createDraft } from './chat/draft.ts'
 import type { PinnedTurn } from './chat/PinnedWhiteboard.tsx'
 import { pointingFromTurn, type PointedPart, type Pointing } from './whiteboard/pointing.ts'
+import { prefetchWhiteboard } from './whiteboard/LazyWhiteboard.tsx'
 import { SIMPLER_REQUEST, whiteboardPagePath } from './whiteboard/simpler.ts'
 import { QuizPage } from './QuizPage.tsx'
 import { SettingsPage } from './SettingsPage.tsx'
 import { SETTINGS_PATH, isSettingsPath } from './settingsPath.ts'
+import { useSteadyHandlers } from './useSteady.ts'
 import { WhiteboardPage } from './WhiteboardPage.tsx'
 
 const DevWhiteboardRoute = import.meta.env.DEV
@@ -164,15 +168,16 @@ function savedView(
   }
 }
 
-function mergeTurns(
-  saved: Turn[],
-  kept: KeptTurn[],
-  pending: PendingTurn | null,
-  known: ReadonlyMap<string, AskedStep>,
-): ViewTurn[] {
+function savedViews(saved: Turn[], known: ReadonlyMap<string, AskedStep>): ViewTurn[] {
   const boards = boardsIn(saved)
-  const extras: { id: string; after: number; view: ViewTurn }[] = kept.map((item) => ({
-    id: item.id,
+  return saved.map((turn, index) => savedView(turn, index, boards, known))
+}
+
+/** A turn the server has not saved, and the saved turn it came after. */
+type PlacedTurn = { after: number; view: ViewTurn }
+
+function keptViews(kept: KeptTurn[]): PlacedTurn[] {
+  return kept.map((item) => ({
     after: item.after,
     view: {
       key: item.id,
@@ -186,35 +191,38 @@ function mergeTurns(
       animationStep: item.animationStep,
     },
   }))
-  if (pending) {
-    extras.push({
-      id: 'pending',
-      after: pending.after,
-      view: {
-        key: 'pending',
-        learner: pending.learner,
-        reply: pending.reply,
-        artifacts: pending.artifacts,
-        streaming: pending.status === 'streaming',
-        stopped: pending.status === 'stopped',
-        failed: Boolean(pending.failed),
-        pointing: pending.pointing,
-        animationStep: pending.animationStep,
-      },
-    })
+}
+
+function pendingView(pending: PendingTurn): PlacedTurn {
+  return {
+    after: pending.after,
+    view: {
+      key: 'pending',
+      learner: pending.learner,
+      reply: pending.reply,
+      artifacts: pending.artifacts,
+      streaming: pending.status === 'streaming',
+      stopped: pending.status === 'stopped',
+      failed: Boolean(pending.failed),
+      pointing: pending.pointing,
+      animationStep: pending.animationStep,
+    },
   }
-  extras.sort((a, b) => a.after - b.after)
+}
+
+function mergeTurns(saved: ViewTurn[], extras: PlacedTurn[]): ViewTurn[] {
+  const placed = [...extras].sort((a, b) => a.after - b.after)
   const items: ViewTurn[] = []
   let index = 0
-  for (const extra of extras) {
+  for (const extra of placed) {
     while (index < extra.after && index < saved.length) {
-      items.push(savedView(saved[index], index, boards, known))
+      items.push(saved[index])
       index += 1
     }
     items.push(extra.view)
   }
   while (index < saved.length) {
-    items.push(savedView(saved[index], index, boards, known))
+    items.push(saved[index])
     index += 1
   }
   return items
@@ -224,7 +232,8 @@ function App() {
   const [path, setPath] = useState(window.location.pathname)
   const [sessions, setSessions] = useState<SessionSummary[]>([])
   const [open, setOpen] = useState<Session | null>(null)
-  const [draft, setDraft] = useState('')
+  // Kept outside React state, so a typed key draws the composer and not the app.
+  const [draft] = useState(() => createDraft())
   const [pointing, setPointing] = useState<Pointing | null>(null)
   // The latest picture of a board the learner drew on, for their next message.
   const [picture, setPicture] = useState<BoardPicture | null>(null)
@@ -250,19 +259,47 @@ function App() {
   )
   const sendAbort = useRef<AbortController | null>(null)
   const sending = useRef(false)
+  const switching = useRef(false)
   const toastTimer = useRef<number | null>(null)
+  // The session whose agent was started in this visit, once the learner began typing.
+  const warmedFor = useRef<string | null>(null)
 
   const sendablePicture = picture && picture.whiteboard_id === pinnedId ? picture : null
 
+  // Saved and stopped turns keep their view objects while a reply streams, so
+  // only the pending turn is drawn again on each chunk.
+  const saved = useMemo(() => savedViews(open?.turns ?? [], knownSteps), [open, knownSteps])
+  const stopped = useMemo(() => keptViews(kept), [kept])
   const turns = useMemo(
-    () => mergeTurns(open?.turns ?? [], kept, pending, knownSteps),
-    [open, kept, pending, knownSteps],
+    () => mergeTurns(saved, pending ? [...stopped, pendingView(pending)] : stopped),
+    [saved, stopped, pending],
   )
 
+  // The artifacts of every turn not streaming. A streaming chunk leaves this list as it
+  // was, so the tools panel is not drawn again on each one.
+  const settled = pending && pending.status !== 'streaming' ? pending : null
   const artifacts = useMemo(
-    () => turns.filter((turn) => !turn.streaming).flatMap((turn) => turn.artifacts),
-    [turns],
+    () =>
+      mergeTurns(saved, settled ? [...stopped, pendingView(settled)] : stopped).flatMap(
+        (turn) => turn.artifacts,
+      ),
+    [saved, stopped, settled],
   )
+
+  // The reply now running, and the pinned board as it last arrived in that reply.
+  const pinnedTurn = useMemo((): PinnedTurn | null => {
+    if (!pending || !pinnedId) return null
+    const sent = pending.artifacts.filter(
+      (artifact): artifact is WhiteboardArtifact =>
+        artifact.kind === 'whiteboard' && artifact.id === pinnedId,
+    )
+    return {
+      key: `${pending.after}:${pending.learner}`,
+      reply: pending.reply,
+      phase: pending.status === 'streaming' ? 'streaming' : pending.status === 'done' ? 'done' : 'stopped',
+      board: sent.length > 0 ? sent[sent.length - 1] : null,
+    }
+  }, [pending, pinnedId])
 
   const animationStatusRef = useRef<(jobId: string, status: string) => void>(() => {})
   animationStatusRef.current = (jobId, status) => {
@@ -302,6 +339,17 @@ function App() {
     }
     window.addEventListener('popstate', onPop)
     return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // The board code is left out of the first load. It loads once the app is idle,
+  // so the first board shown does not wait for it.
+  useEffect(() => {
+    if (typeof window.requestIdleCallback === 'function') {
+      const idle = window.requestIdleCallback(prefetchWhiteboard, { timeout: 5000 })
+      return () => window.cancelIdleCallback(idle)
+    }
+    const timer = window.setTimeout(prefetchWhiteboard, 2000)
+    return () => window.clearTimeout(timer)
   }, [])
 
   useEffect(() => {
@@ -399,16 +447,25 @@ function App() {
   }
 
   function resetConversation() {
+    warmedFor.current = null
     sendAbort.current?.abort()
     setPending(null)
     setKept([])
-    setDraft('')
+    draft.set('')
     setPointing(null)
     setPicture(null)
     setPinnedId(null)
     setBoards([])
     setAskedStep(null)
     setSendError(null)
+  }
+
+  // Typing starts the agent, so the first reply does not wait for it. Opening a
+  // session to read it does not. A failure only loses the head start.
+  function warmOnTyping(value: string) {
+    if (!open || open.ended || !value.trim() || warmedFor.current === open.id) return
+    warmedFor.current = open.id
+    warmSession(open.id).catch(() => {})
   }
 
   async function onStart() {
@@ -427,6 +484,17 @@ function App() {
           "Couldn't start a session. Check your connection and try again.",
         ),
       )
+    }
+  }
+
+  // One start or open at a time, so a second click does not start a second session.
+  async function oneAtATime(change: () => Promise<void>) {
+    if (switching.current) return
+    switching.current = true
+    try {
+      await change()
+    } finally {
+      switching.current = false
     }
   }
 
@@ -582,7 +650,7 @@ function App() {
     const sentPicture = simplifies ? null : sendablePicture
     const sentPinned = pinnedId
     setSendError(null)
-    setDraft('')
+    draft.set('')
     setPointing(null)
     if (sentPicture) setPicture(null)
     setAskedStep(null)
@@ -645,12 +713,15 @@ function App() {
       setPending((current) =>
         current && current.status === 'streaming' ? { ...current, status: 'done' } : current,
       )
+      // The boards and the session list load while the session does. A list that
+      // fails to load keeps the sessions it had; the next refresh loads them again.
+      void loadBoards(open.id)
+      const listed = refresh().catch(() => {})
       const session = await getSession(open.id)
       if (controller.signal.aborted) return
       setOpen(session)
       setPending(null)
-      void loadBoards(session.id)
-      await refresh()
+      await listed
     } catch (caught) {
       if (controller.signal.aborted) return
       const fallback = "Couldn't send that message. Check your connection and try again."
@@ -660,7 +731,7 @@ function App() {
         )
       } else {
         setPending(null)
-        setDraft(message)
+        draft.set(message)
         setPointing(attached)
         if (sentPicture) setPicture(sentPicture)
         setAskedStep(step)
@@ -673,7 +744,7 @@ function App() {
 
   async function onSend(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const message = draft.trim()
+    const message = draft.get().trim()
     if (!message) return
     await sendMessage(message)
   }
@@ -691,6 +762,52 @@ function App() {
     if (!open || sending.current) return
     await sendMessage(learnerMessage, again ?? null, null, againStep ?? null)
   }
+
+  // The shell's handlers keep their identity, so the session list, top bar, tools
+  // panel, and pinned board are not drawn again on every streamed chunk.
+  const shell = useSteadyHandlers({
+    onRetryLoad: () => void loadSessions(),
+    onToggleSessions: () => setSessionListOpen((current) => !current),
+    onCloseSessions: () => setSessionListOpen(false),
+    onStart: () => void oneAtATime(onStart),
+    onOpen: (sessionId: string) => void oneAtATime(() => onOpen(sessionId)),
+    onRename,
+    onDelete,
+    onOpenSettings: () => {
+      goTo(SETTINGS_PATH)
+      if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
+    },
+    onLeave: () => void onLeave(),
+    onDraftChange: (value: string) => {
+      if (sendError) setSendError(null)
+      warmOnTyping(value)
+    },
+    onSend: (event: FormEvent<HTMLFormElement>) => void onSend(event),
+    onStop,
+    onCopy: (text: string) => void onCopy(text),
+    onTryAgain: (message: string, again?: Pointing | null, againStep?: AskedStep | null) =>
+      void onTryAgain(message, again, againStep),
+    onOpenQuiz: (id: string) => goTo(quizPath(id)),
+    onOpenWhiteboard: pinBoard,
+    onOpenAnimation: (sessionId: string, jobId: string) => {
+      goTo(animationPagePath(sessionId, jobId))
+    },
+    onSimpler: (id: string) => void askSimpler(id),
+    onRemovePoint: removePoint,
+    onRemovePicture: () => setPicture(null),
+    onAsk: askAbout,
+    onAskAboutStep: askAboutStep,
+    onRemoveAnimationStep: () => setAskedStep(null),
+    onCloseToast: () => setToast(null),
+    onToggleTools: () => setToolsOpen((current) => !current),
+    onCloseTools: () => setToolsOpen(false),
+    onQuizChecked,
+    onNewWhiteboard: () => void newBoard(),
+    onClosePinned: unpinBoard,
+    onPicture: (next: BoardPicture) => {
+      if (next.whiteboard_id === pinnedId) setPicture(next)
+    },
+  })
 
   if (import.meta.env.DEV && DevWhiteboardRoute && path === '/dev/whiteboard') {
     return (
@@ -731,21 +848,6 @@ function App() {
   const sessionTitle = open
     ? sessionLabel(sessions.find((session) => session.id === open.id))
     : null
-
-  // The reply now running, and the pinned board as it last arrived in that reply.
-  let pinnedTurn: PinnedTurn | null = null
-  if (pending && pinnedId) {
-    const sent = pending.artifacts.filter(
-      (artifact): artifact is WhiteboardArtifact =>
-        artifact.kind === 'whiteboard' && artifact.id === pinnedId,
-    )
-    pinnedTurn = {
-      key: `${pending.after}:${pending.learner}`,
-      reply: pending.reply,
-      phase: pending.status === 'streaming' ? 'streaming' : pending.status === 'done' ? 'done' : 'stopped',
-      board: sent.length > 0 ? sent[sent.length - 1] : null,
-    }
-  }
 
   return (
     <>
@@ -791,66 +893,27 @@ function App() {
         aria-hidden={covering ? true : undefined}
       >
         <ChatShell
+          {...shell}
           sessions={sessions}
           openId={open?.id ?? null}
           sessionTitle={sessionTitle}
           loading={loading}
           error={error}
-          onRetryLoad={() => void loadSessions()}
           sessionListOpen={sessionListOpen}
-          onToggleSessions={() => setSessionListOpen((current) => !current)}
-          onCloseSessions={() => setSessionListOpen(false)}
-          onStart={() => void onStart()}
-          onOpen={(sessionId) => void onOpen(sessionId)}
-          onRename={onRename}
-          onDelete={onDelete}
-          onOpenSettings={() => {
-            goTo(SETTINGS_PATH)
-            if (!window.matchMedia(DESKTOP_QUERY).matches) setSessionListOpen(false)
-          }}
-          onLeave={() => void onLeave()}
           turns={turns}
           draft={draft}
           sending={pending?.status === 'streaming' || pending?.status === 'done'}
           sendError={sendError}
-          onDraftChange={(value) => {
-            setDraft(value)
-            if (sendError) setSendError(null)
-          }}
-          onSend={(event) => void onSend(event)}
-          onStop={onStop}
-          onCopy={(text) => void onCopy(text)}
-          onTryAgain={(message, again, againStep) => void onTryAgain(message, again, againStep)}
-          onOpenQuiz={(id) => goTo(quizPath(id))}
-          onOpenWhiteboard={pinBoard}
-          onOpenAnimation={(sessionId, jobId) => {
-            goTo(animationPagePath(sessionId, jobId))
-          }}
-          onSimpler={(id) => void askSimpler(id)}
           pointing={pointing}
-          onRemovePoint={removePoint}
           pictureAttached={sendablePicture !== null}
-          onRemovePicture={() => setPicture(null)}
-          onAsk={askAbout}
           animationStep={askedStep}
-          onAskAboutStep={askAboutStep}
-          onRemoveAnimationStep={() => setAskedStep(null)}
           toast={toast}
-          onCloseToast={() => setToast(null)}
           artifacts={artifacts}
           toolsOpen={toolsOpen}
-          onToggleTools={() => setToolsOpen((current) => !current)}
-          onCloseTools={() => setToolsOpen(false)}
-          onQuizChecked={onQuizChecked}
           whiteboards={boards}
-          onNewWhiteboard={() => void newBoard()}
           creatingWhiteboard={creatingBoard}
           pinnedWhiteboardId={pinnedId}
           pinnedTurn={pinnedTurn}
-          onClosePinned={unpinBoard}
-          onPicture={(next) => {
-            if (next.whiteboard_id === pinnedId) setPicture(next)
-          }}
         />
       </div>
     </>

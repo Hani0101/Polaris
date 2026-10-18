@@ -353,6 +353,13 @@ export function leaveSession(sessionId: string): Promise<Session> {
   return request<Session>(`/api/sessions/${sessionId}/leave`, { method: 'POST' })
 }
 
+/** Ask the server to start the agent for a session the learner is typing in. Only a speed-up. */
+export function warmSession(sessionId: string): Promise<{ id: string }> {
+  return request<{ id: string }>(`/api/sessions/${encodeURIComponent(sessionId)}/warm`, {
+    method: 'POST',
+  })
+}
+
 export function getSession(sessionId: string, signal?: AbortSignal): Promise<Session> {
   return request<Session>(`/api/sessions/${sessionId}`, { signal })
 }
