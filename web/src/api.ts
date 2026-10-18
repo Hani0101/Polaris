@@ -322,7 +322,7 @@ export type SessionSummary = {
 
 /** CH-06: the learner's name, else the generated title, else the first message, else a placeholder. */
 export function sessionLabel(session: SessionSummary | undefined): string {
-  return session?.name || session?.title || session?.preview || 'New session'
+  return session?.name || session?.title || session?.preview || 'Untitled'
 }
 
 export { ApiError }

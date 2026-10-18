@@ -21,7 +21,7 @@ CH-14  A reply or animation job still running in the session is stopped before i
 CH-15  A learner can delete only their own sessions. An anonymous session can be deleted too.
 CH-16  In a signed-in session, deleting waits for the profile pass on it to finish (PR-05). If the pass fails, the session is still deleted and the learner is told that its facts were not saved.
 CH-17  Opening a session that no longer exists tells the learner so and opens a new empty session.
-CH-18  A new session is a draft. A draft is not in the session list, has no rename control, and its top bar says "New session". A draft opens when the learner starts a new session, deletes the open one (CH-13), or opens a missing one (CH-17).
+CH-18  A new session is a draft. A draft is not in the session list, has no rename control, and its top bar says "Untitled". A draft opens when the learner starts a new session, deletes the open one (CH-13), or opens a missing one (CH-17).
 CH-19  Leaving a draft, including by switching to another session or starting a new one, discards it. A draft left by reloading or closing the tab is discarded the next time a session is started, opened, or left. It never ends, and no profile pass runs on it. A resource added to a draft (RS-17) is held with it and goes into the session on the first send, or is dropped with the draft.
 CH-20  The first send lists the session at once, labelled with its first message, while the reply is still being produced. If the send fails, the typed message stays in the composer. A separate cheap model then writes a generated title from the text of that first message only. It runs once per session, for anonymous sessions too, and never on later turns, on reopening, or after a failure.
 CH-21  A generated title is plain text of at most 80 characters, about six words, in the language of the message. It never delays the reply. If it fails, the label stays as it is, with no retry and no error shown. If the session was deleted first, the write is dropped (CH-14). A title that arrives after the learner has named the session is stored but does not replace the name.
@@ -151,7 +151,7 @@ Scenario: a new session is not in the list  [CH-18]
   Given the learner starts a new session
   When they have not sent a message
   Then the session list has no row for it
-  And the top bar says "New session"
+  And the top bar says "Untitled"
 
 Scenario: leaving a draft discards it  [CH-19]
   Given an unsent draft
