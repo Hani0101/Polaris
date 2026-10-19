@@ -1,8 +1,16 @@
-import { b64Vecs, createShapeId, toRichText, type IndexKey, type TLShapePartial } from 'tldraw'
+import {
+  b64Vecs,
+  createShapeId,
+  toRichText,
+  type IndexKey,
+  type TLArrowBinding,
+  type TLBindingCreate,
+  type TLShapePartial,
+} from 'tldraw'
 import type { Point, Style, Whiteboard } from '../api.ts'
 import { GRAPH_SHAPE_TYPE } from './graphShapes.tsx'
 import { CODE_SHAPE_TYPE, MATH_SHAPE_TYPE } from './mathCodeShapes.tsx'
-import { agentMarkLook, mapStyle, whiteboardMarks } from './style.ts'
+import { agentAddedLook, agentMarkLook, mapStyle, whiteboardMarks } from './style.ts'
 
 const KNOWN_KINDS = new Set([
   'rectangle',
@@ -26,6 +34,10 @@ type DrawingElement = {
   style: Style
   start?: Point
   end?: Point
+  label?: string
+  start_element_id?: string
+  end_element_id?: string
+  bend?: number
   text?: string
   points?: Point[]
   mark?: 'circle' | 'arrow' | 'note'
@@ -50,6 +62,7 @@ export type DrawingWhiteboard = {
     id: string
     reply_part: string
     elements: DrawingElement[]
+    extension?: true
   }>
 }
 
@@ -62,6 +75,8 @@ export type SkippedElement = {
 
 export type WhiteboardShapes = {
   shapes: TLShapePartial[]
+  // Attached arrow ends. Created after the shapes, since a binding needs both ends.
+  bindings: TLBindingCreate<TLArrowBinding>[]
   skipped: SkippedElement[]
 }
 
@@ -201,7 +216,9 @@ function shapeFor(
         w: element.size.width,
         h: element.size.height,
         ...paintProps(element.style),
-        richText: toRichText(''),
+        align: whiteboardMarks.labelAlign,
+        verticalAlign: whiteboardMarks.labelVerticalAlign,
+        richText: toRichText(element.label ?? ''),
       },
     }
   }
@@ -219,13 +236,13 @@ function shapeFor(
       props: {
         ...paintProps(element.style),
         kind: whiteboardMarks.arrowKind,
-        bend: whiteboardMarks.arrowBend,
+        bend: typeof element.bend === 'number' ? element.bend : whiteboardMarks.arrowBend,
         arrowheadStart: whiteboardMarks.arrowheadStart,
         arrowheadEnd: whiteboardMarks.arrowheadEnd,
         start: relative(element.position, element.start),
         end: relative(element.position, element.end),
         scale: whiteboardMarks.scale,
-        richText: toRichText(''),
+        richText: toRichText(element.label ?? ''),
       },
     }
   }
@@ -398,21 +415,76 @@ function isSkipped(value: TLShapePartial | SkippedElement): value is SkippedElem
   return !('type' in value)
 }
 
+function arrowBinding(
+  arrow: TLShapePartial,
+  terminal: 'start' | 'end',
+  elementId: string,
+): TLBindingCreate<TLArrowBinding> {
+  return {
+    type: 'arrow',
+    fromId: arrow.id,
+    toId: createShapeId(elementId),
+    props: {
+      terminal,
+      normalizedAnchor: { x: 0.5, y: 0.5 },
+      isExact: false,
+      isPrecise: false,
+      snap: 'none',
+    },
+  }
+}
+
+/** Bindings for attached arrow ends. An end whose part is not drawn stays loose. */
+function arrowBindings(
+  elements: DrawingElement[],
+  shapes: TLShapePartial[],
+): TLBindingCreate<TLArrowBinding>[] {
+  const drawn = new Set(shapes.map((shape) => shape.id))
+  const bindings: TLBindingCreate<TLArrowBinding>[] = []
+  for (const element of elements) {
+    if (element.kind !== 'arrow') continue
+    const arrow = shapes.find((shape) => shape.id === createShapeId(element.id))
+    if (!arrow) continue
+    const ends = [
+      ['start', element.start_element_id],
+      ['end', element.end_element_id],
+    ] as const
+    for (const [terminal, elementId] of ends) {
+      if (!elementId || elementId === element.id) continue
+      if (!drawn.has(createShapeId(elementId))) continue
+      bindings.push(arrowBinding(arrow, terminal, elementId))
+    }
+  }
+  return bindings
+}
+
+// An added step is drawn in the agent-added look, whatever stroke it stored.
+function withAgentAddedLook(shape: TLShapePartial): TLShapePartial {
+  const props = shape.props as Record<string, unknown> | undefined
+  if (!props) return shape
+  const next: Record<string, unknown> = { ...props }
+  if ('color' in props) next.color = agentAddedLook.color
+  if ('dash' in props) next.dash = agentAddedLook.dash
+  return { ...shape, props: next } as TLShapePartial
+}
+
 export function whiteboardToShapes(whiteboard: DrawingWhiteboard | Whiteboard): WhiteboardShapes {
   const shapes: TLShapePartial[] = []
   const skipped: SkippedElement[] = []
+  const elements: DrawingElement[] = []
 
   whiteboard.steps.forEach((step, stepIndex) => {
     step.elements.forEach((element, elementIndex) => {
+      elements.push(element)
       if (!KNOWN_KINDS.has(element.kind)) {
         skipped.push({ id: element.id, kind: element.kind, stepId: step.id, stepIndex })
         return
       }
       const shape = shapeFor(element, step.id, stepIndex, elementIndex)
       if (isSkipped(shape)) skipped.push(shape)
-      else shapes.push(shape)
+      else shapes.push(step.extension ? withAgentAddedLook(shape) : shape)
     })
   })
 
-  return { shapes, skipped }
+  return { shapes, bindings: arrowBindings(elements, shapes), skipped }
 }

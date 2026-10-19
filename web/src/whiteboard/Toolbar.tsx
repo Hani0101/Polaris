@@ -67,14 +67,15 @@ export function Toolbar({ editor, active, onTool, onClear }: ToolbarProps) {
 
   // Arrow keys move between the tools; Tab still reaches each one.
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown'
+    if (!forward && event.key !== 'ArrowLeft' && event.key !== 'ArrowUp') return
     const buttons = [
       ...event.currentTarget.querySelectorAll<HTMLButtonElement>(':scope > button:not(:disabled)'),
     ]
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
     if (at < 0) return
     event.preventDefault()
-    const step = event.key === 'ArrowRight' ? 1 : -1
+    const step = forward ? 1 : -1
     buttons[(at + step + buttons.length) % buttons.length]?.focus()
   }
 

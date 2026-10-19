@@ -68,6 +68,10 @@ button.destructive:disabled {
   gap: var(--space-stack-default);
   width: 100%;
   max-width: var(--layout-max-width-form);
+  /* DS-GAP: Modal has no rule for content taller than the screen; it scrolls
+     inside the page margin. */
+  max-height: 100%;
+  overflow-y: auto;
   padding: var(--space-card-padding);
   background: var(--color-surface-raised);
   border: var(--border-width-default) solid var(--color-border-default);
@@ -92,6 +96,10 @@ button.destructive:disabled {
   padding-top: var(--space-xs);
 }
 
+.modal-alert {
+  margin-top: var(--space-md);
+}
+
 .modal-body {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-regular);
@@ -109,6 +117,15 @@ button.destructive:disabled {
   width: 100%;
 }
 
+/* Button loading (DESIGN.md 7, Button): the spinner replaces the text and the width is kept. */
+.modal-main {
+  position: relative;
+}
+
+.modal-main-label.is-hidden {
+  visibility: hidden;
+}
+
 /* Laptop: the main button on the right, secondary to its left. */
 @media (min-width: 640px) {
   .modal-actions {
@@ -122,6 +139,13 @@ button.destructive:disabled {
 }
 
 /* Dropdown menu */
+
+/* Opened from inside the drawer, which sits above the usual menu layer.
+   DS-GAP: no layer is defined for a menu in a drawer; used zIndex.modal. */
+.dropdown-menu.is-over-drawer {
+  z-index: var(--z-index-modal);
+}
+
 
 .dropdown-menu {
   position: fixed;

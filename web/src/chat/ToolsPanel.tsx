@@ -1,23 +1,45 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { Clapperboard, Layers, ListChecks, Presentation } from 'lucide-react'
-import type { AnimationArtifact, Artifact, Quiz, WhiteboardArtifact } from '../api.ts'
+import { Clapperboard, Layers, ListChecks, Presentation, SquareStack } from 'lucide-react'
+import type {
+  AnimationArtifact,
+  AnimationSettings,
+  Artifact,
+  Deck,
+  Quiz,
+  WhiteboardArtifact,
+} from '../api.ts'
 import { AnimationPlayer } from '../AnimationPlayer.tsx'
+import type { AskAboutStep } from '../animation/ScenePlayer.tsx'
+import { DeckCard } from '../DeckCard.tsx'
 import { QuizCard } from '../QuizCard.tsx'
+import { CreateFlashcardsDialog } from './CreateFlashcardsDialog.tsx'
 import type { PointedPart } from '../whiteboard/pointing.ts'
-import { Whiteboard } from '../whiteboard/Whiteboard.tsx'
 import { Tabs } from './Tabs.tsx'
 import type { TabItem } from './Tabs.tsx'
 import { FAILURE_NOTICE } from './AnimationCard.tsx'
+import { animationRequest, settingsText } from '../animation/settings.ts'
+import { CHOOSING, askForAnimationSettings, stageText, useAnimationJob } from './animationJob.ts'
+import { AnimationSettingsDialog } from './AnimationSettingsDialog.tsx'
+import { ResourcesTab } from './ResourcesTab.tsx'
+import { useResources } from './resources.tsx'
 import { AlertBanner, Badge, CloseIcon, IconButton } from './ui.tsx'
 import './tools.css'
 
-export type ToolsTab = 'whiteboard' | 'quiz' | 'animation' | 'artifacts'
+export type ToolsTab =
+  | 'whiteboard'
+  | 'quiz'
+  | 'flashcards'
+  | 'animation'
+  | 'resources'
+  | 'artifacts'
 
 const TABS: TabItem<ToolsTab>[] = [
   { id: 'whiteboard', label: 'Whiteboard' },
   { id: 'quiz', label: 'Quiz' },
+  { id: 'flashcards', label: 'Flashcards' },
   { id: 'animation', label: 'Animation' },
+  { id: 'resources', label: 'Resources' },
   { id: 'artifacts', label: 'Artifacts' },
 ]
 
@@ -28,22 +50,58 @@ type ToolsPanelProps = {
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation: (sessionId: string, jobId: string) => void
-  onQuizGraded: (quiz: Quiz) => void
+  onQuizChecked: (quiz: Quiz) => void
   onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
+  /** Every whiteboard in the session, including the learner's own (WB-18). */
+  whiteboards?: WhiteboardArtifact[]
+  pinnedWhiteboardId?: string | null
+  onNewWhiteboard?: () => void
+  creatingWhiteboard?: boolean
+  onOpenDeck?: (deckId: string) => void
+  onDeckChanged?: (deck: Deck) => void
+  /** Sends the learner turn the Create flashcards dialog wrote (FC-01). */
+  onCreateFlashcards?: (message: string) => void
+  /** Sends the learner turn the Create animation dialog wrote, with its settings (AN-26). */
+  onCreateAnimation?: (message: string, settings: AnimationSettings) => void
+  /** A reply is running, so a new turn cannot be sent yet. */
+  sending?: boolean
 }
 
-/** The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs. */
-export function ToolsPanel({
+const ignore = () => {}
+
+/**
+ * The tools content: header, then Whiteboard, Quiz, Animation, and Artifacts tabs.
+ * Memoized, so a streamed chunk does not draw it again.
+ */
+export const ToolsPanel = memo(function ToolsPanel({
   artifacts,
   headingId,
   onClose,
   onOpenQuiz,
   onOpenWhiteboard,
   onOpenAnimation,
-  onQuizGraded,
-  onAsk,
+  onQuizChecked,
+  onAskAboutStep,
+  whiteboards = [],
+  pinnedWhiteboardId = null,
+  onNewWhiteboard,
+  creatingWhiteboard = false,
+  onOpenDeck = ignore,
+  onDeckChanged = ignore,
+  onCreateFlashcards,
+  onCreateAnimation,
+  sending = false,
 }: ToolsPanelProps) {
   const [tab, setTab] = useState<ToolsTab>('whiteboard')
+  const { focus } = useResources()
+  const [seenFocus, setSeenFocus] = useState(focus?.nonce ?? 0)
+
+  // A chosen citation opens the Resources tab (RS-09).
+  if (focus && focus.nonce !== seenFocus) {
+    setSeenFocus(focus.nonce)
+    setTab('resources')
+  }
 
   return (
     <div className="tools">
@@ -58,40 +116,52 @@ export function ToolsPanel({
       <Tabs label="Tools" tabs={TABS} selected={tab} onSelect={setTab}>
         {tab === 'whiteboard' ? (
           <WhiteboardTab
-            whiteboard={latest(artifacts, isWhiteboard)}
+            whiteboards={whiteboards}
+            pinnedWhiteboardId={pinnedWhiteboardId}
             onOpenWhiteboard={onOpenWhiteboard}
-            onAsk={onAsk}
+            onNewWhiteboard={onNewWhiteboard}
+            creating={creatingWhiteboard}
           />
         ) : null}
         {tab === 'quiz' ? (
           <QuizTab
             quiz={latest(artifacts, isQuiz)}
             onOpenQuiz={onOpenQuiz}
-            onQuizGraded={onQuizGraded}
+            onQuizChecked={onQuizChecked}
+          />
+        ) : null}
+        {tab === 'flashcards' ? (
+          <FlashcardsTab
+            deck={latest(artifacts, isDeck)}
+            onOpenDeck={onOpenDeck}
+            onDeckChanged={onDeckChanged}
+            onCreateFlashcards={onCreateFlashcards}
+            sending={sending}
           />
         ) : null}
         {tab === 'animation' ? (
           <AnimationTab
             animation={latest(artifacts, isAnimation)}
             onOpenAnimation={onOpenAnimation}
+            onAskAboutStep={onAskAboutStep}
+            onCreateAnimation={onCreateAnimation}
+            sending={sending}
           />
         ) : null}
+        {tab === 'resources' ? <ResourcesTab /> : null}
         {tab === 'artifacts' ? (
           <ArtifactsTab
             artifacts={artifacts}
             onOpenQuiz={onOpenQuiz}
             onOpenWhiteboard={onOpenWhiteboard}
             onOpenAnimation={onOpenAnimation}
+            onOpenDeck={onOpenDeck}
           />
         ) : null}
       </Tabs>
     </div>
   )
-}
-
-function isWhiteboard(artifact: Artifact): artifact is WhiteboardArtifact {
-  return artifact.kind === 'whiteboard'
-}
+})
 
 function isQuiz(artifact: Artifact): artifact is Quiz {
   return artifact.kind === 'quiz'
@@ -99,6 +169,10 @@ function isQuiz(artifact: Artifact): artifact is Quiz {
 
 function isAnimation(artifact: Artifact): artifact is AnimationArtifact {
   return artifact.kind === 'animation'
+}
+
+function isDeck(artifact: Artifact): artifact is Deck {
+  return artifact.kind === 'deck'
 }
 
 function latest<T extends Artifact>(
@@ -136,42 +210,70 @@ function ToolsEmpty({
   )
 }
 
+/** New whiteboard, then every board in the session. Opening one pins it (WB-18, WB-19). */
 function WhiteboardTab({
-  whiteboard,
+  whiteboards,
+  pinnedWhiteboardId,
   onOpenWhiteboard,
-  onAsk,
+  onNewWhiteboard,
+  creating,
 }: {
-  whiteboard: WhiteboardArtifact | null
+  whiteboards: WhiteboardArtifact[]
+  pinnedWhiteboardId: string | null
   onOpenWhiteboard: (whiteboardId: string) => void
-  onAsk?: (whiteboardId: string, parts: PointedPart[]) => void
+  onNewWhiteboard?: () => void
+  creating: boolean
 }) {
-  if (!whiteboard) {
+  const newButton = onNewWhiteboard ? (
+    <div className="tools-actions">
+      <button type="button" onClick={onNewWhiteboard} disabled={creating}>
+        New whiteboard
+      </button>
+    </div>
+  ) : null
+  if (whiteboards.length === 0) {
     return (
-      <ToolsEmpty
-        icon={<Presentation size={24} strokeWidth={2} aria-hidden="true" />}
-        title="No whiteboard yet"
-        body="Ask Polaris to draw an idea, and the whiteboard shows here."
-      />
+      <div className="tools-whiteboard">
+        <ToolsEmpty
+          icon={<Presentation size={24} strokeWidth={2} aria-hidden="true" />}
+          title="No whiteboard yet"
+          body="Make one to sketch an idea and ask Polaris about it, or ask Polaris to draw."
+        />
+        {newButton}
+      </div>
     )
   }
+  const newestFirst = [...whiteboards].reverse()
   return (
     <div className="tools-whiteboard">
-      <div className="tools-actions">
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => onOpenWhiteboard(whiteboard.id)}
-        >
-          Open whiteboard
-        </button>
-      </div>
-      <div className="tools-whiteboard-board">
-        <Whiteboard
-          key={whiteboard.id}
-          whiteboard={whiteboard}
-          onAsk={onAsk ? (parts) => onAsk(whiteboard.id, parts) : undefined}
-        />
-      </div>
+      {newButton}
+      <ul className="tools-artifacts" aria-label="Whiteboards in this session">
+        {newestFirst.map((whiteboard) => {
+          const pinned = whiteboard.id === pinnedWhiteboardId
+          return (
+            <li key={whiteboard.id}>
+              <button
+                type="button"
+                className={
+                  pinned
+                    ? 'tools-card tools-card--clickable is-selected'
+                    : 'tools-card tools-card--clickable'
+                }
+                aria-current={pinned ? 'true' : undefined}
+                onClick={() => onOpenWhiteboard(whiteboard.id)}
+              >
+                <span className="tools-card-row">
+                  <span className="tools-card-title">Whiteboard</span>
+                  {pinned ? <Badge variant="accent">Pinned</Badge> : null}
+                </span>
+                {whiteboard.description ? (
+                  <span className="tools-card-body">{firstSentence(whiteboard.description)}</span>
+                ) : null}
+              </button>
+            </li>
+          )
+        })}
+      </ul>
     </div>
   )
 }
@@ -179,11 +281,11 @@ function WhiteboardTab({
 function QuizTab({
   quiz,
   onOpenQuiz,
-  onQuizGraded,
+  onQuizChecked,
 }: {
   quiz: Quiz | null
   onOpenQuiz: (quizId: string) => void
-  onQuizGraded: (quiz: Quiz) => void
+  onQuizChecked: (quiz: Quiz) => void
 }) {
   if (!quiz) {
     return (
@@ -194,44 +296,130 @@ function QuizTab({
       />
     )
   }
-  return <QuizCard key={quiz.id} quiz={quiz} onGraded={onQuizGraded} onExpand={onOpenQuiz} />
+  return <QuizCard key={quiz.id} quiz={quiz} onChecked={onQuizChecked} onExpand={onOpenQuiz} />
+}
+
+/** Create flashcards opens the dialog (FC-01, FC-03); the latest deck is studied here. */
+function FlashcardsTab({
+  deck,
+  onOpenDeck,
+  onDeckChanged,
+  onCreateFlashcards,
+  sending,
+}: {
+  deck: Deck | null
+  onOpenDeck: (deckId: string) => void
+  onDeckChanged: (deck: Deck) => void
+  onCreateFlashcards?: (message: string) => void
+  sending: boolean
+}) {
+  const [creating, setCreating] = useState(false)
+  const create = onCreateFlashcards ? (
+    <>
+      <div className="tools-actions">
+        <button type="button" onClick={() => setCreating(true)} disabled={sending}>
+          Create flashcards
+        </button>
+      </div>
+      <CreateFlashcardsDialog
+        open={creating}
+        onCancel={() => setCreating(false)}
+        onSubmit={(message) => {
+          setCreating(false)
+          onCreateFlashcards(message)
+        }}
+      />
+    </>
+  ) : null
+  return (
+    <div className="tools-whiteboard">
+      {create}
+      {deck ? (
+        <DeckCard key={deck.id} deck={deck} onChanged={onDeckChanged} onExpand={onOpenDeck} />
+      ) : (
+        <ToolsEmpty
+          icon={<SquareStack size={24} strokeWidth={2} aria-hidden="true" />}
+          title="No flashcards yet"
+          body="Create flashcards from this session or its resources to revise what you covered."
+        />
+      )}
+    </div>
+  )
 }
 
 function AnimationTab({
   animation,
   onOpenAnimation,
+  onAskAboutStep,
+  onCreateAnimation,
+  sending,
 }: {
   animation: AnimationArtifact | null
   onOpenAnimation: (sessionId: string, jobId: string) => void
+  onAskAboutStep?: (ask: AskAboutStep) => void
+  onCreateAnimation?: (message: string, settings: AnimationSettings) => void
+  sending: boolean
 }) {
+  const [creating, setCreating] = useState(false)
+  // AN-26: the topic, engine, quality, and frame rate in one dialog. The turn it
+  // sends carries the settings, so the job starts without asking again.
+  const create = onCreateAnimation ? (
+    <>
+      <div className="tools-actions">
+        <button type="button" onClick={() => setCreating(true)} disabled={sending}>
+          Create animation
+        </button>
+      </div>
+      <AnimationSettingsDialog
+        open={creating}
+        mode="create"
+        onCancel={() => setCreating(false)}
+        onSubmit={(settings, topic) => {
+          setCreating(false)
+          onCreateAnimation(animationRequest(topic), settings)
+        }}
+      />
+    </>
+  ) : null
+  let body
   if (!animation) {
-    return (
+    body = (
       <ToolsEmpty
         icon={<Clapperboard size={24} strokeWidth={2} aria-hidden="true" />}
         title="No animation yet"
-        body="Ask Polaris to animate an idea, and the animation shows here."
+        body="Create an animation, or ask Polaris to animate an idea, and it shows here."
       />
     )
-  }
-  if (animation.status !== 'ready') {
-    return <AnimationCard animation={animation} onOpen={onOpenAnimation} />
+  } else if (animation.status !== 'ready') {
+    body = <AnimationCard animation={animation} onOpen={onOpenAnimation} />
+  } else {
+    body = (
+      <>
+        <div className="tools-actions">
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => onOpenAnimation(animation.session_id, animation.id)}
+          >
+            Open animation
+          </button>
+        </div>
+        {animation.settings ? (
+          <p className="tools-card-body">{settingsText(animation.settings)}</p>
+        ) : null}
+        <AnimationPlayer
+          key={animation.id}
+          sessionId={animation.session_id}
+          jobId={animation.id}
+          onAskAboutStep={onAskAboutStep}
+        />
+      </>
+    )
   }
   return (
     <div className="tools-animation">
-      <div className="tools-actions">
-        <button
-          type="button"
-          className="secondary"
-          onClick={() => onOpenAnimation(animation.session_id, animation.id)}
-        >
-          Open animation
-        </button>
-      </div>
-      <AnimationPlayer
-        key={animation.id}
-        sessionId={animation.session_id}
-        jobId={animation.id}
-      />
+      {create}
+      {body}
     </div>
   )
 }
@@ -241,18 +429,20 @@ function ArtifactsTab({
   onOpenQuiz,
   onOpenWhiteboard,
   onOpenAnimation,
+  onOpenDeck,
 }: {
   artifacts: Artifact[]
   onOpenQuiz: (quizId: string) => void
   onOpenWhiteboard: (whiteboardId: string) => void
   onOpenAnimation: (sessionId: string, jobId: string) => void
+  onOpenDeck: (deckId: string) => void
 }) {
   if (artifacts.length === 0) {
     return (
       <ToolsEmpty
         icon={<Layers size={24} strokeWidth={2} aria-hidden="true" />}
         title="No artifacts yet"
-        body="Whiteboards, quizzes, and animations from this session show here."
+        body="Whiteboards, quizzes, flashcards, and animations from this session show here."
       />
     )
   }
@@ -263,6 +453,13 @@ function ArtifactsTab({
         <li key={`${artifact.kind}-${artifact.id}`}>
           {artifact.kind === 'quiz' ? (
             <ClickableCard title="Quiz" body={artifact.title} onOpen={() => onOpenQuiz(artifact.id)} />
+          ) : null}
+          {artifact.kind === 'deck' ? (
+            <ClickableCard
+              title="Flashcards"
+              body={artifact.title}
+              onOpen={() => onOpenDeck(artifact.id)}
+            />
           ) : null}
           {artifact.kind === 'whiteboard' ? (
             <ClickableCard
@@ -304,25 +501,58 @@ function AnimationCard({
   animation: AnimationArtifact
   onOpen: (sessionId: string, jobId: string) => void
 }) {
-  if (animation.status === 'ready') {
+  const { status, stage, settings } = useAnimationJob(animation)
+  const choosing = status === 'running' && stage === CHOOSING
+  // AN-26: the chosen settings show while the job runs and after.
+  const settingsLine = settings ? (
+    <span className="tools-card-body">{settingsText(settings)}</span>
+  ) : null
+  if (status === 'ready') {
     return (
-      <ClickableCard
-        title="Animation"
-        body="Open the finished animation."
-        onOpen={() => onOpen(animation.session_id, animation.id)}
-      />
+      <button
+        type="button"
+        className="tools-card tools-card--clickable"
+        onClick={() => onOpen(animation.session_id, animation.id)}
+      >
+        <span className="tools-card-title">Animation</span>
+        <span className="tools-card-body">Open the finished animation.</span>
+        {settingsLine}
+      </button>
     )
   }
   return (
     <div className="tools-card">
       <span className="tools-card-row">
         <span className="tools-card-title">Animation</span>
-        {animation.status === 'running' ? <Badge variant="neutral">In progress</Badge> : null}
+        {choosing ? <Badge variant="accent">Waiting for you</Badge> : null}
+        {status === 'running' && !choosing ? <Badge variant="neutral">In progress</Badge> : null}
       </span>
-      {animation.status === 'running' ? (
+      {settingsLine}
+      {choosing ? (
+        <>
+          <span className="tools-card-body">
+            Choose the engine, quality, and frame rate to start it.
+          </span>
+          <div>
+            <button
+              type="button"
+              className="secondary"
+              onClick={() => askForAnimationSettings({ ...animation, status, stage })}
+            >
+              Choose settings
+            </button>
+          </div>
+        </>
+      ) : null}
+      {status === 'running' && !choosing && stageText(stage) ? (
+        <span className="tools-card-body" role="status">
+          {stageText(stage)}
+        </span>
+      ) : null}
+      {status === 'running' && !choosing ? (
         <span className="tools-card-body">Still working. You can keep talking.</span>
       ) : null}
-      {animation.status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}
+      {status === 'failed' ? <AlertBanner>{FAILURE_NOTICE}</AlertBanner> : null}
     </div>
   )
 }

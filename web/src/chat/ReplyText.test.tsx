@@ -71,6 +71,92 @@ test('raw HTML in a reply stays text', () => {
   expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy()
 })
 
+test('quotes, callouts, tables and maths become their own blocks', () => {
+  const blocks = parseReply(
+    [
+      '> A quote',
+      '',
+      '> [!TIP] Draw it first.',
+      '> Then label it.',
+      '',
+      '| Name | Value |',
+      '|:-----|------:|',
+      '| half | 0.5 |',
+      '| third |',
+      '',
+      '$$',
+      '\\frac{1}{2}',
+      '$$',
+      '\\[ x^2 \\]',
+    ].join('\n'),
+  )
+  expect(blocks).toEqual([
+    { kind: 'quote', blocks: [{ kind: 'paragraph', lines: ['A quote'] }] },
+    { kind: 'callout', tone: 'tip', blocks: [{ kind: 'paragraph', lines: ['Draw it first.', 'Then label it.'] }] },
+    {
+      kind: 'table',
+      align: ['left', 'right'],
+      header: ['Name', 'Value'],
+      rows: [
+        ['half', '0.5'],
+        ['third', ''],
+      ],
+    },
+    { kind: 'math', tex: '\\frac{1}{2}' },
+    { kind: 'math', tex: 'x^2' },
+  ])
+})
+
+test('a table row without its delimiter yet stays a paragraph while streaming', () => {
+  expect(parseReply('| Name | Value |')).toEqual([{ kind: 'paragraph', lines: ['| Name | Value |'] }])
+})
+
+test('code in a named language gets syntax colors, other code stays plain', () => {
+  render(<ReplyText text={'```python\ndef half(x):\n    return x / 2  # cut\n```\n\n```\ndef plain(): pass\n```'} />)
+  const [python, plain] = Array.from(document.querySelectorAll('pre code'))
+  expect(python.querySelector('.hljs-keyword')?.textContent).toBe('def')
+  expect(python.querySelector('.hljs-comment')?.textContent).toBe('# cut')
+  expect(python.textContent).toBe('def half(x):\n    return x / 2  # cut')
+  expect(plain.querySelector('span')).toBeNull()
+})
+
+test('key terms, struck text, callouts and number cells render with their own look', () => {
+  render(
+    <ReplyText
+      text={[
+        'A ==fraction== is ~~two~~ one part.',
+        '',
+        '> [!WARNING]',
+        '> Check the bottom number.',
+        '',
+        '| Part | Size |',
+        '|---|---|',
+        '| top | 1 |',
+      ].join('\n')}
+    />,
+  )
+  const term = screen.getByText('fraction')
+  expect(term.tagName).toBe('STRONG')
+  expect(term.className).toBe('reply-key')
+  expect(screen.getByText('two').tagName).toBe('S')
+  expect(screen.getByText('Warning').closest('.reply-callout--warning')).toBeTruthy()
+  expect(screen.getByRole('columnheader', { name: 'Size' })).toBeTruthy()
+  expect(screen.getByRole('cell', { name: '1' }).className).toBe('reply-number')
+  expect(screen.getByRole('cell', { name: 'top' }).className).toBe('')
+})
+
+test('maths renders with KaTeX, and dollar amounts stay text', () => {
+  render(<ReplyText text={'So $x^2$ grows. It costs $5 and $10, or \\$3.'} />)
+  expect(document.querySelectorAll('.reply-math .katex')).toHaveLength(1)
+  expect(document.querySelector('.reply')?.textContent).toContain('It costs $5 and $10, or $3.')
+})
+
+test('maths KaTeX cannot read is shown as its source', () => {
+  render(<ReplyText text={'$$\n\\frac{1}{\n$$'} />)
+  expect(document.querySelector('.katex')).toBeNull()
+  expect(screen.getByText('\\frac{1}{')).toBeTruthy()
+})
+
 test('a running animation says it is in progress and checks the job again', async () => {
   vi.useFakeTimers()
   const fetchMock = vi.fn().mockResolvedValue(

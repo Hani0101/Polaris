@@ -1,8 +1,21 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type KeyboardEvent,
+} from 'react'
+import { ChevronUp, PencilRuler } from 'lucide-react'
 import { DefaultColorStyle, Tldraw, useValue, type Editor, type TLShape } from 'tldraw'
 import 'katex/dist/katex.min.css'
 import 'tldraw/tldraw.css'
 import type { Comment, Whiteboard as WhiteboardData } from '../api.ts'
+import { moveCamera } from './camera.ts'
 import { CommentPins } from './CommentPins.tsx'
 import { readableDescription } from './description.ts'
 import {
@@ -23,15 +36,23 @@ import {
 } from './fromTldraw.ts'
 import { graphShapeUtils } from './graphShapes.tsx'
 import { mathCodeShapeUtils } from './mathCodeShapes.tsx'
-import { whiteboardToShapes } from './toTldraw.ts'
+import { boardTone } from './boardTone.ts'
+import { whiteboardToShapes, type WhiteboardShapes } from './toTldraw.ts'
+
+const TOOLS_KEY = 'polaris.whiteboard.tools'
 
 const penTools = new Set<ToolId>(learnerDrawingTools.map((item) => item.id))
 
-type WhiteboardProps = {
+// One list for every board, so tldraw does not see new shape utils on each render.
+const shapeUtils = [...mathCodeShapeUtils, ...graphShapeUtils]
+
+export type WhiteboardProps = {
   whiteboard: WhiteboardData
   mode?: 'view' | 'draw'
   onChange?: (whiteboard: WhiteboardData) => void
   onAsk?: (parts: PointedPart[]) => void
+  // The page uses the editor to take a picture of the board for the next turn.
+  onEditor?: (editor: Editor | null) => void
 }
 
 type AskAt = {
@@ -77,16 +98,13 @@ function askAt(editor: Editor, whiteboard: WhiteboardData): AskAt | null {
   )
   if (parts.length === 0) return null
   try {
-    const bounds = editor.getSelectionScreenBounds()
-    const container = editor.getContainer()
-    const maxLeft = Math.max(container.clientWidth - 12, 12)
-    const maxTop = Math.max(container.clientHeight - 12, 12)
+    // Under the middle of the selection, in the board's own coordinates (the same ones the
+    // comment pins use). The screen bounds count from the browser window, so they put the
+    // button far from the selection. The CSS keeps it inside the board.
+    const bounds = editor.getSelectionPageBounds()
     if (!bounds) return { parts, left: 12, top: 12 }
-    return {
-      parts,
-      left: Math.min(Math.max(bounds.x + bounds.w / 2, 12), maxLeft),
-      top: Math.min(Math.max(bounds.y, 12), maxTop),
-    }
+    const below = editor.pageToViewport({ x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h })
+    return { parts, left: below.x, top: below.y }
   } catch {
     return { parts, left: 12, top: 12 }
   }
@@ -138,10 +156,31 @@ function nextCommentId(comments: Comment[]): string {
   return id
 }
 
-export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: WhiteboardProps) {
+function drawShapes(editor: Editor, converted: WhiteboardShapes) {
+  if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+  if (converted.bindings.length > 0) editor.createBindings(converted.bindings)
+}
+
+/** Memoized, so a parent drawing again does not draw tldraw's providers and toolbar again. */
+export const Whiteboard = memo(function Whiteboard({
+  whiteboard,
+  mode = 'view',
+  onChange,
+  onAsk,
+  onEditor,
+}: WhiteboardProps) {
   const converted = useMemo(() => whiteboardToShapes(whiteboard), [whiteboard])
   const region = useRef<HTMLElement>(null)
+  // The board keeps the colors it first opened with, whatever the app mode becomes (WB-22).
+  const tone = useMemo(() => boardTone(whiteboard.id), [whiteboard.id])
   const [editor, setEditor] = useState<Editor | null>(null)
+  const [toolsShown, setToolsShown] = useState(() => {
+    try {
+      return window.localStorage.getItem(TOOLS_KEY) !== 'closed'
+    } catch {
+      return true
+    }
+  })
   const [commenting, setCommenting] = useState(false)
   const [geo, setGeo] = useState<'rectangle' | 'ellipse'>('rectangle')
   const commentField = useRef<HTMLInputElement>(null)
@@ -154,13 +193,15 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   const onAskRef = useRef(onAsk)
   const convertedRef = useRef(converted)
   const seeding = useRef(false)
+  // The steps last drawn in view mode, so a newly revealed step can be followed.
+  const shownSteps = useRef<{ boardId: string; stepIds: string[] } | null>(null)
   const geoKind = useRef<'rectangle' | 'ellipse'>('rectangle')
   const commentFieldId = useId()
   const captionId = useId()
   const [drawn, setDrawn] = useState(whiteboard)
   const tldrawTool = useValue('tool', () => editor?.getCurrentToolId() ?? 'select', [editor])
   const active = toolFromTldraw(tldrawTool, geo, commenting)
-  // Pens follow the board (DESIGN.md 2.3). The board follows the app mode.
+  // Pens follow the board (DESIGN.md 2.3). A new board follows the app mode (WB-22).
   const penSet = useValue(
     'pen set',
     () => (editor?.getColorMode() === 'dark' ? 'onDark' : 'onLight'),
@@ -175,6 +216,12 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   useEffect(() => {
     setDrawn(whiteboard)
   }, [whiteboard])
+
+  useEffect(() => {
+    if (!onEditor) return
+    onEditor(editor)
+    return () => onEditor(null)
+  }, [editor, onEditor])
 
   useEffect(() => {
     whiteboardRef.current = whiteboard
@@ -199,9 +246,19 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       editor.updateInstanceState({ isReadonly: false })
       const existing = [...editor.getCurrentPageShapeIds()]
       if (existing.length > 0) editor.deleteShapes(existing)
-      if (converted.shapes.length > 0) editor.createShapes(converted.shapes)
+      drawShapes(editor, converted)
       editor.setSelectedShapes([])
-      editor.zoomToFit({ animation: { duration: 0 } })
+      const board = whiteboardRef.current
+      const stepIds = board.steps.map((step) => step.id)
+      const previous = shownSteps.current
+      shownSteps.current = { boardId: board.id, stepIds }
+      if (!previous || previous.boardId !== board.id || previous.stepIds.length === 0) {
+        editor.zoomToFit({ animation: { duration: 0 } })
+      } else {
+        // A redraw with no new step leaves the camera where the learner put it.
+        const added = stepIds.filter((stepId) => !previous.stepIds.includes(stepId))
+        if (added.length > 0) moveCamera(editor, added)
+      }
       node.dataset.ready = 'true'
     } catch {
       node.dataset.ready = 'false'
@@ -213,7 +270,9 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
   useEffect(() => {
     if (!editor || !region.current || mode !== 'draw') return
     const node = region.current
-    const agentIds = agentIdsOf(whiteboardRef.current)
+    // Read from the latest board, so a step the agent adds later is protected too (WB-20).
+    const isAgentPart = (shape: TLShape) =>
+      isCanonicalAgentShape(asLearnerShape(shape), agentIdsOf(whiteboardRef.current))
     const publish = () => {
       const report = onChangeRef.current
       if (!report || seeding.current) return
@@ -232,8 +291,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       if (editor.getCurrentPageShapeIds().size === 0) {
         seeding.current = true
         try {
-          const shapes = convertedRef.current.shapes
-          if (shapes.length > 0) editor.createShapes(shapes)
+          drawShapes(editor, convertedRef.current)
           editor.zoomToFit({ animation: { duration: 0 } })
         } finally {
           seeding.current = false
@@ -256,11 +314,11 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
         return { ...shape, meta }
       })
       const stopChange = editor.sideEffects.registerBeforeChangeHandler('shape', (prev, next) => {
-        if (isCanonicalAgentShape(asLearnerShape(prev), agentIds)) return prev
+        if (isAgentPart(prev)) return prev
         return next
       })
       const stopDelete = editor.sideEffects.registerBeforeDeleteHandler('shape', (shape) => {
-        if (isCanonicalAgentShape(asLearnerShape(shape), agentIds)) return false
+        if (isAgentPart(shape)) return false
       })
       const stopTools = editor.store.listen(
         () => {
@@ -287,6 +345,42 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
     }
   }, [editor, mode, whiteboard.id])
 
+  // While the learner draws, a step the agent adds appears, and one taken back
+  // goes, without touching their shapes (WB-20). Learner shapes are never redrawn here.
+  useEffect(() => {
+    if (!editor || mode !== 'draw') return
+    const agentShapes = converted.shapes.filter((shape) => shape.meta?.author === 'agent')
+    const wanted = new Set(agentShapes.map((shape) => shape.id))
+    const gone = editor
+      .getCurrentPageShapes()
+      .filter((shape) => shape.meta?.author === 'agent' && !wanted.has(shape.id))
+    if (gone.length > 0) {
+      seeding.current = true
+      try {
+        editor.deleteShapes(gone.map((shape) => shape.id))
+      } finally {
+        seeding.current = false
+      }
+    }
+    const missing = agentShapes.filter((shape) => !editor.getShape(shape.id))
+    if (missing.length === 0) return
+    const ids = new Set(missing.map((shape) => shape.id))
+    seeding.current = true
+    try {
+      editor.createShapes(missing)
+      const bindings = converted.bindings.filter(
+        (binding) => ids.has(binding.fromId) || (binding.toId !== undefined && ids.has(binding.toId)),
+      )
+      if (bindings.length > 0) editor.createBindings(bindings)
+    } finally {
+      seeding.current = false
+    }
+    const stepIds = new Set(
+      missing.flatMap((shape) => (typeof shape.meta?.stepId === 'string' ? [shape.meta.stepId] : [])),
+    )
+    moveCamera(editor, [...stepIds])
+  }, [editor, mode, converted])
+
   useEffect(() => {
     const node = region.current
     if (!editor || !node) return
@@ -302,6 +396,36 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       editors.delete(node)
     }
   }, [editor, whiteboard])
+
+  // tldraw ignores the wheel until the board has focus, and the board does not
+  // take focus on load. Focus it on the first wheel turn, unless the learner is typing.
+  function focusForWheel() {
+    if (!editor || editor.getInstanceState().isFocused) return
+    if (document.activeElement?.closest('input, textarea')) return
+    editor.focus()
+  }
+
+  function toggleTools() {
+    const next = !toolsShown
+    setToolsShown(next)
+    try {
+      window.localStorage.setItem(TOOLS_KEY, next ? 'open' : 'closed')
+    } catch {
+      // The choice just does not carry to the next visit.
+    }
+  }
+
+  // Shift+1 brings the camera back to the content, as tldraw's own shortcut does.
+  // The board has no tldraw UI, so the shortcut is handled here.
+  function onKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (!editor || !event.shiftKey || (event.key !== '!' && event.code !== 'Digit1')) return
+    const target = event.target as HTMLElement
+    if (target.closest('input, textarea, [contenteditable="true"]') || editor.getEditingShapeId()) {
+      return
+    }
+    event.preventDefault()
+    editor.zoomToFit({ animation: { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 200 } })
+  }
 
   function chooseTool(next: ToolId) {
     if (!editor) return
@@ -357,30 +481,62 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
     onChange?.(next)
   }
 
+  // The wheel and a touchpad zoom the board; pinch zooms on a phone.
+  // tldraw's saved input mode would override the wheel setting below.
+  const onMount = useCallback((mounted: Editor) => {
+    mounted.user.updateUserPreferences({ inputMode: null })
+    mounted.setCameraOptions({ ...mounted.getCameraOptions(), wheelBehavior: 'zoom' })
+    setEditor(mounted)
+  }, [])
+
   const shown = mode === 'draw' ? comments : whiteboard.comments
-  const described = mode === 'draw' ? { ...drawn, comments: shown } : whiteboard
-  const caption = readableDescription(described)
+  const caption = useMemo(
+    () => readableDescription(mode === 'draw' ? { ...drawn, comments: shown } : whiteboard),
+    [mode, drawn, shown, whiteboard],
+  )
 
   return (
-    <section ref={region} className="whiteboard" aria-labelledby={captionId} data-mode={mode}>
+    <section
+      ref={region}
+      className="whiteboard"
+      aria-labelledby={captionId}
+      data-mode={mode}
+      data-board={tone}
+      onKeyDown={onKeyDown}
+    >
       {converted.skipped.length > 0 ? (
         <p className="whiteboard-skipped" role="status">
           Some parts of this whiteboard were left out.
         </p>
       ) : null}
-      <div className="whiteboard-surface">
+      <div className="whiteboard-surface" onWheelCapture={focusForWheel}>
         <Tldraw
           hideUi
           autoFocus={false}
-          colorScheme="system"
-          onMount={setEditor}
-          shapeUtils={[...mathCodeShapeUtils, ...graphShapeUtils]}
+          colorScheme={tone}
+          onMount={onMount}
+          shapeUtils={shapeUtils}
         />
         <CommentPins editor={editor} comments={shown} />
         {mode === 'draw' ? (
           <div className="wb-dock">
-            <Toolbar editor={editor} active={active} onTool={chooseTool} onClear={clearBoard} />
-            {active && penTools.has(active) ? (
+            <button
+              type="button"
+              className="icon-btn icon-btn--ghost wb-dock-toggle"
+              aria-label={toolsShown ? 'Hide drawing tools' : 'Show drawing tools'}
+              aria-expanded={toolsShown}
+              onClick={toggleTools}
+            >
+              {toolsShown ? (
+                <ChevronUp aria-hidden="true" size={20} strokeWidth={2} />
+              ) : (
+                <PencilRuler aria-hidden="true" size={20} strokeWidth={2} />
+              )}
+            </button>
+            {toolsShown ? (
+              <Toolbar editor={editor} active={active} onTool={chooseTool} onClear={clearBoard} />
+            ) : null}
+            {toolsShown && active && penTools.has(active) ? (
               <SwatchPicker set={penSet} value={penColor} onChange={choosePen} />
             ) : null}
           </div>
@@ -389,7 +545,7 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
           <button
             type="button"
             className="whiteboard-ask"
-            style={{ left: ask.left, top: ask.top }}
+            style={{ '--ask-left': `${ask.left}px`, '--ask-top': `${ask.top}px` } as CSSProperties}
             onClick={() => onAsk(ask.parts)}
           >
             Ask about this
@@ -436,4 +592,4 @@ export function Whiteboard({ whiteboard, mode = 'view', onChange, onAsk }: White
       ) : null}
     </section>
   )
-}
+})

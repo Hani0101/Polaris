@@ -1,11 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
-import { getWhiteboard, saveWhiteboard } from './api.ts'
-import type { Whiteboard, WhiteboardArtifact } from './api.ts'
+import { useEffect, useState } from 'react'
+import { getWhiteboard } from './api.ts'
+import type { BoardPicture, WhiteboardArtifact } from './api.ts'
 import type { PointedPart } from './whiteboard/pointing.ts'
 import { whiteboardPagePath } from './whiteboard/simpler.ts'
-import { Whiteboard as WhiteboardBoard } from './whiteboard/Whiteboard.tsx'
-
-const LEARNER_SAVE_DELAY_MS = 300
+import { useBoardSaving } from './whiteboard/useBoardSaving.ts'
+import { Whiteboard as WhiteboardBoard } from './whiteboard/LazyWhiteboard.tsx'
 
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -19,6 +18,8 @@ type WhiteboardPageProps = {
   onAsk?: (parts: PointedPart[]) => void
   onSimpler?: (whiteboardId: string) => void
   onOpenOriginal?: (whiteboardId: string) => void
+  // A picture of the board after each saved learner change, for the next turn.
+  onPicture?: (picture: BoardPicture) => void
   simplerBusy?: boolean
 }
 
@@ -29,15 +30,19 @@ export function WhiteboardPage({
   onAsk,
   onSimpler,
   onOpenOriginal,
+  onPicture,
   simplerBusy = false,
 }: WhiteboardPageProps) {
   const [whiteboard, setWhiteboard] = useState<WhiteboardArtifact | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [saveError, setSaveError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [mode, setMode] = useState<'view' | 'draw'>('view')
-  const pendingRef = useRef<Whiteboard | null>(null)
-  const timerRef = useRef<number | null>(null)
+  const { saveError, onEditor, onDrawingChange, flush } = useBoardSaving({
+    sessionId,
+    whiteboardId,
+    onSaved: setWhiteboard,
+    onPicture,
+  })
 
   useEffect(() => {
     const controller = new AbortController()
@@ -57,43 +62,8 @@ export function WhiteboardPage({
     return () => controller.abort()
   }, [sessionId, whiteboardId])
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    }
-  }, [])
-
-  async function persist(drawing: Whiteboard) {
-    const sent = JSON.stringify(drawing)
-    try {
-      const saved = await saveWhiteboard(sessionId, whiteboardId, drawing)
-      const pending = pendingRef.current
-      if (pending === null || JSON.stringify(pending) === sent) setWhiteboard(saved)
-      setSaveError(null)
-    } catch (caught) {
-      setSaveError(errorText(caught))
-    }
-  }
-
-  function onDrawingChange(next: Whiteboard) {
-    pendingRef.current = next
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    timerRef.current = window.setTimeout(() => {
-      timerRef.current = null
-      const pending = pendingRef.current
-      pendingRef.current = null
-      if (pending) void persist(pending)
-    }, LEARNER_SAVE_DELAY_MS)
-  }
-
   async function goBack() {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-    const pending = pendingRef.current
-    pendingRef.current = null
-    if (pending) await persist(pending)
+    await flush()
     onBack()
   }
 
@@ -152,6 +122,7 @@ export function WhiteboardPage({
             mode={mode}
             onChange={onDrawingChange}
             onAsk={onAsk}
+            onEditor={onEditor}
           />
         </div>
       ) : null}

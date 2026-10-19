@@ -1,0 +1,75 @@
+/* Sign-in page (AU-02): the Settings page shape (DESIGN.md 6.5) with a form column at
+   layout.maxWidth.form (6.2), Text input with its password variant, and the button spinner. */
+
+.si-column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-section-gap);
+  max-width: var(--layout-max-width-form);
+  margin: 0 auto;
+}
+
+.si-lead {
+  color: var(--color-text-secondary);
+}
+
+.si-form,
+.si-intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+}
+
+/* DS-GAP: height of the loading shape for the sign-in form, used component.input.height */
+.si-skeleton {
+  height: var(--component-input-height);
+}
+
+/* Text input, password variant: the show/hide icon button sits inside the field, on the right. */
+.password-input {
+  position: relative;
+}
+
+.password-input .text-input {
+  padding-right: var(--component-tap-target-min);
+}
+
+.password-input .icon-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+}
+
+/* Button loading: the spinner replaces the text and the width is kept. */
+.si-submit {
+  position: relative;
+}
+
+.si-submit-label.is-hidden-label {
+  visibility: hidden;
+}
+
+.button-spinner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.button-spinner svg {
+  animation: spin var(--motion-duration-spin) var(--motion-easing-linear) infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button-spinner svg {
+    animation: none;
+  }
+}

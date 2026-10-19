@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from polaris.agent import ReplyResult
 from polaris.app import create_app
 from polaris.login import ApiKeyPresent
-from polaris.models import FactChange
+from polaris.models import FactChange, Profile
 
 EMPTY_PROFILE_REPLY = (
     "What should I know before I teach? "
@@ -30,11 +30,30 @@ class StubPass:
         self.changes = changes
         self.calls: list[tuple[tuple[str, ...], tuple[str, ...]]] = []
 
-    async def run(self, *, turns, profile):
+    async def run(self, *, turns, facts):
         self.calls.append(
-            (tuple(turn.learner_message for turn in turns), profile.facts)
+            (
+                tuple(turn.learner_message for turn in turns),
+                tuple(fact.text for fact in facts),
+            )
         )
         return self.changes
+
+
+class GatedPass(StubPass):
+    """Holds the session-end pass until released, so a test can act while it runs."""
+
+    def __init__(self, changes: tuple[FactChange, ...] = ()) -> None:
+        super().__init__(changes)
+        self.release = threading.Event()
+        self.finished = threading.Event()
+
+    async def run(self, *, turns, facts):
+        await asyncio.to_thread(self.release.wait, 10)
+        try:
+            return await super().run(turns=turns, facts=facts)
+        finally:
+            self.finished.set()
 
 
 class TeachingStub:
@@ -54,8 +73,10 @@ class TeachingStub:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
+        **_extra,
     ):
-        del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         if profile.facts:
             text = f"Noted {profile.facts[0]}. {learner_message}"
         else:
@@ -84,8 +105,10 @@ class GatedAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
+        **_extra,
     ):
-        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         yield "partial"
         await asyncio.to_thread(self.release.wait)
         yield " tail"
@@ -105,10 +128,12 @@ def parse_sse(buffer: str) -> tuple[list[dict], str]:
     return events, rest
 
 
-def post_turn(client: TestClient, session_id: str, message: str) -> list[dict]:
+def post_turn(
+    client: TestClient, session_id: str, message: str, **extra: object
+) -> list[dict]:
     response = client.post(
         f"/api/sessions/{session_id}/turns",
-        json={"message": message},
+        json={"message": message, **extra},
     )
     assert response.status_code == 200, response.text
     events, rest = parse_sse(response.text)
@@ -123,20 +148,49 @@ def reply_text(events: list[dict]) -> str:
     return "".join(event["text"] for event in events if "text" in event)
 
 
+def signed_in_headers(client) -> dict[str, str]:
+    """The profile needs a valid access token (AU-12), so sign in first."""
+
+    pair = {"username": "learner", "password": "a long password"}
+    if client.get("/api/sign-in").json()["pair_stored"]:
+        signed_in = client.post("/api/sign-in", json=pair)
+    else:
+        signed_in = client.post(
+            "/api/sign-in/pair", json={**pair, "password_again": pair["password"]}
+        )
+    return {"Authorization": f"Bearer {signed_in.json()['access_token']}"}
+
+
+def read_profile(client) -> dict:
+    return client.get("/api/profile", headers=signed_in_headers(client)).json()
+
+
 @pytest.fixture
 def make_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     opened: list[TestClient] = []
 
-    def make(agent=None, profile: str | None = None, profile_pass=None):
+    def make(
+        agent=None,
+        profile: str | None = None,
+        profile_pass=None,
+        title_writer=None,
+        signed_in: bool = True,
+    ):
+        """A client signed in by default, so its sessions are kept (AU-15)."""
+
         if profile is not None:
             (tmp_path / "profile.json").write_text(profile, encoding="utf-8")
         stub = TeachingStub() if agent is None else agent
-        client = TestClient(create_app(tmp_path, stub, profile_pass=profile_pass))
+        client = TestClient(
+            create_app(tmp_path, stub, profile_pass=profile_pass, title_writer=title_writer)
+        )
         if hasattr(stub, "chat"):
             stub.chat = client.app.state.chat
         client.__enter__()
         opened.append(client)
+        if signed_in:
+            client.headers.update(signed_in_headers(client))
         return client, stub
 
     yield make
@@ -166,7 +220,7 @@ def test_typed_message_is_stored_as_a_turn(make_client):
 
 def test_reply_is_visible_while_it_is_still_being_produced(make_client):
     agent = GatedAgent()
-    client, _agent = make_client(agent)
+    client, _agent = make_client(agent, signed_in=False)
     session = client.post("/api/sessions").json()
     body = json.dumps({"message": "Tell me more"}).encode()
     scope = {
@@ -259,27 +313,33 @@ def test_reopening_a_session_shows_its_turns(make_client):
 def test_leaving_a_session_ends_it(make_client):
     client, agent = make_client()
     session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
 
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
     assert left.json()["ended"] is True
     assert client.get(f"/api/sessions/{session['id']}").json()["ended"] is True
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [session["id"]]
 
 
 def test_switching_sessions_ends_the_one_left(make_client):
     client, agent = make_client()
     first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "First question")
     second = client.post("/api/sessions").json()
+    post_turn(client, second["id"], "Second question")
 
     assert client.get(f"/api/sessions/{first['id']}").json()["ended"] is True
     assert second["ended"] is False
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [first["id"]]
 
     reopened = client.post(f"/api/sessions/{first['id']}/open")
     assert reopened.status_code == 200
     assert reopened.json()["ended"] is False
     assert client.get(f"/api/sessions/{second['id']}").json()["ended"] is True
+    client.app.state.chat.wait_for_session_ends()
     assert agent.closed == [first["id"], second["id"]]
 
 
@@ -295,7 +355,8 @@ def test_every_reply_is_written_with_the_shared_profile(make_client, tmp_path):
 
     assert first_reply == "Noted struggles with fractions. What is a half?"
     assert second_reply == "Noted struggles with fractions. How do I add fractions?"
-    assert (tmp_path / "profile.json").read_text(encoding="utf-8") == raw
+    assert not (tmp_path / "profile.json").exists()
+    assert (tmp_path / "profile.json.imported").read_text(encoding="utf-8") == raw
 
 
 def test_leaving_a_session_stores_profile_facts(make_client):
@@ -308,7 +369,7 @@ def test_leaving_a_session_stores_profile_facts(make_client):
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
     assert left.status_code == 200
-    assert client.get("/api/profile").json() == {
+    assert read_profile(client) == {
         "facts": ["likes step-by-step walkthroughs"]
     }
 
@@ -336,19 +397,46 @@ def test_switching_sessions_stores_facts_from_the_one_left(make_client):
 
     client.post("/api/sessions")
 
-    assert client.get("/api/profile").json() == {"facts": ["struggles with fractions"]}
+    assert read_profile(client) == {"facts": ["struggles with fractions"]}
+
+
+def test_switching_sessions_does_not_wait_for_the_profile_pass(make_client):  # CH-05, PR-05
+    writer = GatedPass((FactChange("ADD", "struggles with fractions"),))
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I struggle with fractions")
+
+    second = client.post("/api/sessions")
+
+    assert second.status_code == 200
+    assert not writer.finished.is_set()
+    writer.release.set()
+    assert read_profile(client) == {"facts": ["struggles with fractions"]}
+
+
+def test_a_reply_waits_for_a_pass_still_running(make_client):  # PR-01, PR-02, PR-05
+    writer = GatedPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I like step-by-step walkthroughs")
+    second = client.post("/api/sessions").json()
+
+    threading.Timer(0.2, writer.release.set).start()
+    reply = reply_text(post_turn(client, second["id"], "What is recursion?"))
+
+    assert reply == "Noted likes step-by-step walkthroughs. What is recursion?"
 
 
 def test_a_later_ending_runs_the_profile_pass_again(make_client):
-    facts = ("likes diagrams", "comfortable with Python")
+    texts = ("likes diagrams", "comfortable with Python")
 
     class NextFactPass:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def run(self, *, turns, profile):
-            del turns, profile
-            fact = facts[min(self.calls, len(facts) - 1)]
+        async def run(self, *, turns, facts):
+            del turns, facts
+            fact = texts[min(self.calls, len(texts) - 1)]
             self.calls += 1
             return (FactChange("ADD", fact),)
 
@@ -360,11 +448,85 @@ def test_a_later_ending_runs_the_profile_pass_again(make_client):
     client.post(f"/api/sessions/{session['id']}/open")
     post_turn(client, session["id"], "I know Python")
     client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
 
     assert writer.calls == 2
-    assert client.get("/api/profile").json() == {
+    assert read_profile(client) == {
         "facts": ["likes diagrams", "comfortable with Python"]
     }
+
+
+def test_a_later_ending_without_a_new_turn_runs_no_pass(make_client):  # PR-05
+    writer = StubPass((FactChange("ADD", "likes diagrams"),))
+    client, _agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+    for _ in range(3):
+        client.post(f"/api/sessions/{session['id']}/open")
+        client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert len(writer.calls) == 1
+
+
+def test_a_later_ending_after_a_failed_pass_runs_it_again(make_client):  # PR-05
+    class FailOncePass(StubPass):
+        async def run(self, *, turns, facts):
+            await super().run(turns=turns, facts=facts)
+            if len(self.calls) == 1:
+                raise RuntimeError("no result")
+            return (FactChange("ADD", "likes diagrams"),)
+
+    writer = FailOncePass()
+    client, _agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.post(f"/api/sessions/{session['id']}/open")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert len(writer.calls) == 2
+    assert read_profile(client) == {"facts": ["likes diagrams"]}
+
+
+def test_a_reply_does_not_wait_for_a_pass_when_the_profile_has_facts(make_client):  # PR-01
+    writer = GatedPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    client, _agent = make_client(
+        profile='{\n  "facts": ["struggles with fractions"]\n}\n', profile_pass=writer
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "I like step-by-step walkthroughs")
+    second = client.post("/api/sessions").json()
+
+    reply = reply_text(post_turn(client, second["id"], "What is recursion?"))
+
+    assert reply == "Noted struggles with fractions. What is recursion?"
+    assert not writer.finished.is_set()
+    writer.release.set()
+    client.app.state.chat.wait_for_session_ends()
+
+
+def test_an_agent_closes_without_waiting_for_an_earlier_pass(make_client):  # CH-05
+    writer = GatedPass()
+    # A filled profile, so the second reply does not wait for the first pass.
+    client, agent = make_client(
+        profile='{\n  "facts": ["likes diagrams"]\n}\n', profile_pass=writer
+    )
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "First")
+    second = client.post("/api/sessions").json()
+    post_turn(client, second["id"], "Second")
+
+    client.post("/api/sessions")
+    client.app.state.chat.wait_for_agent_close(second["id"])
+
+    assert second["id"] in agent.closed
+    assert not writer.finished.is_set()
+    writer.release.set()
+    client.app.state.chat.wait_for_session_ends()
 
 
 def test_a_repeated_fact_is_not_stored_twice(make_client):
@@ -376,13 +538,13 @@ def test_a_repeated_fact_is_not_stored_twice(make_client):
     post_turn(client, session["id"], "I still suck at math")
     client.post(f"/api/sessions/{session['id']}/leave")
 
-    assert client.get("/api/profile").json() == {"facts": ["I suck at math"]}
+    assert read_profile(client) == {"facts": ["I suck at math"]}
 
 
 def test_profile_pass_api_key_stops_the_app(make_client):
     class KeyPass:
-        async def run(self, *, turns, profile):
-            del turns, profile
+        async def run(self, *, turns, facts):
+            del turns, facts
             raise ApiKeyPresent(
                 "Polaris stopped because an API key is present. "
                 "v1 uses the Claude login on this machine."
@@ -394,14 +556,16 @@ def test_profile_pass_api_key_stops_the_app(make_client):
 
     left = client.post(f"/api/sessions/{session['id']}/leave")
 
-    assert left.status_code == 503
+    # The session ends at once. The pass runs after, and its API key stops the app.
+    assert left.status_code == 200
+    client.app.state.chat.wait_for_session_ends()
     assert client.get("/health").status_code == 503
 
 
 def test_a_failed_profile_pass_does_not_block_leaving(make_client):
     class ExplodingPass:
-        async def run(self, *, turns, profile):
-            del turns, profile
+        async def run(self, *, turns, facts):
+            del turns, facts
             raise RuntimeError("pass failed")
 
     client, _agent = make_client(profile_pass=ExplodingPass())
@@ -412,7 +576,78 @@ def test_a_failed_profile_pass_does_not_block_leaving(make_client):
 
     assert left.status_code == 200
     assert left.json()["ended"] is True
-    assert client.get("/api/profile").json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
+
+
+def _passes(client) -> list[dict[str, object]]:
+    client.app.state.chat.wait_for_session_ends()
+
+    def read(conn):
+        rows = conn.execute(
+            """
+            SELECT session_id, trigger, status, error, last_turn_id, changes_json
+            FROM profile_passes ORDER BY started_at ASC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    return client.app.state.chat._with_db(read)
+
+
+def test_a_failed_profile_pass_is_recorded(make_client):
+    class ExplodingPass:
+        async def run(self, *, turns, facts):
+            del turns, facts
+            raise RuntimeError("pass failed")
+
+    client, _agent = make_client(profile_pass=ExplodingPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    (run,) = _passes(client)
+    assert run["session_id"] == session["id"]
+    assert (run["trigger"], run["status"], run["error"]) == ("end", "failed", "RuntimeError")
+    assert run["last_turn_id"] is not None
+
+
+def test_a_stored_pass_records_its_changes_and_evidence(make_client):
+    class EvidencePass:
+        async def run(self, *, turns, facts):
+            del facts
+            return (
+                FactChange(
+                    "ADD",
+                    "Likes diagrams",
+                    kind="taught",
+                    basis="stated",
+                    evidence=(turns[0].id,),
+                ),
+                FactChange("UPDATE", "Struggles with fractions", id="F9"),
+            )
+
+    client, _agent = make_client(profile_pass=EvidencePass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like diagrams")
+
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert read_profile(client) == {"facts": ["Likes diagrams"]}
+    (run,) = _passes(client)
+    assert run["status"] == "stored"
+    changes = json.loads(run["changes_json"])
+    assert [item["action"] for item in changes["accepted"]] == ["ADD"]
+    assert changes["refused"][0]["why"] == "names no stored fact"
+
+    def evidence(conn):
+        return conn.execute(
+            "SELECT session_id, turn_id FROM fact_evidence"
+        ).fetchall()
+
+    (row,) = client.app.state.chat._with_db(evidence)
+    assert row["session_id"] == session["id"]
+    assert row["turn_id"] == run["last_turn_id"]
 
 
 def test_empty_profile_asks_and_does_not_teach(make_client, tmp_path):
@@ -427,13 +662,128 @@ def test_empty_profile_asks_and_does_not_teach(make_client, tmp_path):
     assert "part of a whole" not in first
     assert "part of a whole" not in second
     assert not (tmp_path / "profile.json").exists()
-    assert client.get("/api/profile").json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
 
 
 def test_profile_has_no_write_route(make_client):
     client, _agent = make_client()
     response = client.post("/api/profile", json={"facts": ["stored by the agent"]})
     assert response.status_code == 405
+
+
+def fact_texts(body: dict) -> list[str]:
+    return [fact["text"] for fact in body["facts"]]
+
+
+def test_settings_lists_the_facts_with_their_ids(make_client):  # PR-11
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "struggles with fractions", kind="struggle"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I struggle with fractions")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    body = client.get("/api/profile/facts", headers=signed_in_headers(client)).json()
+
+    assert [
+        {key: fact[key] for key in ("kind", "text", "written_by")} for fact in body["facts"]
+    ] == [{"kind": "struggle", "text": "struggles with fractions", "written_by": "pass"}]
+    assert body["facts"][0]["id"]
+
+
+def test_fact_routes_need_sign_in(make_client):  # PR-11, AU-12
+    client, _agent = make_client(signed_in=False)
+
+    assert client.get("/api/profile/facts").status_code == 401
+    assert client.post("/api/profile/facts", json={"text": "likes maps"}).status_code == 401
+    assert client.patch("/api/profile/facts/x", json={"text": "likes maps"}).status_code == 401
+    assert client.delete("/api/profile/facts/x").status_code == 401
+
+
+def test_a_fact_the_learner_adds_is_read_by_the_next_reply(make_client):  # PR-11, PR-01
+    client, _agent = make_client()
+    headers = signed_in_headers(client)
+
+    added = client.post(
+        "/api/profile/facts", headers=headers, json={"text": "  likes   diagrams "}
+    )
+
+    assert added.status_code == 200
+    assert added.json()["fact"]["text"] == "likes diagrams"
+    assert added.json()["fact"]["written_by"] == "learner"
+    assert fact_texts(added.json()) == ["likes diagrams"]
+    session = client.post("/api/sessions").json()
+    reply = reply_text(post_turn(client, session["id"], "What is recursion?"))
+    assert reply == "Noted likes diagrams. What is recursion?"
+
+
+def test_a_fact_the_learner_rewords_is_read_by_the_next_reply(make_client):  # PR-11, PR-01
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+
+    edited = client.patch(
+        f"/api/profile/facts/{fact_id}", headers=headers, json={"text": "likes diagrams"}
+    )
+
+    assert edited.status_code == 200
+    assert fact_texts(edited.json()) == ["likes diagrams"]
+    assert edited.json()["fact"]["id"] != fact_id
+    session = client.post("/api/sessions").json()
+    reply = reply_text(post_turn(client, session["id"], "What is recursion?"))
+    assert reply == "Noted likes diagrams. What is recursion?"
+
+
+def test_a_fact_the_learner_removes_is_not_read_again(make_client):  # PR-11, PR-01
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+
+    removed = client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+
+    assert removed.status_code == 200
+    assert removed.json() == {"facts": []}
+    assert read_profile(client) == {"facts": []}
+    again = client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+    assert again.status_code == 404
+
+
+def test_the_learner_cannot_store_a_blank_long_or_repeated_fact(make_client):  # PR-11
+    client, _agent = make_client(profile='{"facts": ["likes videos"]}')
+    headers = signed_in_headers(client)
+
+    blank = client.post("/api/profile/facts", headers=headers, json={"text": "   "})
+    long = client.post("/api/profile/facts", headers=headers, json={"text": "x" * 301})
+    repeat = client.post("/api/profile/facts", headers=headers, json={"text": "Likes videos."})
+    missing = client.patch("/api/profile/facts/nope", headers=headers, json={"text": "a"})
+
+    assert blank.status_code == 422
+    assert long.status_code == 422
+    assert repeat.status_code == 409
+    assert repeat.json()["detail"] == "Your profile already says this."
+    assert missing.status_code == 404
+    assert fact_texts(client.get("/api/profile/facts", headers=headers).json()) == [
+        "likes videos"
+    ]
+
+
+def test_the_pass_does_not_put_back_what_the_learner_removed(make_client):  # PR-12
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes videos"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like videos")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    headers = signed_in_headers(client)
+    fact_id = client.get("/api/profile/facts", headers=headers).json()["facts"][0]["id"]
+    client.delete(f"/api/profile/facts/{fact_id}", headers=headers)
+
+    # The pass reads the whole session again when it ends with a new turn.
+    client.post(f"/api/sessions/{session['id']}/open")
+    post_turn(client, session["id"], "What is recursion?")
+    client.post(f"/api/sessions/{session['id']}/leave")
+
+    assert read_profile(client) == {"facts": []}
 
 
 def test_blank_message_is_not_a_turn(make_client):
@@ -474,6 +824,8 @@ class SdkIdStub(TeachingStub):
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
+        **_extra,
     ):
         async for chunk in super().reply(
             session_id=session_id,
@@ -484,6 +836,7 @@ class SdkIdStub(TeachingStub):
             whiteboards=whiteboards,
             pointing=pointing,
             simplify=simplify,
+            quizzes=quizzes,
         ):
             yield chunk
         yield ReplyResult(sdk_session_id="sdk-from-result")
@@ -577,8 +930,10 @@ class BoomAgent:
         whiteboards=(),
         pointing=None,
         simplify=None,
+        quizzes=(),
+        **_extra,
     ):
-        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify
+        del session_id, profile, learner_message, prior_turns, sdk_session_id, whiteboards, pointing, simplify, quizzes
         raise RuntimeError("Failed to start Claude Code")
         yield  # pragma: no cover
 
@@ -604,3 +959,648 @@ def test_unexpected_teaching_failure_yields_an_sse_error(make_client):
     assert "Failed to start Claude Code" in errors[0]
     assert not any(event.get("done") for event in events)
     assert client.get(f"/api/sessions/{session['id']}").json()["turns"] == []
+
+
+def test_a_session_can_be_named(make_client):  # CH-06
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+
+    renamed = client.patch(f"/api/sessions/{session['id']}", json={"name": "  Fractions "})
+
+    assert renamed.status_code == 200
+    assert renamed.json() == {"id": session["id"], "name": "Fractions"}
+    listed = client.get("/api/sessions").json()["sessions"][0]
+    assert listed["name"] == "Fractions"
+    assert listed["preview"] == "What is a fraction?"
+
+
+def test_an_unnamed_session_has_no_name(make_client):  # CH-06
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
+
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == ""
+
+
+def test_a_blank_name_removes_the_name(make_client):  # CH-07
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Fractions"})
+
+    cleared = client.patch(f"/api/sessions/{session['id']}", json={"name": "   "})
+
+    assert cleared.status_code == 200
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == ""
+
+
+def test_a_name_over_the_limit_is_refused(make_client):  # CH-07
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
+
+    assert client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 80}).status_code == 200
+    refused = client.patch(f"/api/sessions/{session['id']}", json={"name": "a" * 81})
+
+    assert refused.status_code == 422
+    assert client.get("/api/sessions").json()["sessions"][0]["name"] == "a" * 80
+
+
+def test_naming_an_unknown_session_is_not_found(make_client):
+    client, _agent = make_client()
+
+    assert client.patch("/api/sessions/nope", json={"name": "x"}).status_code == 404
+
+
+def test_naming_leaves_an_ended_session_as_it_was(make_client):  # CH-08
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Remember this")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    before = client.get(f"/api/sessions/{session['id']}").json()
+
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Kept"})
+
+    assert client.get(f"/api/sessions/{session['id']}").json() == before
+    assert before["ended"] is True
+
+
+def _rows(client, sql: str, *args: object) -> list[tuple]:
+    chat = client.app.state.chat
+    return chat._with_db(lambda conn: [tuple(row) for row in conn.execute(sql, args)])
+
+
+def test_deleting_a_session_removes_it_and_what_was_made_in_it(make_client):  # CH-11, CH-12
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+    board = client.post(f"/api/sessions/{session['id']}/whiteboards")
+    assert board.status_code == 201
+    other = client.post("/api/sessions").json()
+    post_turn(client, other["id"], "Another question")
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.status_code == 200
+    ids = [listed["id"] for listed in client.get("/api/sessions").json()["sessions"]]
+    assert ids == [other["id"]]
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+    assert _rows(client, "SELECT id FROM turns WHERE session_id = ?", session["id"]) == []
+    assert _rows(client, "SELECT id FROM artifacts WHERE session_id = ?", session["id"]) == []
+    assert _rows(client, "SELECT id FROM whiteboards") == []
+
+
+def test_deleting_keeps_the_profile(make_client):  # CH-12
+    client, _agent = make_client(
+        profile_pass=StubPass((FactChange("ADD", "likes step-by-step walkthroughs"),))
+    )
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like step-by-step walkthroughs")
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.json() == {"id": session["id"], "facts_saved": True}
+    assert read_profile(client) == {"facts": ["likes step-by-step walkthroughs"]}
+    assert _rows(client, "SELECT id FROM fact_evidence") == []
+    assert _rows(client, "SELECT id FROM profile_passes") == []
+
+
+def test_deleting_the_open_session_ends_it_first(make_client):  # CH-13
+    writer = StubPass()
+    client, agent = make_client(profile_pass=writer)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like pictures")
+
+    client.delete(f"/api/sessions/{session['id']}")
+
+    assert writer.calls == [(("I like pictures",), ())]
+    assert agent.closed == [session["id"]]
+
+
+def test_deleting_stops_a_reply_in_progress(make_client):  # CH-14
+    agent = GatedAgent()
+    client, _agent = make_client(agent)
+    chat = client.app.state.chat
+    session = client.post("/api/sessions").json()
+
+    async def scenario() -> None:
+        seen: list[object] = []
+
+        async def consume() -> None:
+            async for item in chat.stream_reply(session["id"], "Tell me more"):
+                seen.append(item)
+
+        reply = asyncio.create_task(consume())
+        while not seen:
+            await asyncio.sleep(0.01)
+        deleting = asyncio.create_task(chat.delete_session(session["id"]))
+        await asyncio.sleep(0.05)
+        agent.release.set()
+        await deleting
+        await reply
+
+    asyncio.run(scenario())
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert _rows(client, "SELECT id FROM turns") == []
+
+
+def test_deleting_twice_at_once_deletes_once(make_client):  # CH-11, CH-16
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer)
+    chat = client.app.state.chat
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like pictures")
+
+    async def scenario() -> list[dict[str, object]]:
+        return list(
+            await asyncio.gather(
+                chat.delete_session(session["id"]), chat.delete_session(session["id"])
+            )
+        )
+
+    results = asyncio.run(scenario())
+
+    assert results == [{"id": session["id"], "facts_saved": True}] * 2
+    assert len(writer.calls) == 1
+    assert client.get("/api/sessions").json() == {"sessions": []}
+
+
+def test_deleting_an_unknown_session_is_not_found(make_client):  # CH-17
+    client, _agent = make_client()
+
+    assert client.delete("/api/sessions/nope").status_code == 404
+
+
+def test_a_failed_profile_pass_does_not_block_deleting(make_client):  # CH-16
+    class ExplodingPass:
+        async def run(self, *, turns, facts):
+            del turns, facts
+            raise RuntimeError("pass failed")
+
+    client, _agent = make_client(profile_pass=ExplodingPass())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "hello")
+
+    deleted = client.delete(f"/api/sessions/{session['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json() == {"id": session["id"], "facts_saved": False}
+    assert client.get("/api/sessions").json() == {"sessions": []}
+
+
+def test_deleting_an_ended_session_waits_for_its_pass(make_client):  # CH-16
+    class GatedFailingPass(GatedPass):
+        async def run(self, *, turns, facts):
+            del turns, facts
+            await asyncio.to_thread(self.release.wait, 10)
+            raise RuntimeError("pass failed")
+
+    writer = GatedFailingPass()
+    client, _agent = make_client(profile_pass=writer)
+    first = client.post("/api/sessions").json()
+    post_turn(client, first["id"], "hello")
+    client.post("/api/sessions")
+
+    threading.Timer(0.2, writer.release.set).start()
+    deleted = client.delete(f"/api/sessions/{first['id']}")
+
+    assert deleted.json() == {"id": first["id"], "facts_saved": False}
+
+
+class WarmClient:
+    """A stand-in SDK client whose connect can be held, like a cold CLI start."""
+
+    def __init__(self, options, gate: threading.Event | None = None) -> None:
+        from test_teaching import delta, result
+
+        self.options = options
+        self.messages = [delta("Hi"), result()]
+        self.gate = gate
+        self.connects = 0
+        self.prompts: list[str] = []
+        self.disconnected = False
+
+    async def connect(self) -> None:
+        self.connects += 1
+        if self.gate is not None:
+            await asyncio.to_thread(self.gate.wait, 10)
+
+    async def query(self, prompt, session_id: str = "default") -> None:
+        del session_id
+        self.prompts.append(prompt)
+
+    async def receive_response(self):
+        for message in self.messages:
+            yield message
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+
+def _warm_agent(tmp_path, gate: threading.Event | None = None):
+    from polaris.teaching import ClaudeTeachingAgent
+    from test_teaching import FakeKeyCheck
+
+    created: list[WarmClient] = []
+
+    def factory(options):
+        client = WarmClient(options, gate)
+        created.append(client)
+        return client
+
+    agent = ClaudeTeachingAgent(
+        tmp_path / "claude-work", client_factory=factory, key_check=FakeKeyCheck()
+    )
+    return agent, created
+
+
+def wait_for_warm_ups(client: TestClient) -> None:
+    chat = client.app.state.chat
+    for _ in range(200):
+        if not chat._warm_tasks:
+            return
+        threading.Event().wait(0.01)
+    raise AssertionError("A warm-up did not finish.")
+
+
+def test_typing_warms_the_client_the_first_reply_uses(make_client, tmp_path):
+    agent, created = _warm_agent(tmp_path)
+    client, _agent = make_client(agent=agent)
+    session = client.post("/api/sessions").json()
+
+    warmed = client.post(f"/api/sessions/{session['id']}/warm")
+    wait_for_warm_ups(client)
+    assert warmed.status_code == 202
+    assert len(created) == 1
+    assert created[0].connects == 1
+    assert created[0].prompts == []
+
+    assert reply_text(post_turn(client, session["id"], "What is a half?")) == "Hi"
+    client.post(f"/api/sessions/{session['id']}/warm")
+    wait_for_warm_ups(client)
+
+    assert len(created) == 1
+    assert created[0].connects == 1
+    assert len(created[0].prompts) == 1
+
+
+def test_a_reply_waits_for_a_warm_up_still_connecting(make_client, tmp_path):
+    gate = threading.Event()
+    agent, created = _warm_agent(tmp_path, gate)
+    client, _agent = make_client(agent=agent)
+    session = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{session['id']}/warm")
+    threading.Timer(0.2, gate.set).start()
+    assert reply_text(post_turn(client, session["id"], "What is a half?")) == "Hi"
+
+    assert len(created) == 1
+    assert created[0].connects == 1
+
+
+def test_warming_an_ended_session_does_nothing(make_client, tmp_path):
+    agent, created = _warm_agent(tmp_path)
+    client, _agent = make_client(agent=agent)
+    first = client.post("/api/sessions").json()
+    client.post("/api/sessions")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert client.post(f"/api/sessions/{first['id']}/warm").status_code == 202
+    assert client.post("/api/sessions/nope/warm").status_code == 202
+    wait_for_warm_ups(client)
+
+    assert created == []
+    assert agent._clients == {}
+
+
+def test_ending_a_session_while_it_warms_leaves_no_client(make_client, tmp_path):  # CH-05
+    gate = threading.Event()
+    agent, created = _warm_agent(tmp_path, gate)
+    client, _agent = make_client(agent=agent)
+    first = client.post("/api/sessions").json()
+    client.post(f"/api/sessions/{first['id']}/warm")
+    for _ in range(200):
+        if created:
+            break
+        threading.Event().wait(0.01)
+
+    client.post("/api/sessions")
+    gate.set()
+    client.app.state.chat.wait_for_session_ends()
+    wait_for_warm_ups(client)
+
+    assert len(created) == 1
+    assert created[0].disconnected is True
+    assert agent._clients == {}
+
+
+class StubTitles:
+    """Returns a fixed title and records what it was shown (CH-20)."""
+
+    def __init__(self, title: str = "Adding fractions") -> None:
+        self.title = title
+        self.messages: list[str] = []
+
+    async def write(self, message: str) -> str:
+        self.messages.append(message)
+        return self.title
+
+
+class GatedTitles(StubTitles):
+    def __init__(self, title: str = "Adding fractions") -> None:
+        super().__init__(title)
+        self.release = threading.Event()
+
+    async def write(self, message: str) -> str:
+        await asyncio.to_thread(self.release.wait, 10)
+        return await super().write(message)
+
+
+class FailingTitles(StubTitles):
+    async def write(self, message: str) -> str:
+        self.messages.append(message)
+        raise RuntimeError("no title")
+
+
+def listed_sessions(client) -> list[dict]:
+    return client.get("/api/sessions").json()["sessions"]
+
+
+def wait_for_title(client, expected: str, seconds: float = 5.0) -> dict:
+    """The title is written after the reply, so poll the list for it."""
+
+    import time
+
+    deadline = time.monotonic() + seconds
+    while True:
+        rows = listed_sessions(client)
+        if rows and rows[0]["title"] == expected:
+            return rows[0]
+        assert time.monotonic() < deadline, rows
+        time.sleep(0.02)
+
+
+def test_a_session_without_a_message_is_not_listed(make_client):  # CH-18
+    client, _agent = make_client()
+    client.post("/api/sessions")
+
+    assert listed_sessions(client) == []
+
+
+def test_the_first_send_lists_the_session_with_its_message(make_client):  # CH-20
+    agent = GatedAgent()
+    client, _agent = make_client(agent)
+    session = client.post("/api/sessions").json()
+    scope_events: list[dict] = []
+
+    def send() -> None:
+        scope_events.extend(post_turn(client, session["id"], "What is a fraction?"))
+
+    thread = threading.Thread(target=send)
+    thread.start()
+    try:
+        import time
+
+        deadline = time.monotonic() + 5
+        while not listed_sessions(client):
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        row = listed_sessions(client)[0]
+        assert row["id"] == session["id"]
+        assert row["preview"] == "What is a fraction?"
+    finally:
+        agent.release.set()
+        thread.join(10)
+
+
+def test_the_title_is_written_from_the_first_message_only(make_client):  # CH-20, CH-21
+    titles = StubTitles("Adding fractions")
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "  How do I add 1/2 and 1/3?  ")
+
+    row = wait_for_title(client, "Adding fractions")
+
+    assert titles.messages == ["How do I add 1/2 and 1/3?"]
+    assert row["name"] == ""
+    assert row["preview"] == "How do I add 1/2 and 1/3?"
+
+
+def test_the_title_is_written_once(make_client):  # CH-20
+    titles = StubTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "First")
+    wait_for_title(client, "Adding fractions")
+
+    post_turn(client, session["id"], "Second")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.post(f"/api/sessions/{session['id']}/open")
+    post_turn(client, session["id"], "Third")
+
+    assert titles.messages == ["First"]
+
+
+def test_a_failed_title_keeps_the_first_message_label(make_client):  # CH-21
+    titles = FailingTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+
+    post_turn(client, session["id"], "Why is the sky blue?")
+    post_turn(client, session["id"], "And at sunset?")
+
+    row = listed_sessions(client)[0]
+    assert row["title"] == ""
+    assert row["preview"] == "Why is the sky blue?"
+    assert titles.messages == ["Why is the sky blue?"]
+
+
+def test_a_title_is_cleaned_and_limited(make_client):  # CH-21
+    titles = StubTitles('  "**Fractions**"\nextra line ' + "x" * 200)
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Fractions please")
+
+    row = wait_for_title(client, "Fractions")
+
+    assert len(row["title"]) <= 80
+
+
+def test_a_name_beats_a_late_title(make_client):  # CH-21
+    titles = GatedTitles("Adding fractions")
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Add fractions")
+    client.patch(f"/api/sessions/{session['id']}", json={"name": "Fractions"})
+
+    titles.release.set()
+    row = wait_for_title(client, "Adding fractions")
+
+    assert row["name"] == "Fractions"
+
+
+def test_a_title_for_a_deleted_session_is_dropped(make_client):  # CH-21, CH-14
+    titles = GatedTitles()
+    client, _agent = make_client(title_writer=titles)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Add fractions")
+
+    assert client.delete(f"/api/sessions/{session['id']}").status_code == 200
+    titles.release.set()
+    import time
+
+    time.sleep(0.2)
+
+    assert listed_sessions(client) == []
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+
+
+def test_an_older_session_gets_no_title(make_client, tmp_path):  # CH-22
+    client, _agent = make_client(title_writer=StubTitles())
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Hello")
+    wait_for_title(client, "Adding fractions")
+    # A session saved before generated titles: no title, no first_message.
+    db = sqlite3.connect(tmp_path / "polaris.db")
+    db.execute("UPDATE sessions SET generated_title = NULL, first_message = NULL")
+    db.commit()
+    db.close()
+
+    row = listed_sessions(client)[0]
+
+    assert row["title"] == ""
+    assert row["preview"] == "Hello"
+
+
+def test_leaving_a_draft_discards_it(make_client):  # CH-19
+    pass_ = StubPass()
+    client, agent = make_client(profile_pass=pass_)
+    draft = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{draft['id']}/leave")
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert listed_sessions(client) == []
+    assert pass_.calls == []
+
+
+def test_starting_another_session_discards_the_draft(make_client):  # CH-19
+    pass_ = StubPass()
+    client, _agent = make_client(profile_pass=pass_)
+    draft = client.post("/api/sessions").json()
+
+    other = client.post("/api/sessions").json()
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert client.get(f"/api/sessions/{other['id']}").status_code == 200
+    assert pass_.calls == []
+
+
+def test_opening_a_session_discards_the_draft(make_client):  # CH-19
+    pass_ = StubPass()
+    client, _agent = make_client(profile_pass=pass_)
+    earlier = client.post("/api/sessions").json()
+    post_turn(client, earlier["id"], "Earlier question")
+    client.post(f"/api/sessions/{earlier['id']}/leave")
+    draft = client.post("/api/sessions").json()
+
+    client.post(f"/api/sessions/{earlier['id']}/open")
+
+    assert client.get(f"/api/sessions/{draft['id']}").status_code == 404
+    assert [row["id"] for row in listed_sessions(client)] == [earlier["id"]]
+
+
+def test_a_draft_drops_its_held_resource(make_client, tmp_path):  # CH-19
+    client, _agent = make_client()
+    draft = client.post("/api/sessions").json()
+    client.post(
+        f"/api/sessions/{draft['id']}/resources/notes",
+        json={"name": "Notes", "text": "Fractions"},
+    )
+
+    client.post(f"/api/sessions/{draft['id']}/leave")
+
+    db = sqlite3.connect(tmp_path / "polaris.db")
+    try:
+        assert db.execute("SELECT id FROM resources").fetchall() == []
+    finally:
+        db.close()
+
+
+def test_an_anonymous_session_is_not_listed_and_goes_when_it_ends(make_client):  # AU-15
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer, signed_in=False)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 200
+
+    left = client.post(f"/api/sessions/{session['id']}/leave").json()
+    client.app.state.chat.wait_for_session_ends()
+
+    assert left["ended"] is True
+    assert _rows(client, "SELECT id FROM sessions") == []
+    assert _rows(client, "SELECT id FROM turns") == []
+    assert writer.calls == []
+    assert client.post(f"/api/sessions/{session['id']}/open").status_code == 404
+
+
+def test_the_learners_sessions_are_not_there_when_signed_out(make_client):  # AU-16
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+    assert [row["id"] for row in listed_sessions(client)] == [session["id"]]
+
+    client.headers.pop("Authorization")
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+    assert client.post(f"/api/sessions/{session['id']}/open").status_code == 404
+    assert client.post(f"/api/sessions/{session['id']}/turns", json={"message": "hi"}).status_code == 404
+    assert client.get(f"/api/sessions/{session['id']}/whiteboards").status_code == 404
+
+
+def test_signing_in_keeps_the_open_session(make_client):  # AU-17, decision 0008
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer, signed_in=False)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Sent while signed out")
+    assert client.post(f"/api/sessions/{session['id']}/keep").status_code == 401
+
+    client.headers.update(signed_in_headers(client))
+    assert client.post(f"/api/sessions/{session['id']}/keep").status_code == 200
+    post_turn(client, session["id"], "Sent while signed in")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert [row["id"] for row in listed_sessions(client)] == [session["id"]]
+    assert len(client.get(f"/api/sessions/{session['id']}").json()["turns"]) == 2
+    assert [calls for calls, _facts in writer.calls] == [("Sent while signed in",)]
+
+
+def test_an_anonymous_session_reads_no_profile(make_client):  # PR-01, decision 0008
+    seen = []
+
+    class Recording(TeachingStub):
+        async def reply(self, *, profile, **rest):
+            seen.append(profile)
+            async for chunk in super().reply(profile=profile, **rest):
+                yield chunk
+
+    client, _agent = make_client(
+        Recording(), profile='{"facts": ["struggles with fractions"]}', signed_in=False
+    )
+    session = client.post("/api/sessions").json()
+    events = post_turn(client, session["id"], "What is a ratio?")
+
+    assert seen == [Profile((), signed_in=False)]
+    assert "struggles with fractions" not in reply_text(events)
+
+    client.headers.update(signed_in_headers(client))
+    signed_in = client.post("/api/sessions").json()
+    post_turn(client, signed_in["id"], "What is a ratio?")
+
+    assert seen[-1].facts == ("struggles with fractions",)

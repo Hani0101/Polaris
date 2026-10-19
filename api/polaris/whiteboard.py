@@ -34,6 +34,9 @@ MARKED_DRAWING_VERSION = 3
 DESCRIBED_DRAWING_VERSION = 4
 MATH_CODE_DRAWING_VERSION = 5
 GRAPH_DRAWING_VERSION = 6
+# Every new drawing is this version. A new kind or field joins it without a
+# new version (docs/decisions/0006-one-drawing-format-version.md).
+CURRENT_DRAWING_VERSION = 7
 SUPPORTED_DRAWING_VERSIONS = frozenset(
     {
         DRAWING_FORMAT_VERSION,
@@ -41,6 +44,7 @@ SUPPORTED_DRAWING_VERSIONS = frozenset(
         DESCRIBED_DRAWING_VERSION,
         MATH_CODE_DRAWING_VERSION,
         GRAPH_DRAWING_VERSION,
+        CURRENT_DRAWING_VERSION,
     }
 )
 MARK_DRAWING_VERSIONS = frozenset(
@@ -49,14 +53,21 @@ MARK_DRAWING_VERSIONS = frozenset(
         DESCRIBED_DRAWING_VERSION,
         MATH_CODE_DRAWING_VERSION,
         GRAPH_DRAWING_VERSION,
+        CURRENT_DRAWING_VERSION,
     }
 )
 SIMPLER_DRAWING_VERSIONS = frozenset(
-    {DESCRIBED_DRAWING_VERSION, MATH_CODE_DRAWING_VERSION, GRAPH_DRAWING_VERSION}
+    {
+        DESCRIBED_DRAWING_VERSION,
+        MATH_CODE_DRAWING_VERSION,
+        GRAPH_DRAWING_VERSION,
+        CURRENT_DRAWING_VERSION,
+    }
 )
 MATH_CODE_DRAWING_VERSIONS = frozenset(
-    {MATH_CODE_DRAWING_VERSION, GRAPH_DRAWING_VERSION}
+    {MATH_CODE_DRAWING_VERSION, GRAPH_DRAWING_VERSION, CURRENT_DRAWING_VERSION}
 )
+GRAPH_DRAWING_VERSIONS = frozenset({GRAPH_DRAWING_VERSION, CURRENT_DRAWING_VERSION})
 
 
 @dataclass(frozen=True)
@@ -330,7 +341,11 @@ def _sample_xs(x_min: float, x_max: float, count: int) -> list[float]:
 
 
 def _sample_expression(
-    expression: str, x_min: float, x_max: float, sample_count: int
+    expression: str,
+    x_min: float,
+    x_max: float,
+    sample_count: int,
+    variable: str = "x",
 ) -> list[tuple[float, float]]:
     try:
         ast.parse(expression, mode="eval")
@@ -340,19 +355,23 @@ def _sample_expression(
     parsed = evaluator.parse(expression)
     points: list[tuple[float, float]] = []
     for x_value in _sample_xs(x_min, x_max, sample_count):
-        evaluator.names["x"] = x_value
+        evaluator.names[variable] = x_value
         raw = evaluator.eval(expression, previously_parsed=parsed)
         points.append((x_value, float(_real(raw))))
     return points
 
 
 def _plot_expression(
-    expression: str, x_min: float, x_max: float, sample_count: int
+    expression: str,
+    x_min: float,
+    x_max: float,
+    sample_count: int,
+    variable: str = "x",
 ) -> list[tuple[float, float]]:
     """Plot one function. Raises ValueError and nothing else."""
 
     try:
-        return _sample_expression(expression, x_min, x_max, sample_count)
+        return _sample_expression(expression, x_min, x_max, sample_count, variable)
     except _ExpressionRefusal as refusal:
         raise ValueError(refusal.args[0]) from None
     except NameNotDefined:
@@ -367,6 +386,17 @@ def _plot_expression(
         raise ValueError("expression result is not finite") from None
     except Exception:
         raise ValueError("expression is not allowed") from None
+
+
+def plot_expression(
+    expression: str, low: float, high: float, sample_count: int, *, variable: str = "x"
+) -> list[tuple[float, float]]:
+    """Sample one expression in ``variable`` with the graph rules. Raises ValueError only.
+
+    The animation format uses this for ``follow`` paths in ``t``.
+    """
+
+    return _plot_expression(expression, low, high, sample_count, variable)
 
 
 def _required_id(value: str) -> str:
@@ -423,18 +453,57 @@ class ElementBase(DrawingModel):
     style: Style
 
 
-class RectangleElement(ElementBase):
+# Version 7 fields. They are left out of the stored form when absent, so an
+# older drawing keeps the exact form it was stored with.
+_OPTIONAL_V7_FIELDS = ("label", "start_element_id", "end_element_id", "bend")
+
+
+def _omit_absent_v7_fields(data: object) -> object:
+    if isinstance(data, dict):
+        for key in _OPTIONAL_V7_FIELDS:
+            if key in data and data[key] is None:
+                data.pop(key)
+    return data
+
+
+class LabeledBox(ElementBase):
+    """A box whose label is drawn inside it, centered. Version 7 only."""
+
+    label: CommentText | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_absent_label(self, handler):
+        return _omit_absent_v7_fields(handler(self))
+
+
+class RectangleElement(LabeledBox):
     kind: Literal["rectangle"]
 
 
-class EllipseElement(ElementBase):
+class EllipseElement(LabeledBox):
     kind: Literal["ellipse"]
 
 
 class ArrowElement(ElementBase):
+    """start and end are stored even when an end is attached to an element.
+
+    An attached end names that element. The browser keeps the end on that
+    element, and the stored point is where the end meets its edge.
+    """
+
     kind: Literal["arrow"]
     start: Point
     end: Point
+    label: CommentText | None = None
+    start_element_id: RequiredId | None = None
+    end_element_id: RequiredId | None = None
+    # How far the middle of the arrow curves away from a straight line, in
+    # drawing units. Positive curves to the right of the arrow's direction.
+    bend: Coordinate | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_absent_fields(self, handler):
+        return _omit_absent_v7_fields(handler(self))
 
 
 class LineElement(ElementBase):
@@ -610,6 +679,16 @@ class Step(DrawingModel):
     id: RequiredId
     reply_part: BoundedText
     elements: list[Element]
+    # Version 7. Marks a step the agent added beside the learner's drawing on a
+    # pinned board (WB-20). Left out of the stored form when absent.
+    extension: Literal[True] | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_absent_extension(self, handler):
+        data = handler(self)
+        if isinstance(data, dict) and data.get("extension") is None:
+            data.pop("extension", None)
+        return data
 
     @model_validator(mode="after")
     def reply_part_names_this_step(self) -> Self:
@@ -663,7 +742,7 @@ class Whiteboard(DrawingModel):
     @classmethod
     def version_is_supported(cls, value: int) -> int:
         if value not in SUPPORTED_DRAWING_VERSIONS:
-            raise ValueError("must be 2, 3, 4, 5, or 6")
+            raise ValueError("must be 2, 3, 4, 5, 6, or 7")
         return value
 
     @model_serializer(mode="wrap")
@@ -714,7 +793,7 @@ class Whiteboard(DrawingModel):
                     f"mark '{element.id}' must target a learner element"
                 )
         if has_mark and self.version not in MARK_DRAWING_VERSIONS:
-            raise ValueError("a whiteboard with marks must be version 3, 4, 5, or 6")
+            raise ValueError("a whiteboard with marks must be version 3, 4, 5, 6, or 7")
         return self
 
     @model_validator(mode="after")
@@ -731,28 +810,78 @@ class Whiteboard(DrawingModel):
 
     @model_validator(mode="after")
     def simpler_redraw_stays_described(self) -> Self:
-        """A simpler redraw names another whiteboard and stays version 4, 5, or 6."""
+        """A simpler redraw names another whiteboard and stays version 4, 5, 6, or 7."""
 
         if self.simplifies is None:
             return self
         if self.simplifies == self.id:
             raise ValueError("simplifies must name another whiteboard")
         if self.version not in SIMPLER_DRAWING_VERSIONS:
-            raise ValueError("a simpler whiteboard must be version 4, 5, or 6")
+            raise ValueError("a simpler whiteboard must be version 4, 5, 6, or 7")
         return self
 
     @model_validator(mode="after")
     def math_and_code_are_version_5(self) -> Self:
         if any(isinstance(element, (MathElement, CodeElement)) for element in _elements(self)):
             if self.version not in MATH_CODE_DRAWING_VERSIONS:
-                raise ValueError("a whiteboard with math or code must be version 5 or 6")
+                raise ValueError("a whiteboard with math or code must be version 5, 6, or 7")
         return self
 
     @model_validator(mode="after")
     def graphs_are_version_6(self) -> Self:
         if any(isinstance(element, GraphElement) for element in _elements(self)):
-            if self.version != GRAPH_DRAWING_VERSION:
-                raise ValueError("a whiteboard with a graph must be version 6")
+            if self.version not in GRAPH_DRAWING_VERSIONS:
+                raise ValueError("a whiteboard with a graph must be version 6 or 7")
+        return self
+
+    @model_validator(mode="after")
+    def labels_and_attachments_are_version_7(self) -> Self:
+        """Labels and attached arrow ends exist on version 7 only, and name real parts."""
+
+        elements = _elements(self)
+        uses_v7 = any(
+            getattr(element, field, None) is not None
+            for element in elements
+            for field in _OPTIONAL_V7_FIELDS
+        )
+        if uses_v7 and self.version != CURRENT_DRAWING_VERSION:
+            raise ValueError("labels and attached arrows need version 7")
+        targets = {
+            element.id
+            for element in elements
+            if not isinstance(element, (ArrowElement, LineElement, MarkElement))
+        }
+        for element in elements:
+            if not isinstance(element, ArrowElement):
+                continue
+            for field in ("start_element_id", "end_element_id"):
+                target = getattr(element, field)
+                if target is None:
+                    continue
+                if target not in targets:
+                    raise ValueError(
+                        f"arrow '{element.id}' {field} must name a box, text, or "
+                        f"other shape on this whiteboard, not '{target}'"
+                    )
+        return self
+
+    @model_validator(mode="after")
+    def extension_steps_hold_agent_parts(self) -> Self:
+        """A step the agent added beside the learner's drawing holds only its own parts."""
+
+        for step in self.steps:
+            if not step.extension:
+                continue
+            if self.version != CURRENT_DRAWING_VERSION:
+                raise ValueError("an added step needs version 7")
+            if not step.elements:
+                raise ValueError(f"step '{step.id}' needs at least one part")
+            for element in step.elements:
+                if element.author != "agent" or isinstance(element, MarkElement):
+                    raise ValueError(
+                        f"step '{step.id}' can only hold the agent's own parts, "
+                        f"not '{element.id}'"
+                    )
         return self
 
 
@@ -813,8 +942,30 @@ def _keep_stored_description(stored: Whiteboard, incoming: object) -> object:
     return payload
 
 
+BLANK_WHITEBOARD_DESCRIPTION = "Blank whiteboard"
+# The step a blank board starts with, so the learner's parts have a step to join.
+BLANK_STEP_ID = "learner"
+
+
+def blank_whiteboard(whiteboard_id: str, session_id: str) -> Whiteboard:
+    """An empty version 7 board the learner creates from the Whiteboard tab (WB-18)."""
+
+    return Whiteboard(
+        version=CURRENT_DRAWING_VERSION,
+        id=whiteboard_id,
+        session_id=session_id,
+        description=BLANK_WHITEBOARD_DESCRIPTION,
+        steps=[Step(id=BLANK_STEP_ID, reply_part=step_marker(BLANK_STEP_ID), elements=[])],
+    )
+
+
 def check_learner_drawing(stored: Whiteboard, incoming: object) -> DrawingCheck:
-    """Check a learner's copy. Agent elements and agent comments stay as stored."""
+    """Check a learner's copy and merge it into the stored board (WB-21).
+
+    The save replaces only the learner's parts and comments. Every agent part,
+    agent comment, and step already stored is kept, so a copy loaded before
+    the agent added a step loses nothing. Changing an agent part is refused.
+    """
 
     checked = check_drawing(_keep_stored_description(stored, incoming))
     if checked.whiteboard is None:
@@ -823,7 +974,41 @@ def check_learner_drawing(stored: Whiteboard, incoming: object) -> DrawingCheck:
     errors = _learner_change_errors(stored, updated)
     if errors:
         return DrawingCheck(whiteboard=None, errors=errors)
-    return checked
+    return check_drawing(_merged_learner_drawing(stored, updated))
+
+
+def _merged_learner_drawing(stored: Whiteboard, updated: Whiteboard) -> dict[str, object]:
+    updated_steps = {step.id: step for step in updated.steps}
+    steps: list[dict[str, object]] = []
+    for step in stored.steps:
+        dumped = step.model_dump(mode="json")
+        # Agent parts as stored, in their order, then the copy's learner parts.
+        # A copy that predates this step has no learner parts for it.
+        elements = [
+            element.model_dump(mode="json")
+            for element in step.elements
+            if element.author == "agent"
+        ]
+        copy = updated_steps.get(step.id)
+        if copy is not None:
+            elements.extend(
+                element.model_dump(mode="json")
+                for element in copy.elements
+                if element.author == "learner"
+            )
+        dumped["elements"] = elements
+        steps.append(dumped)
+    comments = [comment.model_dump(mode="json") for comment in updated.comments]
+    present_comments = {comment.id for comment in updated.comments}
+    comments.extend(
+        comment.model_dump(mode="json")
+        for comment in stored.comments
+        if comment.author == "agent" and comment.id not in present_comments
+    )
+    drawing = stored.model_dump(mode="json")
+    drawing["steps"] = steps
+    drawing["comments"] = comments
+    return drawing
 
 
 def apply_marks(stored: Whiteboard, incoming: object) -> DrawingCheck:
@@ -1043,9 +1228,14 @@ def _version_after_marks(stored: Whiteboard) -> int:
 
     Version 5 stays version 5 so its math and code remain valid.
     Version 6 stays version 6 so its graph remains valid.
+    Version 7 stays version 7 so its labels and attached arrows remain valid.
     """
 
-    if stored.version in {MATH_CODE_DRAWING_VERSION, GRAPH_DRAWING_VERSION}:
+    if stored.version in {
+        MATH_CODE_DRAWING_VERSION,
+        GRAPH_DRAWING_VERSION,
+        CURRENT_DRAWING_VERSION,
+    }:
         return stored.version
     if stored.description and stored.description.strip():
         return DESCRIBED_DRAWING_VERSION
@@ -1067,14 +1257,21 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
         errors.append("whiteboard id cannot change")
     if updated.session_id != stored.session_id:
         errors.append("session_id cannot change")
+    stored_steps = {step.id: step for step in stored.steps}
     stored_step_ids = [step.id for step in stored.steps]
     updated_step_ids = [step.id for step in updated.steps]
-    if updated_step_ids != stored_step_ids:
-        errors.append("steps cannot be added, removed, or reordered")
+    # A copy loaded before the agent added a step lacks it, so the copy's steps
+    # are the stored steps with some left out, in the same order (WB-21).
+    if not _in_order_within(updated_step_ids, stored_step_ids):
+        errors.append("steps cannot be added or reordered")
     else:
-        for left, right in zip(stored.steps, updated.steps, strict=True):
-            if left.reply_part != right.reply_part:
+        for step in updated.steps:
+            stored_step = stored_steps[step.id]
+            if step.reply_part != stored_step.reply_part:
                 errors.append("a step's reply text cannot change")
+                break
+            if step.extension != stored_step.extension:
+                errors.append(f"step '{step.id}' cannot change who added it")
                 break
 
     stored_agents = {
@@ -1086,7 +1283,7 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
     for element_id, element in stored_agents.items():
         found = updated_by_id.get(element_id)
         if found is None:
-            errors.append(f"agent element '{element_id}' was removed")
+            # Kept from the stored board (WB-21).
             continue
         if found.model_dump(mode="json") != element.model_dump(mode="json"):
             errors.append(f"agent element '{element_id}' was changed")
@@ -1103,14 +1300,24 @@ def _learner_change_errors(stored: Whiteboard, updated: Whiteboard) -> list[str]
     updated_comments = {comment.id: comment for comment in updated.comments}
     for comment_id, comment in stored_agent_comments.items():
         found = updated_comments.get(comment_id)
-        if found is None:
-            errors.append(f"agent comment '{comment_id}' was removed")
-        elif found.model_dump(mode="json") != comment.model_dump(mode="json"):
+        if found is not None and found.model_dump(mode="json") != comment.model_dump(mode="json"):
             errors.append(f"agent comment '{comment_id}' was changed")
     for comment in updated.comments:
         if comment.id not in stored_agent_comments and comment.author != "learner":
             errors.append(f"comment '{comment.id}' must be authored by the learner")
     return errors
+
+
+def _in_order_within(items: list[str], within: list[str]) -> bool:
+    """True when every item is in within, once, and in within's order."""
+
+    position = 0
+    for item in items:
+        try:
+            position = within.index(item, position) + 1
+        except ValueError:
+            return False
+    return True
 
 
 def describe_pointed(whiteboard: Whiteboard, element_ids: Sequence[str]) -> str:
@@ -1173,6 +1380,29 @@ def describe_whiteboard(whiteboard: Whiteboard) -> str:
     if whiteboard.simplifies:
         lines.append(f"Simpler version of whiteboard {whiteboard.simplifies}.")
     return "\n".join(lines)
+
+
+def summarize_whiteboard(whiteboard: Whiteboard) -> str:
+    """One line for a whiteboard the turn is not about. No ids or positions."""
+
+    elements = _elements(whiteboard)
+    learner = sum(1 for element in elements if element.author == "learner")
+    noun = "part" if len(elements) == 1 else "parts"
+    about = whiteboard.description.strip() if whiteboard.description else ""
+    if not about:
+        about = _drawing_summary(whiteboard)
+    if not about.endswith((".", "!", "?")):
+        about += "."
+    line = f"Whiteboard {whiteboard.id} (summary): {about} {len(elements)} {noun}"
+    if learner:
+        line += f", {learner} by the learner"
+    if whiteboard.comments:
+        count = len(whiteboard.comments)
+        line += f", {count} {'comment' if count == 1 else 'comments'}"
+    line += "."
+    if whiteboard.simplifies:
+        line += f" Simpler version of whiteboard {whiteboard.simplifies}."
+    return line
 
 
 def readable_description(whiteboard: Whiteboard) -> str:
@@ -1276,6 +1506,8 @@ def _screen_phrase(element: Element) -> str:
         return "text"
     if isinstance(element, FreehandElement):
         return "a freehand line"
+    if isinstance(element, (RectangleElement, EllipseElement, ArrowElement)) and element.label:
+        return f'{_an(element.kind)} labeled "{element.label}"'
     return _an(element.kind)
 
 
@@ -1343,6 +1575,14 @@ def _describe_element(element: Element) -> str:
     label = ""
     if isinstance(element, TextElement) and element.text:
         label = f' "{element.text}"'
+    elif isinstance(element, (RectangleElement, EllipseElement, ArrowElement)) and element.label:
+        label = f' "{element.label}"'
+    if isinstance(element, ArrowElement) and (
+        element.start_element_id or element.end_element_id
+    ):
+        start = element.start_element_id or _place(element.start)
+        end = element.end_element_id or _place(element.end)
+        return f"- arrow {element.id} by {element.author} from {start} to {end}{label}"
     return (
         f"- {element.kind} {element.id} by {element.author} "
         f"at {_place(element.position)}{label}"

@@ -4,10 +4,14 @@ version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
     "claude-agent-sdk==0.2.167",
+    "cryptography==50.0.2",
     "fastapi==0.143.1",
+    "manim[typst]==0.22.0",
     "pydantic==2.14.1",
     "pylatexenc==2.11",
+    "pypdf==6.1.0",
     "simpleeval==1.0.8",
+    "truststore==0.10.5",
     "uvicorn[standard]==0.54.0",
 ]
 

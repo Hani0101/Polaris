@@ -1,97 +1,91 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
-import { Check, LoaderCircle, X } from 'lucide-react'
-import { gradeQuiz } from './api.ts'
-import type { Quiz } from './api.ts'
+import type { RefObject } from 'react'
+import { Check, X } from 'lucide-react'
+import { answerQuiz } from './api.ts'
+import type { Quiz, QuizFeedback } from './api.ts'
 import { AlertBanner } from './chat/ui.tsx'
 import './quiz.css'
 
 type QuizCardProps = {
   quiz: Quiz
   expanded?: boolean
-  onGraded: (quiz: Quiz) => void
+  onChecked: (quiz: Quiz) => void
   onExpand?: (quizId: string) => void
 }
 
-type CheckButtonProps = {
-  label: string
-  pending: boolean
-  disabled?: boolean
-  variant?: 'primary' | 'secondary'
-  onClick: () => void
+/** What the card shows: a question, the results of a finished quiz, or a review of its questions. */
+type Mode = 'questions' | 'results' | 'review'
+
+function checkedCount(quiz: Quiz): number {
+  return Object.keys(quiz.submitted ?? {}).length
 }
 
-/** Button with the loading state from DESIGN.md: width kept, clicks blocked, spinner, same name. */
-function CheckButton({ label, pending, disabled, variant = 'primary', onClick }: CheckButtonProps) {
-  const classes = [variant === 'secondary' ? 'secondary' : '', pending ? 'qz-loading' : '']
-    .filter(Boolean)
-    .join(' ')
+type QuizResultsProps = {
+  quiz: Quiz
+  feedback: Map<string, QuizFeedback>
+  scoreRef: RefObject<HTMLParagraphElement | null>
+  onOpenQuestion: (index: number) => void
+}
+
+/** QZ-16: the score, and every question marked right or wrong. A row opens that question. */
+function QuizResults({ quiz, feedback, scoreRef, onOpenQuestion }: QuizResultsProps) {
   return (
-    <button
-      type="button"
-      className={classes || undefined}
-      disabled={disabled}
-      aria-disabled={pending || undefined}
-      aria-busy={pending || undefined}
-      onClick={() => {
-        if (!pending) onClick()
-      }}
-    >
-      <span className="qz-button-label">{label}</span>
-      {pending ? (
-        <LoaderCircle className="qz-spinner" size={20} strokeWidth={2} aria-hidden="true" />
+    <section className="qz-results" aria-label="Results">
+      {quiz.score ? (
+        <p className="qz-score" ref={scoreRef} tabIndex={-1}>
+          You got {quiz.score.earned} of {quiz.score.total} right.
+        </p>
       ) : null}
-    </button>
+      <ul className="qz-result-list">
+        {quiz.questions.map((question, index) => {
+          const right = feedback.get(question.id)?.right === true
+          return (
+            <li key={question.id}>
+              <button type="button" className="qz-result-row" onClick={() => onOpenQuestion(index)}>
+                <span className="qz-result-prompt">
+                  {index + 1}. {question.prompt}
+                </span>
+                <span className="qz-result-mark">
+                  {right ? (
+                    <Check size={16} strokeWidth={2} aria-hidden="true" />
+                  ) : (
+                    <X size={16} strokeWidth={2} aria-hidden="true" />
+                  )}
+                  {right ? 'Right' : 'Wrong'}
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+    </section>
   )
 }
 
-function ResultFeedback({ right, explanation }: { right: boolean; explanation?: string }) {
-  let headline: ReactNode
-  let body: string | undefined
-  if (right) {
-    headline = (
-      <>
-        <Check size={16} strokeWidth={2} aria-hidden="true" />
-        Correct
-      </>
-    )
-    body = 'You picked the right answer.'
-  } else {
-    headline = (
-      <>
-        <X size={16} strokeWidth={2} aria-hidden="true" />
-        Not quite, here's why
-      </>
-    )
-    body = explanation
-  }
-  return (
-    <div className={right ? 'qz-feedback is-correct' : 'qz-feedback is-incorrect'}>
-      <p className="qz-feedback-headline">{headline}</p>
-      {body ? <p className="qz-feedback-text">{body}</p> : null}
-    </div>
-  )
-}
-
-export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCardProps) {
-  // The graded quiz from the server, kept here too so review starts even before the parent
-  // passes the graded quiz back down.
+export function QuizCard({ quiz, expanded = false, onChecked, onExpand }: QuizCardProps) {
+  // The latest quiz from the server, kept here too so the feedback shows even before the
+  // parent passes the updated quiz back down.
   const [result, setResult] = useState<Quiz | null>(null)
-  const view = quiz.score === null && result?.id === quiz.id ? result : quiz
-  const graded = view.score !== null
+  const view = result?.id === quiz.id && checkedCount(result) > checkedCount(quiz) ? result : quiz
+  const finished = view.score !== null
 
-  const [draft, setDraft] = useState<Record<string, string>>({})
-  const [index, setIndex] = useState(0)
-  const [pending, setPending] = useState(false)
+  const [mode, setMode] = useState<Mode>(finished ? 'results' : 'questions')
+  // QZ-15: a quiz that is opened again continues at the first question not yet checked.
+  const [index, setIndex] = useState(() => {
+    const open = quiz.questions.findIndex((question) => !(question.id in (quiz.submitted ?? {})))
+    return open === -1 ? 0 : open
+  })
+  const [pending, setPending] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const progressId = useId()
   const questionRef = useRef<HTMLHeadingElement>(null)
   const scoreRef = useRef<HTMLParagraphElement>(null)
-  const focusNext = useRef<'question' | 'score' | null>(null)
+  const nextRef = useRef<HTMLButtonElement>(null)
+  const focusNext = useRef<'question' | 'score' | 'next' | null>(null)
 
-  const mistakes = useMemo(
-    () => new Map((view.mistakes ?? []).map((mistake) => [mistake.question_id, mistake.explanation])),
-    [view.mistakes],
+  const feedback = useMemo(
+    () => new Map((view.feedback ?? []).map((item) => [item.question_id, item])),
+    [view.feedback],
   )
 
   useEffect(() => {
@@ -99,58 +93,77 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
     focusNext.current = null
     if (target === 'question') questionRef.current?.focus()
     if (target === 'score') scoreRef.current?.focus()
-  }, [index, graded])
+    if (target === 'next') nextRef.current?.focus()
+  }, [index, mode, view])
 
   const total = view.questions.length
   const position = Math.min(index, total - 1)
   const current = view.questions[position]
   if (!current) return null
 
-  const picks = graded ? (view.submitted ?? draft) : draft
-  const picked = picks[current.id]
+  const submitted = view.submitted ?? {}
+  const review = feedback.get(current.id)
+  const picked = submitted[current.id] ?? pending ?? undefined
   const isLast = position === total - 1
-  const done = position + (picked ? 1 : 0)
-  const explanation = mistakes.get(current.id)
-  const wrong = graded && explanation !== undefined
-  const right = graded && picked !== undefined && !wrong
+  const done = checkedCount(view)
   const QuestionHeading = expanded ? 'h2' : 'h4'
+  // QZ-16: the last question keeps its feedback on screen, with the results under it.
+  const showResultsBelow = finished && mode === 'questions' && isLast
 
   function go(to: number) {
     focusNext.current = 'question'
     setIndex(to)
   }
 
-  async function check() {
-    if (graded || pending) return
-    const missing = view.questions.findIndex((question) => !draft[question.id])
-    if (missing !== -1) {
-      go(missing)
-      return
-    }
-    setPending(true)
+  function openQuestion(to: number) {
+    setMode('review')
+    go(to)
+  }
+
+  async function pick(choiceId: string) {
+    if (!current || review || pending) return
+    setPending(choiceId)
     try {
-      // One call grades the whole quiz (QZ-04): the key never leaves the server.
-      const next = await gradeQuiz(view.id, draft)
+      // QZ-14: picking checks the question. Only this question's key comes back (QZ-03).
+      const next = await answerQuiz(view.id, current.id, choiceId)
       setFailed(false)
-      focusNext.current = 'score'
+      focusNext.current = next.score ? 'score' : 'next'
       setResult(next)
-      setIndex(0)
-      onGraded(next)
+      onChecked(next)
     } catch {
       setFailed(true)
     } finally {
-      setPending(false)
+      setPending(null)
     }
+  }
+
+  if (mode === 'results') {
+    return (
+      <article className="qz-card">
+        {!expanded ? <h3 className="qz-title">{view.title}</h3> : null}
+        <QuizResults
+          quiz={view}
+          feedback={feedback}
+          scoreRef={scoreRef}
+          onOpenQuestion={openQuestion}
+        />
+        <div className="qz-actions">
+          <button type="button" onClick={() => openQuestion(0)}>
+            Review answers
+          </button>
+          {!expanded && onExpand ? (
+            <button type="button" className="secondary" onClick={() => onExpand(view.id)}>
+              Open on its own page
+            </button>
+          ) : null}
+        </div>
+      </article>
+    )
   }
 
   return (
     <article className="qz-card">
       {!expanded ? <h3 className="qz-title">{view.title}</h3> : null}
-      {graded && view.score ? (
-        <p className="qz-score" ref={scoreRef} tabIndex={-1}>
-          You got {view.score.earned} of {view.score.total} right.
-        </p>
-      ) : null}
 
       <div className="qz-progress">
         <p className="qz-progress-text" id={progressId}>
@@ -177,12 +190,25 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
         <div className="qz-options">
           {current.choices.map((choice) => {
             const chosen = picked === choice.id
-            // QZ-03: the browser never receives the answer key. In review only the learner's
-            // own pick is marked. For a question they missed, the correct choice is unknown
-            // here and is not revealed (this overrides DESIGN.md's "correct answer revealed").
-            const outcome = chosen && right ? 'correct' : chosen && wrong ? 'incorrect' : null
+            // QZ-03: the key arrives only with a checked question, inside its feedback, so
+            // nothing is marked before the pick. The correct choice is marked, and a miss
+            // also marks the learner's pick as their answer (QZ-06).
+            const outcome =
+              review === undefined
+                ? null
+                : choice.id === review.correct_choice_id
+                  ? 'correct'
+                  : chosen && !review.right
+                    ? 'incorrect'
+                    : null
+            const note =
+              outcome === 'correct'
+                ? review?.explanation
+                : outcome === 'incorrect'
+                  ? review?.why_wrong
+                  : undefined
             const classes = ['qz-option']
-            if (graded) classes.push('is-locked')
+            if (review) classes.push('is-locked')
             if (outcome === 'correct') classes.push('is-correct')
             if (outcome === 'incorrect') classes.push('is-incorrect')
             return (
@@ -193,10 +219,8 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
                   name={`${view.id}-${current.id}`}
                   value={choice.id}
                   checked={chosen}
-                  disabled={graded || pending}
-                  onChange={() =>
-                    setDraft((previous) => ({ ...previous, [current.id]: choice.id }))
-                  }
+                  disabled={review !== undefined || pending !== null}
+                  onChange={() => void pick(choice.id)}
                 />
                 <span className="qz-radio" aria-hidden="true" />
                 <span className="qz-option-body">
@@ -204,7 +228,7 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
                   {outcome === 'correct' ? (
                     <span className="qz-option-mark">
                       <Check size={16} strokeWidth={2} aria-hidden="true" />
-                      Correct
+                      {chosen ? 'Correct' : 'Correct answer'}
                     </span>
                   ) : null}
                   {outcome === 'incorrect' ? (
@@ -213,6 +237,7 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
                       Your answer
                     </span>
                   ) : null}
+                  {note ? <span className="qz-option-note">{note}</span> : null}
                 </span>
               </label>
             )
@@ -220,25 +245,19 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
         </div>
       </fieldset>
 
-      <div aria-live="polite">
-        {right || wrong ? (
-          <ResultFeedback key={current.id} right={right} explanation={explanation} />
-        ) : null}
+      <div aria-live="polite" className="visually-hidden">
+        {review ? (review.right ? 'Correct.' : 'Not quite.') : ''}
       </div>
 
-      {failed ? (
-        <AlertBanner
-          action={
-            <CheckButton
-              label="Try again"
-              variant="secondary"
-              pending={pending}
-              onClick={() => void check()}
-            />
-          }
-        >
-          Couldn't check your answers. Your picks are still here, so try again.
-        </AlertBanner>
+      {failed ? <AlertBanner>Couldn't check that answer. Try again.</AlertBanner> : null}
+
+      {showResultsBelow ? (
+        <QuizResults
+          quiz={view}
+          feedback={feedback}
+          scoreRef={scoreRef}
+          onOpenQuestion={openQuestion}
+        />
       ) : null}
 
       <div className="qz-actions">
@@ -250,19 +269,17 @@ export function QuizCard({ quiz, expanded = false, onGraded, onExpand }: QuizCar
         {!isLast ? (
           <button
             type="button"
-            disabled={(!graded && !picked) || pending}
+            ref={nextRef}
+            disabled={!review || pending !== null}
             onClick={() => go(position + 1)}
           >
             Next question
           </button>
         ) : null}
-        {isLast && !graded ? (
-          <CheckButton
-            label="Check answers"
-            pending={pending}
-            disabled={!picked}
-            onClick={() => void check()}
-          />
+        {mode === 'review' ? (
+          <button type="button" className="secondary" onClick={() => setMode('results')}>
+            Back to results
+          </button>
         ) : null}
         {!expanded && onExpand ? (
           <button type="button" className="secondary" onClick={() => onExpand(view.id)}>

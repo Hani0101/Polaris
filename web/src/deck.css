@@ -1,0 +1,198 @@
+/* Flashcard deck (docs/features/flashcards.md). Built from the Card, Progress bar,
+   Badge, Button, and Checkbox components of DESIGN.md section 7, with the quiz card's
+   classes from quiz.css. Every value comes from the tokens in index.css.
+   DS-GAP: no flashcard component in DESIGN.md; composed from Card and Quiz question card. */
+
+.fc-face {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The front reads like a quiz question (typography.cardTitle). */
+.fc-front {
+  margin: 0;
+  font-family: var(--font-family-heading);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+  letter-spacing: var(--font-letter-spacing-normal);
+}
+
+/* DS-GAP: the back of a flipped card, used the Result feedback box (color.state.infoBg, space.md) */
+.fc-back {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-md);
+  background: var(--color-state-info-bg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  white-space: pre-line;
+}
+
+.fc-back:focus-visible,
+.fc-front:focus-visible {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+.fc-source,
+.fc-tally {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
+.fc-list {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between the card rows of a deck, used space.xs */
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fc-list-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-inline-default);
+  padding: var(--space-xs) 0;
+  border-bottom: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+.fc-list-front {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+}
+
+.fc-list-row .badge {
+  flex: none;
+}
+
+/* ---------- Create flashcards dialog ---------- */
+
+.fc-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+}
+
+.fc-picks {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.fc-picks legend {
+  padding: 0;
+  margin-bottom: var(--space-form-label-gap);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+/* Checkbox and radio: checkbox variant. The label is part of the 44px tap area. */
+.fc-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  min-height: var(--component-tap-target-min);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.fc-choice input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.fc-check {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--component-checkbox-size);
+  height: var(--component-checkbox-size);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-on-accent);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-easing-standard),
+    background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.fc-check svg {
+  visibility: hidden;
+}
+
+.fc-choice:hover input:not(:checked) + .fc-check {
+  border-color: var(--color-text-secondary);
+}
+
+.fc-choice input:checked + .fc-check {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.fc-choice input:checked + .fc-check svg {
+  visibility: visible;
+}
+
+.fc-choice input:focus-visible + .fc-check {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+.fc-choice-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+}
+
+.fc-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.fc-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-inline-default);
+  min-width: 0;
+  font-size: var(--font-size-md);
+}
+
+.fc-file span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-check {
+    transition: none;
+  }
+}

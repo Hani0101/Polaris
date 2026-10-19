@@ -1,0 +1,204 @@
+/* Settings dialogs (DESIGN.md 6.5), Checkbox and radio: radio variant, and the left panel footer. */
+
+.st-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+  margin: 0;
+  padding: 0;
+  border: none;
+  min-width: 0;
+}
+
+.st-legend {
+  padding: 0;
+  margin-bottom: var(--space-form-field-gap);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+/* The label is part of the 44px tap area. */
+.st-choice {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  min-height: var(--component-tap-target-min);
+  cursor: pointer;
+}
+
+.st-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.st-radio {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--component-checkbox-size);
+  height: var(--component-checkbox-size);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-full);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-easing-standard),
+    background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.st-choice:hover input:not(:checked) + .st-radio {
+  border-color: var(--color-text-secondary);
+}
+
+.st-choice input:checked + .st-radio {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.st-choice input:checked + .st-radio::after {
+  content: '';
+  width: var(--component-radio-mark-size);
+  height: var(--component-radio-mark-size);
+  background: var(--color-text-on-accent);
+  border-radius: var(--radius-full);
+}
+
+.st-choice input:focus-visible + .st-radio {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+.st-choice-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.st-helper {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* Profile section (PR-11): facts as bullet points, Text input, Button, Icon button. */
+.st-profile {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between the intro, the list, and the add field in a modal, used space.lg */
+  gap: var(--space-lg);
+}
+
+.st-intro {
+  color: var(--color-text-secondary);
+}
+
+.st-signed-out {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.st-facts {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between groups of facts, used space.lg */
+  gap: var(--space-lg);
+}
+
+.st-fact-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.st-subheading {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-tight);
+}
+
+.st-fact-list {
+  margin: 0;
+  /* DS-GAP: indent for a bulleted list, used space.lg */
+  padding-left: var(--space-lg);
+  list-style: disc;
+}
+
+.st-fact::marker {
+  color: var(--color-text-secondary);
+}
+
+.st-fact.is-editing {
+  list-style: none;
+  padding: var(--space-xs) 0;
+}
+
+.st-fact-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  min-height: var(--component-tap-target-min);
+}
+
+.st-fact-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.st-fact-edit {
+  flex: none;
+  display: flex;
+}
+
+.st-fact-form,
+.st-add {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-field-gap);
+}
+
+.st-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inline-default);
+}
+
+/* Button loading (DESIGN.md 7, Button): the spinner replaces the text and the width is kept. */
+.st-busy {
+  position: relative;
+}
+
+.st-busy-label.is-hidden {
+  visibility: hidden;
+}
+
+.st-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.st-skeleton-line {
+  height: var(--component-tap-target-min);
+}
+
+/* Left panel footer: a subtle line above, then the Settings button. */
+.session-panel-footer {
+  padding-top: var(--space-xs);
+  border-top: var(--border-width-default) solid var(--color-border-subtle);
+}
+
+.session-panel-footer button {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: var(--component-tap-target-min);
+}

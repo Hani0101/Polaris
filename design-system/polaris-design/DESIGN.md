@@ -1,7 +1,7 @@
 # Design system: polaris-design
 
 Status: In progress
-Last updated: 2026-10-16
+Last updated: 2026-10-18
 Tokens file: tokens.json
 Banned defaults: banned.md
 
@@ -74,6 +74,11 @@ Dark mode: yes
 | `color.state.info` | #2b5a8a | #9cc3ff | Info text and icons | Passes 4.5:1 on its background and the page |
 | `color.state.infoBg` | #e6eef7 | #0f1c2e | Info background | Soft background, calm |
 | `color.focus.ring` | #0c0701 | #f08a4b | Outline showing where the keyboard is | Highest contrast in each mode (18.9:1 light, 7.0:1 dark at worst) |
+| `color.code.keyword` | #7a3e9d | #c9a2ef | Keywords in code blocks in tutor replies: `if`, `def`, `return` | Code highlighting in replies; plum stays apart from the amber accent and the state colors |
+| `color.code.string` | #3d6b1f | #a8d48a | Strings in code blocks | Code highlighting in replies; an olive green, not the success green |
+| `color.code.number` | #1f5f8b | #8cc4ec | Numbers, literals, and built-in values in code blocks | Code highlighting in replies; not the info blue |
+| `color.code.function` | #9a3b5b | #f2a3c0 | Function, class, and type names in code blocks | Code highlighting in replies; a berry red, not the error red |
+| `color.code.comment` | #5c5249 | #9a8f82 | Comments in code blocks (same as `color.text.muted`) | Comments matter less than the code, and muted text already passes on the code block |
 | `color.whiteboard.board.default` | #faf8f4 | #0c0701 | Board when a whiteboard opens: white in light mode, night in dark mode | Familiar like a real classroom board |
 | `color.whiteboard.board.white` | #faf8f4 | #faf8f4 | Board box 1, warm white | Familiar like a real classroom board |
 | `color.whiteboard.board.night` | #0c0701 | #0c0701 | Board box 2, night sky | The dark mode board, the Polaris night sky |
@@ -163,6 +168,12 @@ Whiteboard tokens have the same value in both columns: they follow the board, no
 | `color.text.primary` | `color.state.errorBg` | text | 17.12:1 | 16.30:1 | Pass |
 | `color.state.success` | `color.state.infoBg` | text | 5.46:1 | 9.61:1 | Pass |
 | `color.state.error` | `color.state.infoBg` | text | 5.50:1 | 7.96:1 | Pass |
+| `color.text.primary` | `color.state.warningBg` | text | 17.74:1 | 15.24:1 | Pass |
+| `color.code.keyword` | `color.bg.subtle` | text | 6.04:1 | 9.05:1 | Pass |
+| `color.code.string` | `color.bg.subtle` | text | 5.46:1 | 11.38:1 | Pass |
+| `color.code.number` | `color.bg.subtle` | text | 5.92:1 | 10.26:1 | Pass |
+| `color.code.function` | `color.bg.subtle` | text | 5.76:1 | 9.85:1 | Pass |
+| `color.code.comment` | `color.bg.subtle` | text | 6.58:1 | 6.06:1 | Pass |
 
 Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), or `ui` (borders, icons, focus ring, needs 3:1). Ratios come from `check_sync.py`, never from estimation.
 
@@ -180,6 +191,11 @@ Kind is `text` (needs 4.5:1), `large` (text 24px+ or 18.66px+ bold, needs 3:1), 
 - Pens follow the board, not the app mode: the white, yellow, blue, green, and pink boards use the `pen.onLight` set, the night board uses `pen.onDark`. On a picked board color, use the set whose tutor pen has the higher contrast with it. Why: pens stay visible on whatever board is chosen.
 - With a picked pen or board color, the learner is responsible for visibility. Nothing changes automatically. Why: not given.
 - The amber accent is never a pen color. Why: keeps the accent for the app's own highlights, and `#f08a4b` is 2.4:1 on the light board.
+- Parts the agent adds beside the learner's drawing on a pinned board are drawn in pen box 1 (the tutor's pen) with a dashed line, whatever stroke they were sent with. Marks stay red and dashed. Why: the learner's pens are always solid, so the dash tells the agent's parts from theirs, and an explanation does not look like a correction (WB-20).
+- The learner chooses the mode in the Appearance dialog, opened from the Settings menu: System, Light, or Dark. System follows the operating system. Every token has both a Light and a Dark value, so no screen is built for one mode only. Why: the learner decides how the screen looks, and both palettes are checked in 2.2 (ST-02, ST-03).
+- Whiteboard tokens do not change with the mode. A new board opens on `color.whiteboard.board.default`, which is the one board token that differs by mode, and a board that exists is never recolored. Why: recoloring a board would change what the learner drew (WB-22).
+- `color.code.*` is used only for syntax colors inside code blocks in tutor replies, on `color.bg.subtle`. Inline code and the rest of the app never use it. Why: the code colors carry no meaning outside code, so they stay out of the way of the accent and the state colors.
+- Syntax color is never the only cue in code: keywords are also bold. Why: color alone fails people with color blindness.
 
 ## 3. Typography
 
@@ -302,7 +318,7 @@ Shadows allowed: no
 ### 6.1 Grid
 | Token | Value | Used for | Why |
 |---|---|---|---|
-| `layout.grid.columns` | 12 | Full pages: expanded quiz, settings | Not given |
+| `layout.grid.columns` | 12 | Full pages: settings | Not given |
 | `layout.grid.gutter` | 1.5rem | Gap between grid columns (24px) | Not given |
 | `layout.page.margin` | 1.5rem | Left and right screen edges, 640px and up (24px) | Not given |
 | `layout.page.marginPhone` | 1rem | Left and right screen edges below 640px (16px) | Not given |
@@ -316,8 +332,8 @@ Shadows allowed: no
 ### 6.2 Max content widths
 | Token | Value | Used for | Why |
 |---|---|---|---|
-| `layout.maxWidth.content` | 1200px | Full pages: expanded quiz, settings | Not given |
-| `layout.maxWidth.chat` | 720px | The chat column, including the input bar | Not given |
+| `layout.maxWidth.content` | 1200px | Full pages: settings | Not given |
+| `layout.maxWidth.chat` | 720px | The chat column, including the input bar; the expanded quiz column (title and card), centered on the page with left-aligned text | One reading width for everything the learner reads, and a centered column keeps the page from feeling empty on wide screens |
 | `layout.maxWidth.form` | 400px | Forms, such as sign-in | Not given |
 
 ### 6.3 Breakpoints
@@ -339,7 +355,9 @@ Shadows allowed: no
 
 ### 6.5 Layout rules
 - The app is three panels: the session list on the left (`layout.panel.left`), the chat in the middle, tools on the right (`layout.panel.right`). The left and right panels can be closed. The chat is always visible and stops at `layout.maxWidth.chat`. Why: not given.
-- The 12-column grid is used for full pages (expanded quiz, settings), which stop at `layout.maxWidth.content`. Why: not given.
+- The 12-column grid is used for full pages (settings), which stop at `layout.maxWidth.content`. Why: not given.
+- Settings is not a page. Each item of the Settings menu opens a Modal (default variant) over the current screen, titled with the item's name. Its choices apply at once, so it has no main button, only a secondary "Close". A confirm opened from inside it sits over it and holds focus until it closes. Why: the learner changes a setting without leaving the conversation (ST-01, ST-11).
+- The expanded quiz page is one column at `layout.maxWidth.chat`, centered, with the title above the card in the same column and the card kept at the top of the page, not centered vertically. Text stays left-aligned. Why: a column that hugs the left edge leaves the page feeling empty, and a vertically centered card would jump when the feedback opens.
 - From `breakpoint.md` up: all three panels. From `breakpoint.lg` up, the tools panel is `layout.panel.rightWide`. Why: not given.
 - From `breakpoint.sm` to below `breakpoint.md`: chat plus the tools panel. The session list is the menu button, as on phones. Why: not given.
 - Below `breakpoint.sm` (phone), one panel at a time, and page margins are `layout.page.marginPhone`. Why: not given.
@@ -620,6 +638,7 @@ States (all variants):
 #### Checkbox and radio rules
 - Chosen always means an amber fill with a mark in `color.text.onAccent`, for both checkbox and radio. Why: one rule for both, and a filled box is easy to tell apart from an empty one.
 - The label is tappable and part of the 44px tap area. Why: a 24px box alone is a small target.
+- A radio group has a visible name above it in `typography.label` (a legend for screen readers), its radios stacked with `space.form.fieldGap` between them, and a short helper under a label in `typography.small` and `color.text.secondary` when the choice needs explaining. Why: the group is named once and each choice is heard with its group. The Appearance setting is one: "System" (helper: "Follows your device"), "Light", and "Dark" (ST-02, ST-11).
 
 ### Chat input
 Purpose: where the learner types to the tutor. One box holding the + tools button, the text, and Send. Not for other forms: use the text input.
@@ -704,6 +723,11 @@ States (variant: tutor):
 - Messages are `space.stack.default` apart. Why: breathing room so a long reply does not run into the next message.
 - Tutor replies follow the reading width rule (60 characters) and the structure rule: headings, numbered steps, short paragraphs (section 1). Why: Guiding.
 - Copy and Try again are always visible under a finished tutor reply, never hidden behind hover. Why: phones have no hover.
+- A key term in a tutor reply is bold and drawn in `color.accent`, with no fill and no underline. Why: the accent is reserved for key terms (2.3), and an underline would look like a link.
+- A callout in a tutor reply (note, tip, warning) looks like the Alert of the same color (note: info, tip: success, warning: warning) without its close button: the variant's soft fill, `radius.md`, padding `space.sm` `space.md`, and an icon (`component.icon.size.sm`) and label (`typography.label`) in the variant's color. Its body stays in `color.text.primary`. Why: one look for an inline message, and long text reads best in the main text color.
+- A quote in a tutor reply has a `border.width.emphasis` line on its left in `color.border.strong`, and text in `color.text.secondary`. Why: shows it is someone else's words without a new color.
+- A table in a tutor reply has `border.width.default` lines in `color.border.default`, header cells in `typography.label`, and wraps its cells instead of scrolling (6.5). Numbers in a column use `font.family.mono`. Why: same edges as cards, and columns of numbers line up.
+- Struck-through text stays in `color.text.primary`. Why: the line already shows it is wrong, and fading it would fail contrast.
 
 ### Thinking indicator
 Purpose: shows that the tutor is working and says what it is doing, before its reply starts. Never bouncing dots.
@@ -736,7 +760,7 @@ States:
 - The star icon uses `color.accent`, counted as a progress use (2.3). Why: not given.
 
 ### Quiz question card
-Purpose: holds one quiz question: progress at the top, the question, the answer options, the result feedback, and one primary button. Lives in the chat, the tools panel, or its own page.
+Purpose: holds one quiz question: progress at the top, the question, the answer options with their feedback, and the navigation buttons. Lives in the chat, the tools panel, or its own page.
 
 Variants:
 | Variant | When to use | Why |
@@ -751,7 +775,7 @@ Sizes:
 States:
 | State | What changes | Tokens |
 |---|---|---|
-| default | Card: surface fill, 1px default border, 12px corners. Progress bar, question, options `space.stack.default` apart, "Check answer" primary button, disabled until an answer is picked | `color.surface.default`, `border.width.default`, `color.border.default`, `radius.md` |
+| default | Card: surface fill, 1px default border, 12px corners. Progress bar, question, options `space.stack.default` apart, then "Previous question" (secondary, from the second question) and "Next question" (primary, enabled once the question is checked, hidden on the last question) | `color.surface.default`, `border.width.default`, `color.border.default`, `radius.md` |
 | hover | n/a: the card itself is not interactive | n/a |
 | active | n/a: the card itself is not interactive | n/a |
 | focus | n/a: options and the button take focus | n/a |
@@ -761,8 +785,15 @@ States:
 | empty | n/a: a quiz always has at least one question | n/a |
 
 #### Quiz question card rules
-- One question at a time. After "Check answer", the result feedback appears and the button becomes "Next question" ("See results" on the last one). Why: one step at a time keeps the learner focused.
-- The correct answer is revealed right after checking, with the explanation. Why: the score honestly matches the stored answer key on the first try, and the "here's why" teaches immediately.
+- One question at a time. Picking an option checks it at once: there is no "Check answer" button. The feedback appears inside the options (see Answer option) and "Next question" enables. Why: one step at a time keeps the learner focused, and feedback while the thought is fresh teaches best.
+- The correct answer is revealed right after the pick, with the explanation. Why: the score honestly matches the stored answer key on the first try, and the "here's why" teaches immediately.
+- On the last question there is no "See results" button. Its feedback stays on screen and the quiz results (below) appear under the card's options. Why: the learner reads the feedback for the question they just answered, and does not have to click to see how they did.
+- A check that fails shows the Alert "Couldn't check that answer. Try again." above the buttons and leaves the options unlocked. Why: a failed check reveals nothing, so the learner just picks again.
+
+#### Quiz results
+Purpose: shown when the last question is checked and whenever a finished quiz is opened. The score line "You got X of Y right." (`typography.body` in bold), then one row for each question: its number and prompt, and a check icon with "Right" or a cross icon with "Wrong", then a "Review answers" secondary button that opens question 1 with its locked feedback, "Previous question" and "Next question", and "Back to results". A row opens that question. Rows have the `space.stack.default` gap; marks use color, icon, and text together (2.3).
+
+Result row states: default is the Answer option look (surface fill, 1px strong border, 8px corners, primary text). Hover keeps the fill and darkens the border to `color.text.secondary`. Active (pressed) takes the `color.action.secondary.default` fill with the same border. Focus is the focus ring. Why: a row is not a filled button, so it never takes the button hover fill, and the text stays above 14:1 in every state (2.2).
 
 ### Answer option
 Purpose: one answer in a quiz question: a full-width row with a radio (one correct answer) or checkbox (several), the whole row tappable.
@@ -785,16 +816,17 @@ States (all variants):
 | hover | Border darkens | `color.text.secondary` |
 | active | n/a: pressing selects it (see selected) | n/a |
 | focus | Focus ring around the row | `component.focusRing.width`, `component.focusRing.offset`, `color.focus.ring` |
-| selected | 2px accent border, radio or checkbox filled | `border.width.emphasis`, `color.accent` |
+| selected | 2px accent border, radio or checkbox filled, for the moment the pick is being checked | `border.width.emphasis`, `color.accent` |
 | disabled | After checking: locked, not clickable, look unchanged apart from the marks below | n/a |
-| correct | After checking, the correct answer: 2px success border, success background, check icon and "Correct answer" | `border.width.emphasis`, `color.state.success`, `color.state.successBg`, `typography.small` |
-| incorrect | After checking, the learner's wrong pick: 2px error border, soft error background, cross icon and "Your answer" | `border.width.emphasis`, `color.state.error`, `color.state.errorBg`, `typography.small` |
-| loading | n/a: the options appear with the card | n/a |
-| error | n/a: "Check answer" is disabled until something is picked, so there is no "nothing picked" error | n/a |
+| correct | After checking, the correct answer: 2px success border, success background, check icon and "Correct answer", then its explanation in `typography.body` | `border.width.emphasis`, `color.state.success`, `color.state.successBg`, `typography.small` |
+| incorrect | After checking, the learner's wrong pick: 2px error border, soft error background, cross icon and "Your answer", then the wrong-choice note in `typography.body` | `border.width.emphasis`, `color.state.error`, `color.state.errorBg`, `typography.small` |
+| loading | While a pick is being checked: all options not clickable | n/a |
+| error | n/a: a failed check shows the Alert in the quiz card and leaves the options unlocked | n/a |
 | empty | n/a: an option always has text | n/a |
 
 #### Answer option rules
 - Right and wrong are always shown with color, icon, and text together. Why: color alone fails people with color blindness (2.3).
+- The feedback text lives inside the option it is about: the explanation under the correct option, the wrong-choice note under the learner's wrong pick. It is never repeated in a separate box. Why: the learner reads why next to the thing they chose.
 
 ### Progress bar
 Purpose: shows how far through something the learner is, such as a quiz. Always with text above it.
@@ -827,6 +859,8 @@ States:
 | empty | At the start: "Question 1 of 5" with an empty track | `color.bg.subtle` |
 
 ### Result feedback
+Retired for the quiz: the feedback now sits inside the Answer option (see Answer option rules). The box below is kept for a place that needs feedback apart from a choice.
+
 Purpose: after checking an answer, says right or wrong and explains why. Same calm box for both.
 
 Variants:
@@ -990,6 +1024,7 @@ States:
 
 #### Side panel rules
 - Closing a panel gives its space to the chat. A button in the top bar opens it again. Why: not given.
+- The left panel ends with a footer: a 1px subtle line above it, then a Settings button (ghost, with the Lucide settings icon at `component.icon.size.md` and the label "Settings"), full width, at least `component.tapTarget.min` tall. The footer stays at the bottom while the session list scrolls. On phones it is the bottom of the drawer. The button opens a Dropdown menu upward, above the button, with Appearance (Lucide sun-moon) and Profile (Lucide user-round). Why: Settings is reachable from every screen without a new top bar item, and a menu at the bottom of the panel has room only above it (ST-01).
 
 ### Tabs
 Purpose: switches between views in the same place, such as Whiteboard, Quiz, and Artifacts in the tools panel.

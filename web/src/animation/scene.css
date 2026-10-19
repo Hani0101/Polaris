@@ -1,0 +1,293 @@
+/* Animation player (AN-12 to AN-20). DESIGN.md: 2 (color), 3 (typography),
+   7 (Icon button, Button, Checkbox and radio, Progress bar text), 8.3 (the
+   teaching animation is content, so its motion is not UI motion). */
+
+/* Capped so drawn text stays in proportion to the caption on wide screens. */
+.an-scene-player {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-width: 0;
+  width: 100%;
+  max-width: 40rem;
+  margin-inline: auto;
+}
+
+.an-scene-frame {
+  background: var(--color-bg-page);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* Colour roles map to design-system tokens (AN-14), so dark mode follows. */
+.an-scene {
+  --an-ink: var(--color-text-primary);
+  --an-muted: var(--color-text-secondary);
+  --an-accent: var(--color-accent);
+  --an-positive: var(--color-state-success);
+  --an-negative: var(--color-state-error);
+  /* DS-GAP: no highlight colour token for drawn content, used color.state.warning */
+  --an-highlight: var(--color-state-warning);
+
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: min(70dvh, 40rem);
+}
+
+.an-role-ink {
+  color: var(--an-ink);
+}
+
+.an-role-muted {
+  color: var(--an-muted);
+}
+
+.an-role-accent {
+  color: var(--an-accent);
+}
+
+.an-role-positive {
+  color: var(--an-positive);
+}
+
+.an-role-negative {
+  color: var(--an-negative);
+}
+
+.an-role-highlight {
+  color: var(--an-highlight);
+}
+
+.an-shape,
+.an-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.an-shape.is-filled,
+.an-arrow-head,
+.an-dot {
+  fill: currentColor;
+}
+
+.an-text {
+  fill: currentColor;
+  font-family: var(--font-family-body);
+  font-weight: var(--font-weight-regular);
+  white-space: pre;
+}
+
+.an-axis-label {
+  fill: var(--an-muted);
+}
+
+.an-code {
+  fill: currentColor;
+  font-family: var(--font-family-mono);
+  white-space: pre;
+}
+
+.an-code-box {
+  fill: var(--color-bg-subtle);
+  stroke: var(--color-border-default);
+  stroke-width: 1;
+}
+
+.an-math {
+  display: flex;
+  align-items: center;
+  height: 100%;
+  color: currentColor;
+  font-family: var(--font-family-body);
+  line-height: var(--font-line-height-tight);
+}
+
+/* The formula is as high as its size; KaTeX would otherwise enlarge it. */
+.an-math .katex {
+  font-size: 1em;
+}
+
+.an-math-source {
+  white-space: pre-wrap;
+}
+
+/* Caption: always on screen, read out when the step changes (AN-15). */
+.an-caption {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2xs);
+}
+
+.an-caption p {
+  margin: 0;
+}
+
+.an-caption-count {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
+.an-caption-text {
+  max-width: 60ch;
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.an-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.an-transport {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+}
+
+/* Step buttons: each a 44px tap target (AN-20). The current step is the
+   selected item, so it takes the accent (2.3).
+   DS-GAP: no step indicator component; built from Button ghost and the
+   accent selected-item rule, with numbers instead of dots (banned.md). */
+.an-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.an-step {
+  min-width: var(--component-tap-target-min);
+  min-height: var(--component-tap-target-min);
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  font-size: var(--font-size-sm);
+}
+
+.an-step:hover:not(:disabled) {
+  background: var(--color-action-secondary-default);
+}
+
+.an-step:active:not(:disabled) {
+  background: var(--color-action-secondary-hover);
+}
+
+.an-step.is-current,
+.an-step.is-current:hover:not(:disabled),
+.an-step.is-current:active:not(:disabled) {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.an-extras {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+/* Checkbox: 24px box inside a 44px tap area; the label is tappable too. */
+.an-narration {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  min-height: var(--component-tap-target-min);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.an-checkbox {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--component-checkbox-size);
+  height: var(--component-checkbox-size);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-xs);
+  color: var(--color-text-on-accent);
+  transition:
+    border-color var(--motion-duration-fast) var(--motion-easing-standard),
+    background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.an-narration:not(:has(input:checked)):hover .an-checkbox {
+  border-color: var(--color-text-secondary);
+}
+
+.an-narration:has(input:checked) .an-checkbox {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+}
+
+.an-narration:has(input:focus-visible) .an-checkbox {
+  outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
+  outline-offset: var(--component-focus-ring-offset);
+}
+
+/* A Manim step clip or its last frame (feat/manim-experiment). 4:3, like the canvas. */
+.an-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+}
+
+/* Lottie video (experiment). The video keeps its own paper background in
+   both themes, like a picture. */
+.an-lottie-frame {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  max-height: min(70dvh, 40rem);
+}
+
+.an-lottie,
+.an-lottie svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.an-lottie-error {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  color: #4a4038;
+}
+
+.an-lottie-progress {
+  display: flex;
+  gap: var(--space-2xs, 4px);
+}
+
+.an-lottie-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-border-subtle);
+  overflow: hidden;
+}
+
+.an-lottie-fill {
+  display: block;
+  height: 100%;
+  background: var(--color-accent);
+  transform-origin: left center;
+}

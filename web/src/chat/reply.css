@@ -55,6 +55,149 @@
   overflow-wrap: anywhere;
 }
 
+/* Syntax colors in code blocks (DESIGN.md 2.3: color.code.* only here; keywords also bold). */
+.reply pre .hljs-keyword,
+.reply pre .hljs-selector-tag,
+.reply pre .hljs-name,
+.reply pre .hljs-meta .hljs-keyword {
+  color: var(--color-code-keyword);
+  font-weight: var(--font-weight-bold);
+}
+
+.reply pre .hljs-string,
+.reply pre .hljs-regexp,
+.reply pre .hljs-char,
+.reply pre .hljs-template-tag,
+.reply pre .hljs-addition {
+  color: var(--color-code-string);
+}
+
+.reply pre .hljs-number,
+.reply pre .hljs-literal,
+.reply pre .hljs-built_in,
+.reply pre .hljs-symbol,
+.reply pre .hljs-variable.language_ {
+  color: var(--color-code-number);
+}
+
+.reply pre .hljs-title,
+.reply pre .hljs-type,
+.reply pre .hljs-attribute,
+.reply pre .hljs-selector-class,
+.reply pre .hljs-selector-id {
+  color: var(--color-code-function);
+}
+
+.reply pre .hljs-comment,
+.reply pre .hljs-quote,
+.reply pre .hljs-meta,
+.reply pre .hljs-deletion {
+  color: var(--color-code-comment);
+}
+
+/* Key terms: bold amber, no fill, no underline (Chat message rules). */
+.reply .reply-key {
+  color: var(--color-accent);
+}
+
+.reply s {
+  text-decoration-thickness: var(--border-width-default);
+}
+
+.reply blockquote {
+  margin: 0;
+  /* DS-GAP: inset of quote text from its left line, used space.md */
+  padding-left: var(--space-md);
+  border-left: var(--border-width-emphasis) solid var(--color-border-strong);
+  color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.reply-callout {
+  display: flex;
+  flex-direction: column;
+  /* DS-GAP: gap between the label and the body of a callout, used space.xs */
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+}
+
+.reply-callout-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inline-default);
+  margin: 0;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.reply-callout--note {
+  background: var(--color-state-info-bg);
+}
+
+.reply-callout--note .reply-callout-label {
+  color: var(--color-state-info);
+}
+
+.reply-callout--tip {
+  background: var(--color-state-success-bg);
+}
+
+.reply-callout--tip .reply-callout-label {
+  color: var(--color-state-success);
+}
+
+.reply-callout--warning {
+  background: var(--color-state-warning-bg);
+}
+
+.reply-callout--warning .reply-callout-label {
+  color: var(--color-state-warning);
+}
+
+.reply-callout p,
+.reply blockquote p {
+  margin: 0;
+}
+
+/* 6.5: tables wrap their cells, they never scroll sideways. */
+.reply table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  overflow-wrap: anywhere;
+}
+
+.reply th,
+.reply td {
+  /* DS-GAP: table cell padding in a reply, used space.xs and space.sm */
+  padding: var(--space-xs) var(--space-sm);
+  border: var(--border-width-default) solid var(--color-border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.reply th {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+}
+
+.reply .reply-number {
+  font-family: var(--font-family-mono);
+}
+
+.reply-math-block {
+  text-align: center;
+}
+
+.reply-math-source {
+  margin: 0;
+}
+
 .reply a {
   color: var(--color-text-link);
   text-decoration-line: underline;
@@ -71,4 +214,33 @@
   display: inline-block;
   margin-left: var(--space-2xs);
   vertical-align: -0.125em;
+}
+
+/* A citation of a resource inside a reply (RS-09). A link-styled button, never italic. */
+.reply-cite {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-link);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: inherit;
+  font-weight: var(--font-weight-bold);
+  line-height: inherit;
+  text-decoration: underline;
+  vertical-align: baseline;
+}
+
+.reply-cite:hover:not(:disabled) {
+  background: transparent;
+  color: var(--color-text-link);
+}
+
+.reply-cite.is-removed {
+  color: var(--color-text-secondary);
+  font-weight: var(--font-weight-regular);
+  text-decoration: none;
 }

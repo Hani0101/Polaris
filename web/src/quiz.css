@@ -1,5 +1,5 @@
 /* Quiz card and quiz page (DESIGN.md section 7: Quiz question card, Answer option,
-   Checkbox and radio, Progress bar, Result feedback, Button, Alert, Loading skeleton,
+   Checkbox and radio, Progress bar, Quiz results, Button, Alert, Loading skeleton,
    Card, Top bar). Every value comes from the tokens in index.css. */
 
 /* ---------- Quiz question card ---------- */
@@ -23,7 +23,7 @@
   line-height: var(--font-line-height-normal);
 }
 
-/* DS-GAP: score line after grading (the end-of-quiz summary is undecided), used typography.body in bold */
+/* DS-GAP: score line in the quiz results, used typography.body in bold */
 .qz-score {
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-bold);
@@ -201,41 +201,73 @@
   color: var(--color-state-error);
 }
 
-/* ---------- Result feedback ---------- */
-
-.qz-feedback {
-  display: flex;
-  flex-direction: column;
-  /* DS-GAP: gap between the feedback headline and its explanation, used space.xs */
-  gap: var(--space-xs);
-  padding: var(--space-md);
-  background: var(--color-state-info-bg);
-  border-radius: var(--radius-md);
+/* Feedback text inside the option it is about (explanation or wrong-choice note). */
+.qz-option-note {
+  max-width: 60ch;
+  color: var(--color-text-primary);
   animation: qz-fade-in var(--motion-duration-normal) var(--motion-easing-standard);
 }
 
-.qz-feedback-headline {
+/* ---------- Quiz results ---------- */
+
+.qz-results {
   display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+}
+
+.qz-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Quiz results: result row (DESIGN.md section 7, Quiz results). */
+.qz-result-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-inline-default);
+  width: 100%;
+  min-height: var(--component-tap-target-min);
+  padding: var(--space-md);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  text-align: left;
+}
+
+/* The global button hover and active fills are for filled buttons. A row keeps its fill and
+   darkens its border on hover (as the Answer option does), and takes the secondary fill
+   while pressed, so the text keeps its contrast. */
+.qz-result-row:hover:not(:disabled) {
+  background: var(--color-surface-default);
+  border-color: var(--color-text-secondary);
+}
+
+.qz-result-row:active:not(:disabled) {
+  background: var(--color-action-secondary-default);
+  border-color: var(--color-text-secondary);
+}
+
+.qz-result-prompt {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.qz-result-mark {
+  flex: none;
+  display: inline-flex;
   align-items: center;
   gap: var(--space-inline-default);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-bold);
-  line-height: var(--font-line-height-normal);
-}
-
-.qz-feedback.is-correct .qz-feedback-headline {
-  color: var(--color-state-success);
-}
-
-.qz-feedback.is-incorrect .qz-feedback-headline {
-  color: var(--color-state-error);
-}
-
-.qz-feedback-text {
-  max-width: 60ch;
-  color: var(--color-text-primary);
-  font-size: var(--font-size-md);
-  line-height: var(--font-line-height-normal);
 }
 
 /* ---------- Buttons ---------- */
@@ -244,23 +276,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-inline-default);
-}
-
-/* Loading: fill unchanged, spinner in place of the text, width kept, clicks blocked. */
-.qz-loading {
-  position: relative;
-  cursor: progress;
-}
-
-.qz-loading .qz-button-label {
-  opacity: 0;
-}
-
-.qz-spinner {
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  animation: qz-spin var(--motion-duration-spin) var(--motion-easing-linear) infinite;
 }
 
 /* ---------- Quiz page ---------- */
@@ -284,18 +299,14 @@
   padding: var(--space-xl) var(--layout-page-margin-phone);
 }
 
+/* One centered reading column: the title and the card share its width and left edge. */
 .qz-page-grid {
-  display: grid;
-  grid-template-columns: repeat(var(--layout-grid-columns), minmax(0, 1fr));
-  column-gap: var(--layout-grid-gutter);
+  display: flex;
+  flex-direction: column;
   /* DS-GAP: gap between the page title and the quiz card, used space.lg */
-  row-gap: var(--space-lg);
-  max-width: var(--layout-max-width-content);
+  gap: var(--space-lg);
+  max-width: var(--layout-max-width-chat);
   margin: 0 auto;
-}
-
-.qz-page-grid > * {
-  grid-column: 1 / -1;
 }
 
 .qz-page-title {
@@ -353,13 +364,6 @@
   }
 }
 
-@media (min-width: 1024px) {
-  /* DS-GAP: how many of the 12 columns the expanded quiz spans, used 8 (left-aligned) */
-  .qz-page-grid > .qz-page-column {
-    grid-column: 1 / span 8;
-  }
-}
-
 @keyframes qz-fade-in {
   from {
     opacity: 0;
@@ -369,22 +373,12 @@
   }
 }
 
-@keyframes qz-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
   .qz-progress-fill {
     transition: none;
   }
 
-  .qz-feedback {
+  .qz-option-note {
     animation-duration: var(--motion-duration-fast);
-  }
-
-  .qz-spinner {
-    animation: none;
   }
 }

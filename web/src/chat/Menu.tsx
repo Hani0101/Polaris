@@ -27,9 +27,13 @@ type DropdownMenuProps = {
   children: ReactNode
   items: MenuItem[]
   triggerClassName?: string
+  /** The menu opens from inside the drawer, so it must sit above it. */
+  overDrawer?: boolean
   /** Shows the button as the selected tool. */
   pressed?: boolean
   disabled?: boolean
+  /** "above" opens upward whenever it fits, as from a button at the bottom of a panel. */
+  placement?: 'auto' | 'above'
 }
 
 type Place = { left: number; top: number; above: boolean }
@@ -67,8 +71,10 @@ export function DropdownMenu({
   children,
   items,
   triggerClassName,
+  overDrawer,
   pressed,
   disabled,
+  placement = 'auto',
 }: DropdownMenuProps) {
   const [open, setOpen] = useState(false)
   const shown = useShown(open)
@@ -87,11 +93,15 @@ export function DropdownMenu({
     const rect = trigger.getBoundingClientRect()
     const width = menu.offsetWidth
     const height = menu.offsetHeight
-    const above = rect.bottom + height > window.innerHeight && rect.top - height >= 0
+    const fitsAbove = rect.top - height >= 0
+    const above =
+      placement === 'above'
+        ? fitsAbove
+        : rect.bottom + height > window.innerHeight && fitsAbove
     const left = Math.max(0, Math.min(rect.left, window.innerWidth - width))
     setPlace({ left, top: above ? rect.top : rect.bottom, above })
     rows(menu)[0]?.focus()
-  }, [open])
+  }, [open, placement])
 
   useEffect(() => {
     if (!open) return
@@ -188,7 +198,13 @@ export function DropdownMenu({
               id={menuId}
               role="menu"
               aria-label={label}
-              className={place.above ? 'dropdown-menu is-above' : 'dropdown-menu'}
+              className={[
+                'dropdown-menu',
+                place.above ? 'is-above' : '',
+                overDrawer ? 'is-over-drawer' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
               data-state={open ? 'open' : 'closing'}
               style={{ left: place.left, top: place.top }}
               onKeyDown={onMenuKeyDown}

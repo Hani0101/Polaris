@@ -353,7 +353,7 @@ def test_a_learner_element_is_kept_with_author_learner():
     assert (added.position.x, added.position.y) == (120, 40)
 
 
-def test_a_learner_cannot_change_or_remove_an_agent_element():
+def test_a_learner_cannot_change_an_agent_element_and_a_missing_one_is_kept():
     moved = valid_whiteboard()
     moved["steps"][0]["elements"][0]["position"] = {"x": 400, "y": 400}
     removed = valid_whiteboard()
@@ -366,10 +366,10 @@ def test_a_learner_cannot_change_or_remove_an_agent_element():
     assert any(
         "rect-1" in error and "changed" in error for error in moved_result.errors
     )
-    assert removed_result.whiteboard is None
-    assert any(
-        "rect-1" in error and "removed" in error for error in removed_result.errors
-    )
+    # A copy without the agent element is stale; the stored element is kept (WB-21).
+    assert removed_result.errors == []
+    assert removed_result.whiteboard is not None
+    assert removed_result.whiteboard.steps[0].elements[0].id == "rect-1"
 
 
 def test_bad_learner_data_is_refused_by_the_check():
@@ -659,7 +659,7 @@ def test_arrow_and_note_marks_name_their_target():
     )
 
 
-def test_a_learner_cannot_change_or_remove_a_mark():
+def test_a_learner_cannot_change_a_mark_and_a_missing_one_is_kept():
     stored_result = apply_marks(
         check_drawing(_answer_drawing()).whiteboard, _mark_action()
     )
@@ -674,8 +674,9 @@ def test_a_learner_cannot_change_or_remove_a_mark():
     removed = stored.model_dump(mode="json")
     removed["steps"][-1]["elements"] = []
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("mark-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert [element.id for element in gone.whiteboard.steps[-1].elements] == ["mark-1"]
 
 
 def _described_drawing() -> dict[str, object]:
@@ -1197,8 +1198,9 @@ def test_a_learner_save_cannot_change_agent_math_or_code():
     removed = stored.model_dump(mode="json")
     removed["steps"][0]["elements"] = [removed["steps"][0]["elements"][1]]
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("formula-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert "formula-1" in [element.id for element in gone.whiteboard.steps[0].elements]
 
     rewritten = stored.model_dump(mode="json")
     rewritten["version"] = DESCRIBED_DRAWING_VERSION
@@ -1556,8 +1558,9 @@ def test_a_learner_save_cannot_change_an_agent_graph():
     removed = stored.model_dump(mode="json")
     removed["steps"][0]["elements"] = []
     gone = check_learner_drawing(stored, removed)
-    assert gone.whiteboard is None
-    assert any("graph-1" in error and "removed" in error for error in gone.errors)
+    assert gone.errors == []
+    assert gone.whiteboard is not None
+    assert [element.id for element in gone.whiteboard.steps[0].elements] == ["graph-1"]
 
     rewritten = stored.model_dump(mode="json")
     rewritten["version"] = 4
@@ -1603,3 +1606,50 @@ def test_marks_math_and_a_simpler_redraw_keep_working_with_a_graph():
     assert redraw.whiteboard.version == 6
     assert redraw.whiteboard.simplifies == "wb-1"
     assert simpler_count_errors(marked.whiteboard, redraw.whiteboard) == []
+
+
+_SOLID_KINDS = {"rectangle", "ellipse", "text", "math", "code", "graph"}
+
+
+def agent_drawing(data: object) -> object:
+    """A fixture as a careful agent sends it: described, with parts that do not collide.
+
+    Agent boxes move onto a grid and agent arrows run from the first box to
+    the second, so the layout checks pass. Anything that is not a drawing
+    passes through, so a test can still send bad data.
+    """
+
+    if not isinstance(data, dict) or not isinstance(data.get("steps"), list):
+        return data
+    drawing = copy.deepcopy(data)
+    drawing.setdefault("description", "A drawing for this test.")
+    elements = [
+        element
+        for step in drawing["steps"]
+        if isinstance(step, dict) and isinstance(step.get("elements"), list)
+        for element in step["elements"]
+        if isinstance(element, dict) and element.get("author") == "agent"
+    ]
+    boxes = [element for element in elements if element.get("kind") in _SOLID_KINDS]
+    for index, element in enumerate(boxes):
+        size = element.get("size")
+        if not isinstance(size, dict):
+            continue
+        element["position"] = {"x": 10 + (index % 3) * 300, "y": 20 + (index // 3) * 300}
+    for element in elements:
+        if element.get("kind") != "arrow" or len(boxes) < 2:
+            continue
+        first, second = boxes[0], boxes[1]
+        start = {
+            "x": first["position"]["x"] + first["size"]["width"],
+            "y": first["position"]["y"] + first["size"]["height"] / 2,
+        }
+        end = {"x": second["position"]["x"], "y": second["position"]["y"] + second["size"]["height"] / 2}
+        element["start"] = start
+        element["end"] = end
+        element["position"] = {"x": min(start["x"], end["x"]), "y": min(start["y"], end["y"])}
+        element["size"] = {
+            "width": abs(end["x"] - start["x"]),
+            "height": abs(end["y"] - start["y"]),
+        }
+    return drawing

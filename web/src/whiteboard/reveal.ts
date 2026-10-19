@@ -3,7 +3,16 @@ import type { Comment, Whiteboard, WhiteboardStep } from '../api.ts'
 export type RevealPhase = 'streaming' | 'stopped' | 'done'
 
 const COMPLETE_MARKER = /\[\[step:[^\]]*\]\]/g
-const MARKER_OPEN = '[[step:'
+const MARKER_OPENS = ['[[step:', '[[cite:']
+
+// The board last revealed for each stored board, by how many steps it shows.
+// While a reply streams, a board that shows the same steps is the same object,
+// so it is not converted and drawn again on every chunk.
+const revealed = new WeakMap<Whiteboard, { count: number; board: Whiteboard }>()
+const added = new WeakMap<
+  Whiteboard,
+  { known: ReadonlySet<string>; count: number; board: Whiteboard }
+>()
 
 export function revealWhiteboard<T extends Whiteboard>(
   whiteboard: T,
@@ -13,11 +22,15 @@ export function revealWhiteboard<T extends Whiteboard>(
   if (phase === 'done') return whiteboard
   const steps = stepsUnlockedBy(whiteboard.steps, rawReply)
   if (steps.length === 0) return null
-  return {
+  const last = revealed.get(whiteboard)
+  if (last?.count === steps.length) return last.board as T
+  const board = {
     ...whiteboard,
     steps,
     comments: commentsWithSteps(whiteboard, steps),
   }
+  revealed.set(whiteboard, { count: steps.length, board })
+  return board
 }
 
 export function visibleReply(raw: string, streaming: boolean, markers: readonly string[] = []): string {
@@ -31,6 +44,36 @@ export function visibleReply(raw: string, streaming: boolean, markers: readonly 
   text = text.replace(/^[ \t]+/, '')
   if (!streaming) return text
   return hideIncompleteMarker(text)
+}
+
+/**
+ * The pinned board while a reply adds to it (WB-20). The steps it had when the
+ * turn began stay. A step added in this turn appears once its marker has
+ * arrived in the reply text (WB-06).
+ */
+export function revealAddedSteps<T extends Whiteboard>(
+  whiteboard: T,
+  knownStepIds: ReadonlySet<string>,
+  rawReply: string,
+): T {
+  const steps = whiteboard.steps.filter(
+    (step) => knownStepIds.has(step.id) || (step.reply_part !== '' && rawReply.includes(step.reply_part)),
+  )
+  if (steps.length === whiteboard.steps.length) return whiteboard
+  // A marker stays once it has arrived, so with the same known steps the count
+  // names the shown steps.
+  const last = added.get(whiteboard)
+  if (last?.known === knownStepIds && last.count === steps.length) return last.board as T
+  const shown = new Set(steps.flatMap((step) => step.elements.map((element) => element.id)))
+  const board = {
+    ...whiteboard,
+    steps,
+    comments: whiteboard.comments.filter(
+      (comment) => !comment.element_id || shown.has(comment.element_id),
+    ),
+  }
+  added.set(whiteboard, { known: knownStepIds, count: steps.length, board })
+  return board
 }
 
 function stepsUnlockedBy(steps: WhiteboardStep[], rawReply: string): WhiteboardStep[] {
@@ -55,7 +98,9 @@ function hideIncompleteMarker(text: string): string {
   const opened = text.lastIndexOf('[[')
   if (opened >= 0) {
     const tail = text.slice(opened)
-    const unfinished = !tail.includes(']]') && (tail.startsWith(MARKER_OPEN) || MARKER_OPEN.startsWith(tail))
+    const unfinished =
+      !tail.includes(']]') &&
+      MARKER_OPENS.some((open) => tail.startsWith(open) || open.startsWith(tail))
     if (unfinished) return text.slice(0, opened).replace(/[ \t]+$/, '')
   }
   if (text.endsWith('[')) return text.slice(0, -1)

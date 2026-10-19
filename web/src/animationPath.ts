@@ -18,3 +18,8 @@ export function pathAnimation(
 export function animationMediaUrl(sessionId: string, jobId: string): string {
   return `/api/sessions/${encodeURIComponent(sessionId)}/jobs/${encodeURIComponent(jobId)}/media`
 }
+
+/** A file of a Manim job: its manifest, captions, step clips, or posters (experiment). */
+export function animationManimUrl(sessionId: string, jobId: string, name: string): string {
+  return `${animationMediaUrl(sessionId, jobId).replace(/\/media$/, '')}/manim/${name}`
+}

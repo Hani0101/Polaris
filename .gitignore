@@ -34,3 +34,12 @@ test-results/
 playwright-report/
 blob-report/
 playwright/.cache/
+
+# Live eval reports
+api/evals/reports/
+
+# Animation eval output
+api/evals/results/
+
+# Understand-Anything output
+.ua/

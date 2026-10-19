@@ -14,9 +14,15 @@
   border-left: var(--border-width-default) solid var(--color-border-subtle);
 }
 
+@media (min-width: 1024px) {
+  .tools-panel {
+    width: var(--panel-right-width, var(--layout-panel-right));
+  }
+}
+
 @media (min-width: 1440px) {
   .tools-panel {
-    width: var(--layout-panel-right-wide);
+    width: var(--panel-right-width, var(--layout-panel-right-wide));
   }
 }
 
@@ -52,7 +58,7 @@
 
 .tabs-list {
   display: flex;
-  /* Four tabs need 293px; a 320px phone sheet has 288px, so the row
+  /* Five tabs need more than the 288px of a 320px phone sheet, so the row
      scrolls there instead of clipping the last tab. */
   overflow-x: auto;
   scrollbar-width: none;
@@ -292,4 +298,315 @@
     opacity: 1;
     transition: opacity var(--motion-duration-fast) var(--motion-easing-standard);
   }
+}
+
+/* The pinned whiteboard is the selected item (DESIGN.md 5.4): an emphasis
+   border in the accent, kept on hover. */
+.tools-card.is-selected,
+.tools-card--clickable.is-selected:hover:not(:disabled) {
+  border: var(--border-width-emphasis) solid var(--color-accent);
+}
+
+/* Resources tab (DESIGN.md 7: Card, Empty state, Text input, Alert, Modal). */
+.resources {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-stack-default);
+  min-height: 0;
+}
+
+/* Add a web page by its link (RS-22): Text input with its button beside it. */
+.resource-web-row {
+  display: flex;
+  gap: var(--space-inline-default);
+}
+
+.resource-web-row .text-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-web-row button {
+  flex: none;
+}
+
+/* Link, external variant (DESIGN.md 7): the page a resource was fetched from. */
+.resource-source a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  min-height: var(--component-tap-target-min);
+  color: var(--color-text-link);
+  font-size: var(--font-size-sm);
+  text-decoration-line: underline;
+  text-decoration-thickness: var(--border-width-default);
+  text-underline-offset: var(--space-2xs);
+  overflow-wrap: anywhere;
+  transition: text-decoration-thickness var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.resource-source a:hover {
+  text-decoration-thickness: var(--border-width-emphasis);
+}
+
+/* The whole tab takes a drop. When the drop area is shown it is what lights up. */
+.resources.is-dropping:not(:has(.resource-drop)) {
+  outline: var(--border-width-emphasis) dashed var(--color-accent);
+  outline-offset: calc(-1 * var(--border-width-emphasis));
+}
+
+/* DS-GAP: a file drop area has no component in DESIGN.md 7; built from Card
+   (radius.md, card padding) and Empty state (centered icon and text), with a
+   dashed border in border.strong so the edge passes 3:1, used space.lg above and below. */
+.resource-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-lg) var(--space-card-padding);
+  border: var(--border-width-default) dashed var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  text-align: center;
+  transition: border-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.resources.is-dropping .resource-drop {
+  border: var(--border-width-emphasis) dashed var(--color-accent);
+  /* The thicker border would push the content down by a pixel. */
+  padding: calc(var(--space-lg) - var(--border-width-default))
+    calc(var(--space-card-padding) - var(--border-width-default));
+}
+
+.resource-drop-title {
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+}
+
+.resource-drop-body {
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
+/* Touch screens have nothing to drag from, so the area only lists what fits (RS-13). */
+@media (hover: none) and (pointer: coarse) {
+  .resource-drop-title {
+    display: none;
+  }
+}
+
+.resource-card {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+}
+
+.resource-card > .tools-card {
+  flex: 1;
+  min-width: 0;
+}
+
+.resource-actions {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+
+.resource-name {
+  font-weight: var(--font-weight-bold);
+  overflow-wrap: anywhere;
+}
+
+.resource-preview {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.resource-preview-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.resource-preview-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  overflow-wrap: anywhere;
+}
+
+.resource-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  min-height: 0;
+}
+
+.resource-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.resource-pager-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* The extracted text wraps instead of scrolling sideways (6.5). */
+.resource-text {
+  margin: 0;
+  padding: var(--space-card-padding);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-family: var(--font-family-body);
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.resource-image {
+  max-width: 100%;
+  height: auto;
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+/*
+ * A PDF or Word page as it is in the file (RS-16). The page keeps its own
+ * colors in both modes, like paper, and is scaled to the panel's width (6.5).
+ */
+.resource-page {
+  position: relative;
+  overflow: hidden;
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.resource-page-slot {
+  position: relative;
+}
+
+.resource-page.is-loading {
+  position: absolute;
+  inset-inline: 0;
+  visibility: hidden;
+}
+
+.resource-page canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/*
+ * The PDF's text sits over the drawing, unseen, so it can be selected and read
+ * aloud. These are pdf.js's own text layer rules (pdfjs-dist/web/pdf_viewer.css),
+ * without the editor parts Polaris does not use. The page sets --total-scale-factor.
+ */
+.resource-page .textLayer {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+
+.resource-page .textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.resource-page .textLayer > :not(.markedContent),
+.resource-page .textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.resource-page .textLayer .markedContent {
+  display: contents;
+}
+
+/* DS-GAP: see-through selection over a drawn page, used color.accent at a quarter strength */
+.resource-page .textLayer ::selection {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: transparent;
+}
+
+.resource-page .textLayer br::selection {
+  background: transparent;
+}
+
+.resource-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.resource-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+.resource-docx {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.resource-skeleton {
+  min-height: calc(var(--component-tap-target-min) * 3);
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+
+.text-area {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--color-surface-default);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-family: inherit;
+  font-size: var(--font-size-md);
+  line-height: var(--font-line-height-normal);
+  resize: vertical;
+}
+
+.text-area:hover {
+  border-color: var(--color-text-secondary);
 }

@@ -38,6 +38,11 @@
   --color-state-info: #2b5a8a;
   --color-state-info-bg: #e6eef7;
   --color-focus-ring: #0c0701;
+  --color-code-keyword: #7a3e9d;
+  --color-code-string: #3d6b1f;
+  --color-code-number: #1f5f8b;
+  --color-code-function: #9a3b5b;
+  --color-code-comment: #5c5249;
   --color-whiteboard-board-white: #faf8f4;
   --color-whiteboard-board-night: #0c0701;
   --color-whiteboard-board-default: var(--color-whiteboard-board-white);
@@ -109,6 +114,7 @@
   --component-progress-height: 8px;
   --component-checkbox-size: 24px;
   --component-radio-mark-size: 10px;
+  --component-avatar-size: 32px;
   --component-drawer-width: 80%;
   --component-bottom-sheet-start-height: 33%;
   --component-bottom-sheet-handle-width: 32px;
@@ -154,8 +160,14 @@
   background: var(--color-bg-page);
 }
 
+/* The learner's mode (ST-02): data-theme="light" or "dark" wins; with no attribute (System)
+   the operating system decides. The dark values below appear twice, once per selector. */
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --color-bg-page: #0c0701;
     --color-bg-subtle: #130e08;
     --color-surface-default: #19130c;
@@ -191,8 +203,58 @@
     --color-state-info: #9cc3ff;
     --color-state-info-bg: #0f1c2e;
     --color-focus-ring: #f08a4b;
+    --color-code-keyword: #c9a2ef;
+    --color-code-string: #a8d48a;
+    --color-code-number: #8cc4ec;
+    --color-code-function: #f2a3c0;
+    --color-code-comment: #9a8f82;
     --color-whiteboard-board-default: var(--color-whiteboard-board-night);
   }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+    --color-bg-page: #0c0701;
+    --color-bg-subtle: #130e08;
+    --color-surface-default: #19130c;
+    --color-surface-raised: #211910;
+    --color-surface-overlay: #000000b3;
+    --color-text-primary: #faf8f4;
+    --color-text-secondary: #c9bfb2;
+    --color-text-muted: #9a8f82;
+    --color-text-disabled: #5e554b;
+    --color-text-inverse: #0c0701;
+    --color-text-on-action: #0c0701;
+    --color-text-on-accent: #0c0701;
+    --color-text-link: #faf8f4;
+    --color-border-subtle: #2c241a;
+    --color-border-default: #3a3026;
+    --color-border-strong: #7a6f62;
+    --color-action-primary-default: #faf8f4;
+    --color-action-primary-hover: #ede6da;
+    --color-action-primary-active: #d9d2c6;
+    --color-action-secondary-default: #2c241a;
+    --color-action-secondary-hover: #3a3026;
+    --color-action-secondary-active: #463a2e;
+    --color-action-destructive-default: #2a1512;
+    --color-action-destructive-hover: #3a1c17;
+    --color-action-destructive-active: #4a231d;
+    --color-accent: #f08a4b;
+    --color-state-error: #f19a8e;
+    --color-state-error-bg: #2a1512;
+    --color-state-success: #8fd19e;
+    --color-state-success-bg: #11241a;
+    --color-state-warning: #f0c674;
+    --color-state-warning-bg: #2a1f0a;
+    --color-state-info: #9cc3ff;
+    --color-state-info-bg: #0f1c2e;
+    --color-focus-ring: #f08a4b;
+    --color-code-keyword: #c9a2ef;
+    --color-code-string: #a8d48a;
+    --color-code-number: #8cc4ec;
+    --color-code-function: #f2a3c0;
+    --color-code-comment: #9a8f82;
+    --color-whiteboard-board-default: var(--color-whiteboard-board-night);
 }
 
 @media (min-width: 640px) {
@@ -308,11 +370,13 @@ button {
     border-color var(--motion-duration-fast) var(--motion-easing-standard);
 }
 
-button:hover:not(:disabled) {
+/* The filled-button states are not for the whiteboard editor: its menus and panels draw their
+   own hover highlight, and a light fill under its light text fails contrast. */
+button:hover:not(:disabled, .tl-container *) {
   background: var(--color-action-primary-hover);
 }
 
-button:active:not(:disabled) {
+button:active:not(:disabled, .tl-container *) {
   background: var(--color-action-primary-active);
 }
 
@@ -342,7 +406,7 @@ button.ghost:active:not(:disabled) {
   background: var(--color-action-secondary-hover);
 }
 
-button:disabled {
+button:disabled:not(.tl-container *) {
   background: var(--color-action-primary-disabled);
   border: var(--border-width-default) solid var(--color-border-subtle);
   color: var(--color-text-disabled);
@@ -438,6 +502,44 @@ button:disabled {
   line-height: var(--font-line-height-normal);
 }
 
+/* Avatar (DESIGN.md 7, Avatar): the account button. The 44px tap area holds a 32px circle. */
+button.avatar-btn {
+  width: var(--component-tap-target-min);
+  height: var(--component-tap-target-min);
+  min-height: var(--component-tap-target-min);
+  padding: 0;
+  background: transparent;
+  border-radius: var(--radius-full);
+}
+
+button.avatar-btn:hover:not(:disabled),
+button.avatar-btn:active:not(:disabled) {
+  background: transparent;
+}
+
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--component-avatar-size);
+  height: var(--component-avatar-size);
+  border-radius: var(--radius-full);
+  background: var(--color-action-secondary-default);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  transition: background-color var(--motion-duration-fast) var(--motion-easing-standard);
+}
+
+.avatar-btn:hover .avatar {
+  background: var(--color-action-secondary-hover);
+}
+
+.avatar-btn:active .avatar {
+  background: var(--color-action-secondary-active);
+}
+
 .shell-alert {
   padding: var(--space-sm) var(--layout-page-margin-phone);
 }
@@ -518,15 +620,40 @@ button:disabled {
   overflow-y: auto;
 }
 
+/* The row holds the session button and its more button side by side, because a
+   button cannot sit inside a button. The row carries the fill and the border. */
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  padding-right: var(--space-xs);
+  border: var(--border-width-emphasis) solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.session-row:hover {
+  background: var(--color-action-secondary-default);
+}
+
+.session-row:active {
+  background: var(--color-action-secondary-hover);
+}
+
+.session-row.is-current {
+  background: var(--color-surface-default);
+  border-color: var(--color-accent);
+}
+
 .session-item {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: center;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: var(--component-tap-target-min);
   padding: var(--space-sm) var(--space-md);
-  border: var(--border-width-emphasis) solid transparent;
+  border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text-primary);
@@ -536,17 +663,63 @@ button:disabled {
   text-align: left;
 }
 
-.session-item:hover:not(:disabled) {
-  background: var(--color-action-secondary-default);
-}
-
+.session-item:hover:not(:disabled),
 .session-item:active:not(:disabled) {
-  background: var(--color-action-secondary-hover);
+  background: transparent;
 }
 
-.session-item[aria-current='page'] {
+.session-row .icon-btn--sm {
+  flex: none;
+}
+
+/* Text input (DESIGN.md 7, Text input) */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-form-label-gap);
+}
+
+.field-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--font-line-height-normal);
+  color: var(--color-text-primary);
+}
+
+.text-input {
+  width: 100%;
+  height: var(--component-input-height);
+  padding: 0 var(--space-md);
   background: var(--color-surface-default);
-  border-color: var(--color-accent);
+  border: var(--border-width-default) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+}
+
+.text-input:hover {
+  border-color: var(--color-text-secondary);
+}
+
+.field-help {
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+  color: var(--color-text-secondary);
+}
+
+/* Text input, error state (DESIGN.md 7): a 2px error border, and an icon and message under it. */
+.text-input.is-error,
+.text-input.is-error:hover {
+  border: var(--border-width-emphasis) solid var(--color-state-error);
+}
+
+.field-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2xs);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+  color: var(--color-state-error);
 }
 
 .session-item-title {
@@ -719,6 +892,15 @@ button:disabled {
   border-color: var(--color-text-secondary);
 }
 
+/* DS-GAP: a web mode toggle in the chat input; used the Whiteboard toolbar's
+   selected tool (amber fill, icon in text.onAccent) for its on state. */
+.web-toggle.is-on,
+.web-toggle.is-on:hover:not(:disabled),
+.web-toggle.is-on:active:not(:disabled) {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
 .chat-input:focus-within {
   outline: var(--component-focus-ring-width) solid var(--color-focus-ring);
   outline-offset: var(--component-focus-ring-offset);
@@ -737,6 +919,8 @@ button:disabled {
   background: transparent;
   color: var(--color-text-primary);
   padding: var(--space-sm);
+  /* The box grows with its text, up to six lines, without a layout forced by script. */
+  field-sizing: content;
   max-height: calc(1.5em * 6);
   line-height: var(--font-line-height-normal);
 }
@@ -858,6 +1042,13 @@ button:disabled {
   line-height: var(--font-line-height-tight);
 }
 
+/* DS-GAP: score line on a finished quiz's chip, used typography.small in secondary text */
+.quiz-chip-score {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: var(--font-line-height-normal);
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -883,7 +1074,7 @@ button:disabled {
     position: relative;
     top: auto;
     bottom: auto;
-    width: var(--layout-panel-left);
+    width: var(--panel-left-width, var(--layout-panel-left));
     flex: none;
     transform: none;
     transition: none;
@@ -1035,15 +1226,33 @@ a.whiteboard-original {
   position: relative;
 }
 
+/* Centered under the selection, kept inside the board. It never wraps: the half width in the
+   clamp is room for the label (about 9rem), so near an edge the button slides in. */
 .whiteboard-ask {
   position: absolute;
   z-index: var(--z-index-modal);
-  transform: translate(-50%, 0);
+  left: clamp(5rem, var(--ask-left), calc(100% - 5rem));
+  top: clamp(var(--space-xs), calc(var(--ask-top) + var(--space-sm)), calc(100% - 3rem));
+  transform: translateX(-50%);
+  white-space: nowrap;
 }
 
 .whiteboard-surface > .tl-container {
   inset: 0;
   position: absolute;
+}
+
+/* A board with no editor yet shows the board color the editor opens on (toolbar.css). */
+.whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-default);
+}
+
+.whiteboard[data-board='light'] .whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-white);
+}
+
+.whiteboard[data-board='dark'] .whiteboard-surface--idle {
+  background: var(--color-whiteboard-board-night);
 }
 
 .whiteboard-skipped {
@@ -1053,4 +1262,14 @@ a.whiteboard-original {
   padding: var(--space-xs) var(--space-sm);
   position: absolute;
   z-index: var(--z-index-modal);
+}
+
+/* A chip naming the animation step the next turn asks about (AN-17). */
+.step-chip {
+  max-width: 100%;
+}
+
+.step-chip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }

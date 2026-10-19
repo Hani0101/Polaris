@@ -7,6 +7,15 @@
   isolation: isolate;
 }
 
+/* A board keeps the color it opened with, whatever the app mode becomes (WB-22). */
+.whiteboard[data-board='light'] .whiteboard-surface > .tl-container {
+  --tl-color-background: var(--color-whiteboard-board-white);
+}
+
+.whiteboard[data-board='dark'] .whiteboard-surface > .tl-container {
+  --tl-color-background: var(--color-whiteboard-board-night);
+}
+
 /* Toolbar and pen colors. Phone: at the bottom of the board, pen colors above. */
 .wb-dock {
   position: absolute;
@@ -28,11 +37,27 @@
   pointer-events: auto;
 }
 
-/* Laptop: floating at the top center of the board. */
+/* Laptop: a vertical strip down the left edge of the board. */
 @media (min-width: 640px) {
   .wb-dock {
     top: var(--space-xs);
     bottom: auto;
+    left: var(--space-xs);
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: none;
+    max-height: calc(100% - 2 * var(--space-xs));
+    transform: none;
+  }
+
+  .wb-dock > .wb-toolbar {
+    flex-direction: column;
+    min-height: 0;
+    overflow-x: visible;
+    overflow-y: auto;
+  }
+
+  .wb-dock > .wb-swatches {
     flex-direction: column;
   }
 }
@@ -251,4 +276,11 @@
 
 .wb-comment-row > button {
   flex: none;
+}
+
+/* Shows or hides the toolbar, so it need not cover the board. */
+.wb-dock-toggle {
+  background: var(--color-surface-raised);
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
 }
