@@ -1012,12 +1012,16 @@ class Chat:
                 yield notice
             # An earlier ending of this session closes its old agent first (CH-05).
             await asyncio.to_thread(self.wait_for_agent_close, session_id)
-            profile = await asyncio.to_thread(self.read_profile)
-            # A pass still running is waited for only while the profile is empty,
-            # so answers given in a session just left stop the asking (PR-02).
-            # Otherwise the reply reads the profile as it stands (PR-01).
-            if not profile.facts and await asyncio.to_thread(self.wait_for_session_ends):
+            if (await asyncio.to_thread(self._require, session_id))["signed_in_at"] is None:
+                # An anonymous session reads no profile (PR-01, decision 0008).
+                profile = Profile((), signed_in=False)
+            else:
                 profile = await asyncio.to_thread(self.read_profile)
+                # A pass still running is waited for only while the profile is
+                # empty, so answers given in a session just left stop the asking
+                # (PR-02). Otherwise the reply reads the profile as it stands (PR-01).
+                if not profile.facts and await asyncio.to_thread(self.wait_for_session_ends):
+                    profile = await asyncio.to_thread(self.read_profile)
             prior = await asyncio.to_thread(self._turns, session_id)
             sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
             whiteboards = await asyncio.to_thread(self.whiteboards_for_reply, session_id)

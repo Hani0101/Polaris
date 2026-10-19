@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from polaris.agent import ReplyResult
 from polaris.app import create_app
 from polaris.login import ApiKeyPresent
-from polaris.models import FactChange
+from polaris.models import FactChange, Profile
 
 EMPTY_PROFILE_REPLY = (
     "What should I know before I teach? "
@@ -1579,3 +1579,28 @@ def test_signing_in_keeps_the_open_session(make_client):  # AU-17, decision 0008
     assert [row["id"] for row in listed_sessions(client)] == [session["id"]]
     assert len(client.get(f"/api/sessions/{session['id']}").json()["turns"]) == 2
     assert [calls for calls, _facts in writer.calls] == [("Sent while signed in",)]
+
+
+def test_an_anonymous_session_reads_no_profile(make_client):  # PR-01, decision 0008
+    seen = []
+
+    class Recording(TeachingStub):
+        async def reply(self, *, profile, **rest):
+            seen.append(profile)
+            async for chunk in super().reply(profile=profile, **rest):
+                yield chunk
+
+    client, _agent = make_client(
+        Recording(), profile='{"facts": ["struggles with fractions"]}', signed_in=False
+    )
+    session = client.post("/api/sessions").json()
+    events = post_turn(client, session["id"], "What is a ratio?")
+
+    assert seen == [Profile((), signed_in=False)]
+    assert "struggles with fractions" not in reply_text(events)
+
+    client.headers.update(signed_in_headers(client))
+    signed_in = client.post("/api/sessions").json()
+    post_turn(client, signed_in["id"], "What is a ratio?")
+
+    assert seen[-1].facts == ("struggles with fractions",)

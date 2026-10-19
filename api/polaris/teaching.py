@@ -117,6 +117,13 @@ _MISSING_PROFILE = (
     "Do not teach the topic yet."
 )
 
+# An anonymous session reads no profile and does not ask for one (decision 0008).
+_NO_PROFILE = (
+    "The learner is not signed in, so no profile is read for this reply. "
+    "Teach the topic in the learner message from this session alone. "
+    "Do not ask for profile facts."
+)
+
 _WEB_ON = (
     "Web mode is on for this message. Search or read the web only when this "
     "message needs something the turns and resources do not cover."
@@ -680,7 +687,9 @@ def teaching_prompt() -> str:
     return (
         "You are Polaris. You teach one learner in a conversation.\n"
         "The profile facts for a reply are in that turn.\n"
-        "When the turn lists no facts:\n"
+        "When the turn says the learner is not signed in, there is no profile: teach "
+        "the topic in the learner message and do not ask for profile facts.\n"
+        "Otherwise, when the turn lists no facts:\n"
         f"{_MISSING_PROFILE}\n"
         "Do not call create_quiz.\n"
         "Do not call create_flashcards.\n"
@@ -914,12 +923,15 @@ def turn_prompt(
     cite one by number (FC-05). It defaults to the turns given. web says whether
     the learner sent this message in web mode (CH-23)."""
 
-    lines = [
-        "Profile facts, read for this reply:",
-        format_facts(profile),
-    ]
-    if not profile.facts:
-        lines.append(_MISSING_PROFILE)
+    if not profile.signed_in:
+        lines = [_NO_PROFILE]
+    else:
+        lines = [
+            "Profile facts, read for this reply:",
+            format_facts(profile),
+        ]
+        if not profile.facts:
+            lines.append(_MISSING_PROFILE)
     earlier_count = len(prior_turns) if turn_count is None else turn_count
     lines.append("")
     if earlier_count:

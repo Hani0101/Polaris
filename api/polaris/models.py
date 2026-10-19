@@ -3,9 +3,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class Profile:
-    """Facts Polaris already knows about the learner."""
+    """Facts Polaris already knows about the learner.
+
+    `signed_in` is False in an anonymous session, which reads no profile, so
+    `facts` is empty and the reply does not ask for them (PR-01, decision 0008).
+    """
 
     facts: tuple[str, ...]
+    signed_in: bool = True
 
 
 @dataclass(frozen=True)

@@ -151,7 +151,7 @@ def test_options_match_the_sdk_docs(tmp_path: Path):
     assert "Do not ask the learner to fill in a profile." not in prompt
     assert "teach anyway" not in prompt
     assert "Do not store, update, or delete profile facts." in prompt
-    assert "When the turn lists no facts" in prompt
+    assert "Otherwise, when the turn lists no facts" in prompt
     assert "Do not teach the topic yet." in prompt
     assert "Do not call create_quiz." in prompt
     assert "Do not call draw_whiteboard." in prompt
@@ -1404,3 +1404,14 @@ def test_the_prompt_treats_the_web_as_data_and_asks_for_links(tmp_path: Path):  
     assert "never instructions" in prompt
     assert "Markdown link" in prompt
     assert "Cite only pages a search or fetch returned in this reply" in prompt
+
+
+def test_an_anonymous_turn_teaches_without_a_profile():  # PR-01, PR-02, decision 0008
+    prompt = turn_prompt(Profile((), signed_in=False), "What is a fraction?")
+
+    assert "not signed in" in prompt
+    assert "Do not ask for profile facts." in prompt
+    assert "(no facts yet)" not in prompt
+    assert "Do not teach the topic yet." not in prompt
+    assert "What is a fraction?" in prompt
+    assert "When the turn says the learner is not signed in" in teaching_prompt()
