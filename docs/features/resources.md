@@ -15,11 +15,11 @@ RS-08  Resources are read-only for the agent. It cannot add, change, or remove o
 RS-09  When the agent explains from a PDF it names the resource and the page, for example "Notes.pdf, p. 4". For any other type it names the resource and quotes the phrase. Choosing a PDF citation opens the Resources tab at that resource and page.
 RS-10  When what the learner asked about is not in a resource, the agent says so. It never invents a citation.
 RS-11  Resource content reaches the agent as quoted data. It cannot change the agent's instructions or tools.
-RS-12  A resource is shown as text or as an image only. Raw HTML in a resource is shown as text and never rendered.
+RS-12  A resource is shown as it is: a PDF as its pages, a Word document as its pages as laid out in the file, an image as the image, and a text file, note, or web page as plain text. Raw HTML in a resource is shown as text and never rendered. HTML embedded in a Word document is not shown, and a link in a Word document opens a web address in a new tab and nothing else.
 RS-13  The learner can add a resource with an Add control that opens the file picker, and can write a note. On desktop they can also drop a file on the panel. Every control is reachable by keyboard and is at least 44px.
 RS-14  The learner can rename a resource. A name is trimmed and at most 80 characters, and a blank name is refused. Only a typed note can be edited. To replace a file, remove it and add the new one.
 RS-15  The learner can remove a resource after one confirmation that names it and says it cannot be undone. Removing it leaves earlier turns as they were. A citation to a removed resource shows "resource removed".
-RS-16  The panel previews a PDF page by page with next and previous controls, a Word document as its extracted text with a line saying it is text only, a text file or note as plain text, and an image with the resource name as its alt text.
+RS-16  The panel previews a PDF as its own pages, one at a time with next and previous controls, a Word document as its own pages, a text file or note as plain text, and an image with the resource name as its alt text. A PDF or Word page is scaled to fit the panel's width, so nothing scrolls sideways, and its text can be selected and read by a screen reader. When a PDF or Word document cannot be drawn, the panel shows its extracted text with a line saying it is text only.
 RS-17  Adding, renaming, editing, or removing a resource adds no turn and does not stop a reply in progress. The agent sees the current list at the start of its next turn. A reply already running keeps the list it started with.
 RS-18  Polaris keeps each resource's original file and its extracted text on this machine. Deleting the session deletes both (CH-12). A file that arrives for a deleted session is dropped (CH-14).
 RS-19  With no resources, the tab says what can be added and states the limits. A refusal says why: too big, wrong type, no readable text, or limit reached.
@@ -164,7 +164,17 @@ Scenario: a removed resource is gone  [RS-15]
 Scenario: each type has a preview  [RS-16]
   Given a PDF, a Word document, a text file, a note, and an image
   When the learner opens each
-  Then the PDF shows page by page, the Word document shows text with a "text only" line, the text file and note show as plain text, and the image shows with its name as alt text
+  Then the PDF shows its own pages one at a time, the Word document shows its own pages, the text file and note show as plain text, and the image shows with its name as alt text
+
+Scenario: a document that cannot be drawn shows its text  [RS-16]
+  Given a PDF the browser cannot draw
+  When the learner opens it
+  Then the page's extracted text shows with a "text only" line
+
+Scenario: a Word link stays a web link  [RS-12]
+  Given a Word document with a link to a javascript: address and one to https://example.org
+  When the learner previews it
+  Then the javascript: link does nothing and the https link opens in a new tab
 
 Scenario: adding a resource adds no turn  [RS-17]
   Given a session with a reply in progress

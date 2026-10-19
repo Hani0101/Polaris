@@ -1,12 +1,31 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { Resource } from '../api.ts'
 import { ReplyText } from './ReplyText.tsx'
 import { ResourcesProvider, useResources } from './resources.tsx'
 import { ResourcesTab } from './ResourcesTab.tsx'
 
+// pdf.js and docx-preview draw on a canvas and need a real browser. A stand-in
+// says what it was asked to draw, or shows the fallback when the file cannot be drawn.
+let drawFails = false
+vi.mock('./ResourcePages.tsx', () => ({
+  PdfPage: ({ url, page, fallback }: { url: string; page: number; fallback: ReactNode }) =>
+    drawFails ? fallback : <p>{`Drawn page ${page} of ${url}`}</p>,
+  DocxPages: ({ url, fallback }: { url: string; fallback: ReactNode }) =>
+    drawFails ? fallback : <p>{`Drawn document ${url}`}</p>,
+}))
+
 const PDF: Resource = { id: 'r1', kind: 'pdf', name: 'Notes.pdf', media_type: 'application/pdf', size: 2048, pages: 5 }
 const NOTE: Resource = { id: 'r2', kind: 'note', name: 'Week 2', media_type: 'text/plain', size: 20, pages: 1 }
+const WORD: Resource = {
+  id: 'r3',
+  kind: 'docx',
+  name: 'Essay.docx',
+  media_type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  size: 4096,
+  pages: 1,
+}
 
 type Handler = (url: string, init?: RequestInit) => unknown
 
@@ -25,6 +44,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  drawFails = false
   vi.unstubAllGlobals()
 })
 
@@ -35,6 +55,7 @@ function renderTab(list: Resource[], onFocus?: () => void, withReply = false) {
       return { ...PDF, text_pages: ['First page text', 'Second page text', '', '', ''] }
     }
     if (url.endsWith('/resources/r2')) return { ...NOTE, text_pages: ['Cells make energy.'] }
+    if (url.endsWith('/resources/r3')) return { ...WORD, text_pages: ['Mitochondria make energy'] }
     return {}
   }
   return render(
@@ -99,15 +120,44 @@ test('a file is sent as the body with its name in a header', async () => {
   )
 })
 
-test('a PDF opens page by page', async () => {
+test('a PDF opens as its own pages, one at a time (RS-16)', async () => {
+  renderTab([PDF])
+  fireEvent.click(await screen.findByRole('button', { name: /^Notes.pdf/ }))
+
+  expect(await screen.findByText('Drawn page 1 of /api/sessions/s1/resources/r1/file')).toBeTruthy()
+  expect(screen.getByText('Page 1 of 5')).toBeTruthy()
+  expect(screen.queryByText('First page text')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+  expect(await screen.findByText(/^Drawn page 2 of/)).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Previous page' })).toBeTruthy()
+})
+
+test('a PDF that cannot be drawn shows its page text, marked text only (RS-16)', async () => {
+  drawFails = true
   renderTab([PDF])
   fireEvent.click(await screen.findByRole('button', { name: /^Notes.pdf/ }))
 
   expect(await screen.findByText('First page text')).toBeTruthy()
-  expect(screen.getByText('Page 1 of 5')).toBeTruthy()
+  expect(screen.getByText('This shows the text of the page only.')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
   expect(screen.getByText('Second page text')).toBeTruthy()
-  expect(screen.getByRole('button', { name: 'Previous page' })).toBeTruthy()
+})
+
+test('a Word document opens as its own pages (RS-16)', async () => {
+  renderTab([WORD])
+  fireEvent.click(await screen.findByRole('button', { name: /^Essay.docx/ }))
+
+  expect(await screen.findByText('Drawn document /api/sessions/s1/resources/r3/file')).toBeTruthy()
+  expect(screen.queryByText('This shows the text of the document only.')).toBeNull()
+})
+
+test('a Word document that cannot be drawn shows its text, marked text only (RS-16)', async () => {
+  drawFails = true
+  renderTab([WORD])
+  fireEvent.click(await screen.findByRole('button', { name: /^Essay.docx/ }))
+
+  expect(await screen.findByText('Mitochondria make energy')).toBeTruthy()
+  expect(screen.getByText('This shows the text of the document only.')).toBeTruthy()
 })
 
 test('a citation opens the resource at its page and asks the shell to show the tools', async () => {
@@ -118,7 +168,7 @@ test('a citation opens the resource at its page and asks the shell to show the t
   fireEvent.click(citation)
 
   expect(onFocus).toHaveBeenCalled()
-  expect(await screen.findByText('Second page text')).toBeTruthy()
+  expect(await screen.findByText(/^Drawn page 2 of/)).toBeTruthy()
   expect(screen.getByText('Page 2 of 5')).toBeTruthy()
 })
 
@@ -158,7 +208,7 @@ test('removing a resource takes it off the list', async () => {
 test('only a note has an edit control', async () => {
   renderTab([PDF, NOTE])
   fireEvent.click(await screen.findByRole('button', { name: /^Notes.pdf/ }))
-  await screen.findByText('First page text')
+  await screen.findByText(/^Drawn page 1 of/)
   expect(screen.queryByRole('button', { name: 'Edit note' })).toBeNull()
 
   fireEvent.click(screen.getByRole('button', { name: 'Back to resources' }))

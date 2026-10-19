@@ -484,6 +484,110 @@
   border-radius: var(--radius-md);
 }
 
+/*
+ * A PDF or Word page as it is in the file (RS-16). The page keeps its own
+ * colors in both modes, like paper, and is scaled to the panel's width (6.5).
+ */
+.resource-page {
+  position: relative;
+  overflow: hidden;
+  border: var(--border-width-default) solid var(--color-border-default);
+  border-radius: var(--radius-md);
+}
+
+.resource-page-slot {
+  position: relative;
+}
+
+.resource-page.is-loading {
+  position: absolute;
+  inset-inline: 0;
+  visibility: hidden;
+}
+
+.resource-page canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/*
+ * The PDF's text sits over the drawing, unseen, so it can be selected and read
+ * aloud. These are pdf.js's own text layer rules (pdfjs-dist/web/pdf_viewer.css),
+ * without the editor parts Polaris does not use. The page sets --total-scale-factor.
+ */
+.resource-page .textLayer {
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  inset: 0;
+  overflow: clip;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-align: initial;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+
+.resource-page .textLayer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+}
+
+.resource-page .textLayer > :not(.markedContent),
+.resource-page .textLayer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.resource-page .textLayer .markedContent {
+  display: contents;
+}
+
+/* DS-GAP: see-through selection over a drawn page, used color.accent at a quarter strength */
+.resource-page .textLayer ::selection {
+  background: color-mix(in srgb, var(--color-accent) 25%, transparent);
+  color: transparent;
+}
+
+.resource-page .textLayer br::selection {
+  background: transparent;
+}
+
+.resource-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+
+.resource-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+.resource-docx {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
 .resource-skeleton {
   min-height: calc(var(--component-tap-target-min) * 3);
   background: var(--color-bg-subtle);

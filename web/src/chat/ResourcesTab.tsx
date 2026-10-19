@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useId, useRef, useState } from 'react'
+import type { ChangeEvent, ComponentType, DragEvent, FormEvent, ReactNode } from 'react'
 import {
   ArrowLeft,
   ChevronLeft,
@@ -45,6 +45,25 @@ function hostOf(url: string | null | undefined): string {
     return url
   }
 }
+
+/**
+ * The PDF and Word viewers load on first use, as they carry pdf.js and docx-preview.
+ * If their code cannot load, the preview shows the extracted text instead (RS-16).
+ */
+function lazyViewer<P extends { fallback: ReactNode }>(
+  pick: (module: typeof import('./ResourcePages.tsx')) => ComponentType<P>,
+) {
+  const textOnly: ComponentType<P> = ({ fallback }) => <>{fallback}</>
+  return lazy(() =>
+    import('./ResourcePages.tsx').then(
+      (module) => ({ default: pick(module) }),
+      () => ({ default: textOnly }),
+    ),
+  )
+}
+
+const PdfPage = lazyViewer((module) => module.PdfPage)
+const DocxPages = lazyViewer((module) => module.DocxPages)
 
 const LIMIT_MB = RESOURCE_MAX_BYTES / (1024 * 1024)
 const IMAGE_LIMIT_MB = RESOURCE_MAX_IMAGE_BYTES / (1024 * 1024)
@@ -357,7 +376,22 @@ function ResourceCard({
   )
 }
 
-/** The preview (RS-16): a PDF page by page, other text as plain text, an image with alt text. */
+/** Extracted text, shown when a PDF or Word document cannot be drawn (RS-16). */
+function TextOnly({ note, text }: { note: string; text: string }) {
+  return (
+    <>
+      <p className="field-help">{note}</p>
+      <pre className="resource-text">{text}</pre>
+    </>
+  )
+}
+
+const loadingViewer = <div className="skeleton resource-skeleton" role="status" aria-label="Loading" />
+
+/**
+ * The preview (RS-12, RS-16): a PDF or Word document as its own pages, other text
+ * as plain text, an image with alt text.
+ */
 function ResourcePreview({
   resource,
   page,
@@ -413,8 +447,8 @@ function ResourcePreview({
     )
   } else if (problem) {
     body = <AlertBanner>{problem}</AlertBanner>
-  } else if (!view) {
-    body = <div className="skeleton resource-skeleton" role="status" aria-label="Loading" />
+  } else if (!view || !sessionId) {
+    body = loadingViewer
   } else if (isPdf) {
     body = (
       <>
@@ -429,15 +463,33 @@ function ResourcePreview({
             <ChevronRight size={20} strokeWidth={2} aria-hidden="true" />
           </IconButton>
         </div>
-        <pre className="resource-text">{pages[shown - 1] || 'No readable text on this page.'}</pre>
+        <Suspense fallback={loadingViewer}>
+          <PdfPage
+            url={resourceFileUrl(sessionId, resource.id)}
+            page={shown}
+            fallback={
+              <TextOnly
+                note="This shows the text of the page only."
+                text={pages[shown - 1] || 'No readable text on this page.'}
+              />
+            }
+          />
+        </Suspense>
       </>
+    )
+  } else if (resource.kind === 'docx') {
+    body = (
+      <Suspense fallback={loadingViewer}>
+        <DocxPages
+          url={resourceFileUrl(sessionId, resource.id)}
+          name={resource.name}
+          fallback={<TextOnly note="This shows the text of the document only." text={pages.join('\n\n')} />}
+        />
+      </Suspense>
     )
   } else {
     body = (
       <>
-        {resource.kind === 'docx' ? (
-          <p className="field-help">This shows the text of the document only.</p>
-        ) : null}
         {resource.kind === 'web' ? (
           <p className="field-help">This shows the text of the page as it was when you added it.</p>
         ) : null}
