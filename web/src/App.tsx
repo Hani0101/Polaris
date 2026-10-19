@@ -4,6 +4,7 @@ import {
   ApiError,
   createWhiteboard,
   getSession,
+  keepSession,
   leaveSession,
   listSessions,
   listWhiteboards,
@@ -44,6 +45,7 @@ import { deckPath, pathDeckId } from './deck.ts'
 import { DeckPage } from './DeckPage.tsx'
 import { QuizPage } from './QuizPage.tsx'
 import { restoreSignIn, signOut, useSignIn } from './auth.ts'
+import type { SignInState } from './auth.ts'
 import { SignInPage } from './SignInPage.tsx'
 import { SIGN_IN_PATH, isSignInPath } from './signInPath.ts'
 import { useSteadyHandlers } from './useSteady.ts'
@@ -413,9 +415,15 @@ function App() {
   }
 
   async function onDelete(sessionId: string) {
-    const deleted = await deleteSession(sessionId)
+    let factsSaved = true
+    try {
+      factsSaved = (await deleteSession(sessionId)).facts_saved
+    } catch (caught) {
+      // Already gone, such as when a retried delete finished the first time: the same outcome.
+      if (!(caught instanceof ApiError && caught.status === 404)) throw caught
+    }
     setSessions((current) => current.filter((session) => session.id !== sessionId))
-    if (!deleted.facts_saved) {
+    if (!factsSaved) {
       showToast("Deleted. Polaris couldn't save what it learned from that session.")
     }
     if (open?.id === sessionId) {
@@ -624,6 +632,43 @@ function App() {
       setError("Couldn't sign out. Check your connection and try again.")
     }
   }
+
+  // AU-17: signing in keeps the open session and the draft made at open, then
+  // lists the learner's sessions. Keeping a session already theirs changes nothing.
+  async function keepOnSignIn() {
+    const made = spare.current
+    if (made) {
+      spare.current = made.then((session) =>
+        session ? keepSession(session.id).then(() => session, () => null) : null,
+      )
+    }
+    if (open && !open.ended) await keepSession(open.id).catch(() => {})
+    await refresh().catch(() => {})
+  }
+
+  // AU-18: once signed out, by choice or because the sign-in ran out, the
+  // learner's sessions are not shown. A signed-in draft is not used either, so
+  // the next session is anonymous.
+  function hideOnSignOut() {
+    setSessions([])
+    spare.current = null
+    if (open) void oneAtATime(onStart)
+  }
+
+  const signInChange = useRef<(status: SignInState['status']) => void>(() => {})
+  signInChange.current = (status) => {
+    if (status === 'signed-in') void keepOnSignIn()
+    else hideOnSignOut()
+  }
+  const lastStatus = useRef(account.status)
+  useEffect(() => {
+    const was = lastStatus.current
+    lastStatus.current = account.status
+    if (was === account.status || account.status === 'checking') return
+    // The page opening anonymous is not a sign-out.
+    if (account.status === 'anonymous' && was !== 'signed-in') return
+    signInChange.current(account.status)
+  }, [account.status])
 
   async function onCopy(text: string) {
     try {
@@ -973,8 +1018,12 @@ function App() {
     }
   }
 
+  // An anonymous session is not listed (AU-15), so its label is its first message.
+  const listed = open ? sessions.find((session) => session.id === open.id) : undefined
   const sessionTitle = open
-    ? sessionLabel(sessions.find((session) => session.id === open.id))
+    ? listed
+      ? sessionLabel(listed)
+      : open.turns[0]?.learner_message || pending?.learner || sessionLabel(undefined)
     : null
 
   return (

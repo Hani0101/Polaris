@@ -461,6 +461,13 @@ export function openSession(sessionId: string): Promise<Session> {
   return request<Session>(`/api/sessions/${sessionId}/open`, { method: 'POST' })
 }
 
+/** AU-17: signing in during an anonymous session keeps it. Needs the access token. */
+export function keepSession(sessionId: string): Promise<Session> {
+  return signedIn(() =>
+    request<Session>(`/api/sessions/${encodeURIComponent(sessionId)}/keep`, { method: 'POST' }),
+  )
+}
+
 export function leaveSession(sessionId: string): Promise<Session> {
   return request<Session>(`/api/sessions/${sessionId}/leave`, { method: 'POST' })
 }

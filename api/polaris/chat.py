@@ -311,6 +311,8 @@ class Chat:
         self._busy: set[str] = set()
         # Sessions being deleted (CH-14): a reply running in one stops and saves nothing.
         self._deleting: set[str] = set()
+        # session id -> the delete running for it, which a repeated delete joins.
+        self._deletions: dict[str, asyncio.Task[dict[str, object]]] = {}
         # session id -> the animation settings the Create animation dialog sent
         # with the turn now running, so the job it starts needs no choice (AN-26).
         self._turn_settings: dict[str, AnimationSettings] = {}
@@ -345,6 +347,7 @@ class Chat:
         self.sign_in = SignIn(data_dir, self._with_db)
         self._init_db()
         self._fail_interrupted_jobs()
+        self._drop_ended_anonymous()
         binder = getattr(agent, "bind_store", None)
         if callable(binder):
             binder(
@@ -359,7 +362,12 @@ class Chat:
                 create_deck=self.create_deck,
             )
 
-    def list_sessions(self) -> list[dict[str, object]]:
+    def list_sessions(self, signed_in: bool) -> list[dict[str, object]]:
+        """The signed-in learner's sessions. An anonymous session is never listed (AU-15, AU-16)."""
+
+        if not signed_in:
+            return []
+
         def read(conn: sqlite3.Connection) -> list[dict[str, object]]:
             rows = conn.execute(
                 """
@@ -375,7 +383,7 @@ class Chat:
                         s.first_message
                     ) AS preview
                 FROM sessions s
-                WHERE preview IS NOT NULL
+                WHERE preview IS NOT NULL AND s.signed_in_at IS NOT NULL
                 ORDER BY s.created_at DESC
                 """
             ).fetchall()
@@ -392,22 +400,74 @@ class Chat:
 
         return self._with_db(read)
 
-    def start(self) -> tuple[dict[str, object], tuple[str, ...]]:
+    def start(self, signed_in: bool = False) -> tuple[dict[str, object], tuple[str, ...]]:
         self._discard_drafts(except_id=None)
         ended = self._end_open(except_id=None)
         session_id = str(uuid.uuid4())
 
         def write(conn: sqlite3.Connection) -> None:
+            now = _now()
             conn.execute(
-                "INSERT INTO sessions (id, created_at, ended_at, sdk_session_id) VALUES (?, ?, NULL, NULL)",
-                (session_id, _now()),
+                """
+                INSERT INTO sessions (id, created_at, ended_at, sdk_session_id, signed_in_at)
+                VALUES (?, ?, NULL, NULL, ?)
+                """,
+                (session_id, now, now if signed_in else None),
             )
 
         self._with_db(write)
         return self._payload(session_id), ended
 
+    def require_visible(self, session_id: str, signed_in: bool) -> None:
+        """A signed-in session is not there for a request without a valid token (AU-16)."""
+
+        try:
+            row = self._require(session_id)
+        except MissingSession:
+            # An unknown id is left to the route, as a warm-up ignores it.
+            return
+        if row["signed_in_at"] is not None and not signed_in:
+            raise MissingSession()
+
+    def require_artifact_visible(self, artifact_id: str, signed_in: bool) -> None:
+        """A quiz or deck is there only when its session is (AU-16)."""
+
+        def read(conn: sqlite3.Connection) -> str | None:
+            row = conn.execute(
+                "SELECT session_id FROM artifacts WHERE id = ?", (artifact_id,)
+            ).fetchone()
+            return None if row is None else row["session_id"]
+
+        session_id = self._with_db(read)
+        # An unknown id is left to the route, which says what is missing.
+        if session_id is not None:
+            self.require_visible(session_id, signed_in)
+
+    def keep(self, session_id: str) -> dict[str, object]:
+        """Make the open anonymous session the signed-in learner's (AU-17).
+
+        Only its turns from now on reach the profile (decision 0008).
+        """
+
+        row = self._require(session_id)
+        if row["signed_in_at"] is None and row["ended_at"] is not None:
+            # An anonymous session that ended is being removed (AU-15).
+            raise MissingSession()
+
+        def write(conn: sqlite3.Connection) -> None:
+            conn.execute(
+                "UPDATE sessions SET signed_in_at = ? WHERE id = ? AND signed_in_at IS NULL",
+                (_now(), session_id),
+            )
+
+        self._with_db(write)
+        return self._payload(session_id)
+
     def open(self, session_id: str) -> tuple[dict[str, object], tuple[str, ...]]:
-        self._require(session_id)
+        row = self._require(session_id)
+        if row["signed_in_at"] is None and row["ended_at"] is not None:
+            # An anonymous session cannot be reopened (AU-15).
+            raise MissingSession()
         self._discard_drafts(except_id=session_id)
         ended = self._end_open(except_id=session_id)
 
@@ -458,6 +518,8 @@ class Chat:
                     if self._closes.get(session_id) is closed:
                         del self._closes[session_id]
                 closed.set()
+            if await self._drop_if_anonymous(session_id):
+                return
             if previous is not None:
                 await asyncio.to_thread(previous.wait)
             await self.run_profile_pass(session_id)
@@ -555,7 +617,11 @@ class Chat:
 
         if self._profile_pass is None:
             return
-        turns = await asyncio.to_thread(self._turns, session_id)
+        # Only turns sent while signed in reach the profile (decision 0008).
+        signed_in_at = (await asyncio.to_thread(self._require, session_id))["signed_in_at"]
+        if signed_in_at is None:
+            return
+        turns = await asyncio.to_thread(self._turns, session_id, signed_in_at)
         if not turns:
             return
         last_turn_id = turns[-1].id
@@ -708,8 +774,20 @@ class Chat:
         Stops a reply in progress, ends the session if it is open and waits for
         its profile pass, then removes it. The profile keeps its facts. Returns
         whether the pass kept the facts from this session.
+
+        A delete asked for again while one runs, such as from a double click,
+        waits for that one and returns its result instead of starting another.
         """
 
+        running = self._deletions.get(session_id)
+        if running is None:
+            running = asyncio.create_task(self._delete_session(session_id))
+            self._deletions[session_id] = running
+            running.add_done_callback(lambda _task: self._deletions.pop(session_id, None))
+        # A caller that goes away does not stop the delete for the others.
+        return await asyncio.shield(running)
+
+    async def _delete_session(self, session_id: str) -> dict[str, object]:
         row = await asyncio.to_thread(self._require, session_id)
         self._deleting.add(session_id)
         try:
@@ -727,19 +805,63 @@ class Chat:
                 facts_saved = await asyncio.to_thread(self._last_pass_kept, session_id)
             elif ended_earlier:
                 facts_saved = await asyncio.to_thread(self._last_pass_kept, session_id)
-            sdk_session_id = await asyncio.to_thread(self._sdk_session_id, session_id)
-            job_ids = await asyncio.to_thread(self._delete_rows, session_id)
-            for job_id in job_ids:
-                shutil.rmtree(self.data_dir / "animation" / job_id, ignore_errors=True)
-            self.resources.delete_session_files(session_id)
-            if sdk_session_id:
-                try:
-                    delete_session(sdk_session_id)
-                except (FileNotFoundError, ValueError):
-                    pass
+            await asyncio.to_thread(self._remove, session_id)
             return {"id": session_id, "facts_saved": facts_saved}
         finally:
             self._deleting.discard(session_id)
+
+    def _remove(self, session_id: str) -> None:
+        """Remove the session's rows, files, and SDK transcript (CH-12)."""
+
+        sdk_session_id = self._sdk_session_id(session_id)
+        job_ids = self._delete_rows(session_id)
+        for job_id in job_ids:
+            shutil.rmtree(self.data_dir / "animation" / job_id, ignore_errors=True)
+        self.resources.delete_session_files(session_id)
+        if sdk_session_id:
+            try:
+                delete_session(sdk_session_id)
+            except (FileNotFoundError, ValueError):
+                pass
+
+    async def _drop_if_anonymous(self, session_id: str) -> bool:
+        """An anonymous session is not kept: once it ends, it is removed (AU-15).
+
+        A reply still running in it stops and saves nothing first (CH-14).
+        Returns whether it was removed. An ended anonymous session cannot be
+        reopened or kept, so nothing can bring it back meanwhile.
+        """
+
+        try:
+            row = await asyncio.to_thread(self._require, session_id)
+        except MissingSession:
+            return False
+        if row["signed_in_at"] is not None or row["ended_at"] is None:
+            return False
+        if session_id in self._deleting:
+            return True
+        self._deleting.add(session_id)
+        try:
+            for _ in range(100):
+                if session_id not in self._busy:
+                    break
+                await asyncio.sleep(0.1)
+            await asyncio.to_thread(self._remove, session_id)
+        finally:
+            self._deleting.discard(session_id)
+        return True
+
+    def _drop_ended_anonymous(self) -> None:
+        """Remove anonymous sessions that ended before Polaris last stopped (AU-15)."""
+
+        def find(conn: sqlite3.Connection) -> list[str]:
+            rows = conn.execute(
+                "SELECT id FROM sessions WHERE signed_in_at IS NULL AND ended_at IS NOT NULL"
+            ).fetchall()
+            return [row["id"] for row in rows]
+
+        for session_id in self._with_db(find):
+            self._remove(session_id)
 
     def _last_pass_kept(self, session_id: str) -> bool:
         def read(conn: sqlite3.Connection) -> bool:
@@ -2066,16 +2188,16 @@ class Chat:
             "turns": [_turn_payload(turn) for turn in turns],
         }
 
-    def _turns(self, session_id: str) -> tuple[Turn, ...]:
+    def _turns(self, session_id: str, since: str = "") -> tuple[Turn, ...]:
         def read(conn: sqlite3.Connection) -> tuple[Turn, ...]:
             rows = conn.execute(
                 """
                 SELECT id, learner_message, reply, pointing_json, animation_step_json
                 FROM turns
-                WHERE session_id = ?
+                WHERE session_id = ? AND created_at >= ?
                 ORDER BY created_at ASC, id ASC
                 """,
-                (session_id,),
+                (session_id, since),
             ).fetchall()
             artifact_rows = conn.execute(
                 """
@@ -2356,12 +2478,16 @@ class Chat:
     def _require(self, session_id: str) -> dict[str, str | None]:
         def read(conn: sqlite3.Connection) -> dict[str, str | None] | None:
             row = conn.execute(
-                "SELECT id, ended_at FROM sessions WHERE id = ?",
+                "SELECT id, ended_at, signed_in_at FROM sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
             if row is None:
                 return None
-            return {"id": row["id"], "ended_at": row["ended_at"]}
+            return {
+                "id": row["id"],
+                "ended_at": row["ended_at"],
+                "signed_in_at": row["signed_in_at"],
+            }
 
         row = self._with_db(read)
         if row is None:
@@ -2411,6 +2537,11 @@ class Chat:
                 conn.execute("ALTER TABLE sessions ADD COLUMN first_message TEXT")
             if "generated_title" not in session_columns:
                 conn.execute("ALTER TABLE sessions ADD COLUMN generated_title TEXT")
+            # When the session became the signed-in learner's; NULL is an
+            # anonymous session (AU-15). Sessions from before stay the learner's.
+            if "signed_in_at" not in session_columns:
+                conn.execute("ALTER TABLE sessions ADD COLUMN signed_in_at TEXT")
+                conn.execute("UPDATE sessions SET signed_in_at = created_at")
             # Startup create, so a database from before this index still gets it.
             conn.execute(
                 """

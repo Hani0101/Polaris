@@ -472,6 +472,26 @@ def create_app(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+    def signed_in(request: Request) -> bool:
+        return chat.sign_in.signed_in(request.headers.get("authorization"))
+
+    def session_visible(session_id: str, request: Request) -> None:
+        """AU-16: a session made while signed in is not there without a valid token.
+
+        The animation media, Manim assets, and resource files skip this check:
+        the page loads them by URL, which sends no token.
+        """
+
+        chat.require_visible(session_id, signed_in(request))
+
+    def quiz_visible(quiz_id: str, request: Request) -> None:
+        chat.require_artifact_visible(quiz_id, signed_in(request))
+
+    def deck_visible(deck_id: str, request: Request) -> None:
+        chat.require_artifact_visible(deck_id, signed_in(request))
+
+    visible = [Depends(session_visible)]
+
     @app.get("/api/sign-in")
     def sign_in_status() -> dict[str, object]:
         return chat.sign_in.status()
@@ -546,54 +566,63 @@ def create_app(
             task.add_done_callback(app.state.background.discard)
 
     @app.get("/api/sessions")
-    def list_sessions() -> dict[str, list[dict[str, object]]]:
-        return {"sessions": chat.list_sessions()}
+    def list_sessions(request: Request) -> dict[str, list[dict[str, object]]]:
+        return {"sessions": chat.list_sessions(signed_in(request))}
 
     @app.post("/api/sessions")
-    async def start_session() -> dict[str, object]:
-        session, ended_ids = await asyncio.to_thread(chat.start)
+    async def start_session(request: Request) -> dict[str, object]:
+        session, ended_ids = await asyncio.to_thread(chat.start, signed_in(request))
         chat.end_in_background(ended_ids)
         close_discarded()
         return session
 
-    @app.get("/api/sessions/{session_id}")
+    @app.post("/api/sessions/{session_id}/keep", dependencies=[Depends(require_sign_in)])
+    def keep_session(session_id: str) -> dict[str, object]:
+        """AU-17: signing in during an anonymous session keeps it."""
+
+        return chat.keep(session_id)
+
+    @app.get("/api/sessions/{session_id}", dependencies=visible)
     def read_session(session_id: str) -> dict[str, object]:
         return chat.get(session_id)
 
-    @app.patch("/api/sessions/{session_id}")
+    @app.patch("/api/sessions/{session_id}", dependencies=visible)
     def rename_session(session_id: str, body: NameBody) -> dict[str, object]:
         return chat.rename(session_id, body.name)
 
-    @app.delete("/api/sessions/{session_id}")
+    @app.delete("/api/sessions/{session_id}", dependencies=visible)
     async def delete_session(session_id: str) -> dict[str, object]:
         return await chat.delete_session(session_id)
 
-    @app.post("/api/sessions/{session_id}/open")
+    @app.post("/api/sessions/{session_id}/open", dependencies=visible)
     async def open_session(session_id: str) -> dict[str, object]:
         session, ended_ids = await asyncio.to_thread(chat.open, session_id)
         chat.end_in_background(ended_ids)
         close_discarded()
         return session
 
-    @app.post("/api/sessions/{session_id}/warm", status_code=202)
+    @app.post("/api/sessions/{session_id}/warm", status_code=202, dependencies=visible)
     async def warm_session(session_id: str) -> dict[str, str]:
         """The learner started typing: connect the agent before the reply needs it."""
 
         chat.warm_in_background(session_id)
         return {"id": session_id}
 
-    @app.post("/api/sessions/{session_id}/leave")
+    @app.post("/api/sessions/{session_id}/leave", dependencies=visible)
     async def leave_session(session_id: str) -> dict[str, object]:
-        if await asyncio.to_thread(chat.leave, session_id):
-            chat.end_in_background((session_id,))
-        close_discarded()
+        ended = await asyncio.to_thread(chat.leave, session_id)
         try:
-            return await asyncio.to_thread(chat.get, session_id)
+            # Read before the ending runs, which removes an anonymous session (AU-15).
+            session = await asyncio.to_thread(chat.get, session_id)
         except MissingSession:
             # A draft is discarded, not ended (CH-19).
-            return {"id": session_id, "ended": False, "turns": []}
+            session = {"id": session_id, "ended": False, "turns": []}
+        if ended:
+            chat.end_in_background((session_id,))
+        close_discarded()
+        return session
 
-    @app.post("/api/sessions/{session_id}/turns")
+    @app.post("/api/sessions/{session_id}/turns", dependencies=visible)
     async def send_turn(session_id: str, body: TurnBody) -> StreamingResponse:
         text = await asyncio.to_thread(chat.validate_turn, session_id, body.message)
         animation_settings = None
@@ -676,19 +705,19 @@ def create_app(
             },
         )
 
-    @app.get("/api/sessions/{session_id}/whiteboards")
+    @app.get("/api/sessions/{session_id}/whiteboards", dependencies=visible)
     def list_whiteboards(session_id: str) -> dict[str, list[dict[str, object]]]:
         return {"whiteboards": chat.list_whiteboards(session_id)}
 
-    @app.post("/api/sessions/{session_id}/whiteboards", status_code=201)
+    @app.post("/api/sessions/{session_id}/whiteboards", status_code=201, dependencies=visible)
     def create_whiteboard(session_id: str) -> dict[str, object]:
         return chat.create_learner_whiteboard(session_id)
 
-    @app.get("/api/sessions/{session_id}/whiteboards/{whiteboard_id}")
+    @app.get("/api/sessions/{session_id}/whiteboards/{whiteboard_id}", dependencies=visible)
     def read_whiteboard(session_id: str, whiteboard_id: str) -> dict[str, object]:
         return chat.get_whiteboard(session_id, whiteboard_id)
 
-    @app.put("/api/sessions/{session_id}/whiteboards/{whiteboard_id}")
+    @app.put("/api/sessions/{session_id}/whiteboards/{whiteboard_id}", dependencies=visible)
     def update_whiteboard(
         session_id: str,
         whiteboard_id: str,
@@ -696,11 +725,11 @@ def create_app(
     ) -> dict[str, object]:
         return chat.update_whiteboard(session_id, whiteboard_id, drawing)
 
-    @app.get("/api/sessions/{session_id}/resources")
+    @app.get("/api/sessions/{session_id}/resources", dependencies=visible)
     def list_resources(session_id: str) -> dict[str, list[dict[str, object]]]:
         return {"resources": chat.list_resources(session_id)}
 
-    @app.post("/api/sessions/{session_id}/resources", status_code=201)
+    @app.post("/api/sessions/{session_id}/resources", status_code=201, dependencies=visible)
     async def add_resource(session_id: str, request: Request) -> dict[str, object]:
         """Add a file. The body is the file and X-Filename is its name (RS-04)."""
 
@@ -718,17 +747,17 @@ def create_app(
             chat.add_resource_file, session_id, filename, bytes(data)
         )
 
-    @app.post("/api/sessions/{session_id}/resources/notes", status_code=201)
+    @app.post("/api/sessions/{session_id}/resources/notes", status_code=201, dependencies=visible)
     def add_resource_note(session_id: str, body: NoteBody) -> dict[str, object]:
         return chat.add_resource_note(session_id, body.name, body.text)
 
-    @app.post("/api/sessions/{session_id}/resources/web", status_code=201)
+    @app.post("/api/sessions/{session_id}/resources/web", status_code=201, dependencies=visible)
     async def add_resource_web(session_id: str, body: WebPageBody) -> dict[str, object]:
         """Fetch a public page by its link (RS-22). The fetch blocks, so it runs off the loop."""
 
         return await asyncio.to_thread(chat.add_resource_web, session_id, body.url)
 
-    @app.get("/api/sessions/{session_id}/resources/{resource_id}")
+    @app.get("/api/sessions/{session_id}/resources/{resource_id}", dependencies=visible)
     def read_resource(session_id: str, resource_id: str) -> dict[str, object]:
         return chat.get_resource(session_id, resource_id)
 
@@ -745,7 +774,7 @@ def create_app(
             },
         )
 
-    @app.patch("/api/sessions/{session_id}/resources/{resource_id}")
+    @app.patch("/api/sessions/{session_id}/resources/{resource_id}", dependencies=visible)
     def edit_resource(
         session_id: str, resource_id: str, body: ResourceEditBody
     ) -> dict[str, object]:
@@ -756,16 +785,16 @@ def create_app(
             result = chat.edit_resource_note(session_id, resource_id, body.text)
         return {key: value for key, value in result.items() if key != "text_pages"}
 
-    @app.delete("/api/sessions/{session_id}/resources/{resource_id}")
+    @app.delete("/api/sessions/{session_id}/resources/{resource_id}", dependencies=visible)
     def remove_resource(session_id: str, resource_id: str) -> dict[str, str]:
         chat.remove_resource(session_id, resource_id)
         return {"id": resource_id}
 
-    @app.get("/api/sessions/{session_id}/jobs/{job_id}")
+    @app.get("/api/sessions/{session_id}/jobs/{job_id}", dependencies=visible)
     def read_job(session_id: str, job_id: str) -> dict[str, object]:
         return chat.get_animation_job(session_id, job_id)
 
-    @app.post("/api/sessions/{session_id}/jobs/{job_id}/engine")
+    @app.post("/api/sessions/{session_id}/jobs/{job_id}/engine", dependencies=visible)
     def choose_job_engine(
         session_id: str, job_id: str, body: AnimationSettingsBody
     ) -> dict[str, object]:
@@ -786,23 +815,23 @@ def create_app(
         asset = chat.get_animation_asset(session_id, job_id, name)
         return FileResponse(asset.path, media_type=asset.media_type, headers=PLAYBACK_HEADERS)
 
-    @app.get("/api/quizzes/{quiz_id}")
+    @app.get("/api/quizzes/{quiz_id}", dependencies=[Depends(quiz_visible)])
     def read_quiz(quiz_id: str) -> dict[str, object]:
         return chat.get_quiz(quiz_id)
 
-    @app.post("/api/quizzes/{quiz_id}/answer")
+    @app.post("/api/quizzes/{quiz_id}/answer", dependencies=[Depends(quiz_visible)])
     def answer_quiz(quiz_id: str, body: AnswerBody) -> dict[str, object]:
         return chat.answer_quiz(quiz_id, body.question_id, body.choice_id)
 
-    @app.get("/api/decks/{deck_id}")
+    @app.get("/api/decks/{deck_id}", dependencies=[Depends(deck_visible)])
     def read_deck(deck_id: str) -> dict[str, object]:
         return chat.get_deck(deck_id)
 
-    @app.post("/api/decks/{deck_id}/ratings")
+    @app.post("/api/decks/{deck_id}/ratings", dependencies=[Depends(deck_visible)])
     def rate_card(deck_id: str, body: RatingBody) -> dict[str, object]:
         return chat.rate_card(deck_id, body.card_id, body.rating)
 
-    @app.delete("/api/decks/{deck_id}/ratings")
+    @app.delete("/api/decks/{deck_id}/ratings", dependencies=[Depends(deck_visible)])
     def reset_ratings(deck_id: str) -> dict[str, object]:
         return chat.reset_ratings(deck_id)
 

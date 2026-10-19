@@ -170,7 +170,15 @@ def make_client(tmp_path, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     opened: list[TestClient] = []
 
-    def make(agent=None, profile: str | None = None, profile_pass=None, title_writer=None):
+    def make(
+        agent=None,
+        profile: str | None = None,
+        profile_pass=None,
+        title_writer=None,
+        signed_in: bool = True,
+    ):
+        """A client signed in by default, so its sessions are kept (AU-15)."""
+
         if profile is not None:
             (tmp_path / "profile.json").write_text(profile, encoding="utf-8")
         stub = TeachingStub() if agent is None else agent
@@ -181,6 +189,8 @@ def make_client(tmp_path, monkeypatch):
             stub.chat = client.app.state.chat
         client.__enter__()
         opened.append(client)
+        if signed_in:
+            client.headers.update(signed_in_headers(client))
         return client, stub
 
     yield make
@@ -210,7 +220,7 @@ def test_typed_message_is_stored_as_a_turn(make_client):
 
 def test_reply_is_visible_while_it_is_still_being_produced(make_client):
     agent = GatedAgent()
-    client, _agent = make_client(agent)
+    client, _agent = make_client(agent, signed_in=False)
     session = client.post("/api/sessions").json()
     body = json.dumps({"message": "Tell me more"}).encode()
     scope = {
@@ -682,7 +692,7 @@ def test_settings_lists_the_facts_with_their_ids(make_client):  # PR-11
 
 
 def test_fact_routes_need_sign_in(make_client):  # PR-11, AU-12
-    client, _agent = make_client()
+    client, _agent = make_client(signed_in=False)
 
     assert client.get("/api/profile/facts").status_code == 401
     assert client.post("/api/profile/facts", json={"text": "likes maps"}).status_code == 401
@@ -1096,6 +1106,27 @@ def test_deleting_stops_a_reply_in_progress(make_client):  # CH-14
     assert _rows(client, "SELECT id FROM turns") == []
 
 
+def test_deleting_twice_at_once_deletes_once(make_client):  # CH-11, CH-16
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer)
+    chat = client.app.state.chat
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "I like pictures")
+
+    async def scenario() -> list[dict[str, object]]:
+        return list(
+            await asyncio.gather(
+                chat.delete_session(session["id"]), chat.delete_session(session["id"])
+            )
+        )
+
+    results = asyncio.run(scenario())
+
+    assert results == [{"id": session["id"], "facts_saved": True}] * 2
+    assert len(writer.calls) == 1
+    assert client.get("/api/sessions").json() == {"sessions": []}
+
+
 def test_deleting_an_unknown_session_is_not_found(make_client):  # CH-17
     client, _agent = make_client()
 
@@ -1496,3 +1527,55 @@ def test_a_draft_drops_its_held_resource(make_client, tmp_path):  # CH-19
         assert db.execute("SELECT id FROM resources").fetchall() == []
     finally:
         db.close()
+
+
+def test_an_anonymous_session_is_not_listed_and_goes_when_it_ends(make_client):  # AU-15
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer, signed_in=False)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 200
+
+    left = client.post(f"/api/sessions/{session['id']}/leave").json()
+    client.app.state.chat.wait_for_session_ends()
+
+    assert left["ended"] is True
+    assert _rows(client, "SELECT id FROM sessions") == []
+    assert _rows(client, "SELECT id FROM turns") == []
+    assert writer.calls == []
+    assert client.post(f"/api/sessions/{session['id']}/open").status_code == 404
+
+
+def test_the_learners_sessions_are_not_there_when_signed_out(make_client):  # AU-16
+    client, _agent = make_client()
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "What is a fraction?")
+    assert [row["id"] for row in listed_sessions(client)] == [session["id"]]
+
+    client.headers.pop("Authorization")
+
+    assert client.get("/api/sessions").json() == {"sessions": []}
+    assert client.get(f"/api/sessions/{session['id']}").status_code == 404
+    assert client.post(f"/api/sessions/{session['id']}/open").status_code == 404
+    assert client.post(f"/api/sessions/{session['id']}/turns", json={"message": "hi"}).status_code == 404
+    assert client.get(f"/api/sessions/{session['id']}/whiteboards").status_code == 404
+
+
+def test_signing_in_keeps_the_open_session(make_client):  # AU-17, decision 0008
+    writer = StubPass()
+    client, _agent = make_client(profile_pass=writer, signed_in=False)
+    session = client.post("/api/sessions").json()
+    post_turn(client, session["id"], "Sent while signed out")
+    assert client.post(f"/api/sessions/{session['id']}/keep").status_code == 401
+
+    client.headers.update(signed_in_headers(client))
+    assert client.post(f"/api/sessions/{session['id']}/keep").status_code == 200
+    post_turn(client, session["id"], "Sent while signed in")
+    client.post(f"/api/sessions/{session['id']}/leave")
+    client.app.state.chat.wait_for_session_ends()
+
+    assert [row["id"] for row in listed_sessions(client)] == [session["id"]]
+    assert len(client.get(f"/api/sessions/{session['id']}").json()["turns"]) == 2
+    assert [calls for calls, _facts in writer.calls] == [("Sent while signed in",)]

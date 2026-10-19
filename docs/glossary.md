@@ -29,7 +29,7 @@ The local page where the learner enters a username and a password so that Polari
 _Avoid_: account, OAuth, Claude login, passphrase
 
 **Anonymous session**:
-A session held while the learner is not signed in. It reads no profile and adds nothing to it.
+A session held while the learner is not signed in. It reads no profile and adds nothing to it. It is not kept: it is never listed and is removed when it ends, unless the learner signs in during it.
 _Avoid_: guest, logged-out user
 
 **Claude login**:

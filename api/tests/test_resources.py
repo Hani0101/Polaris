@@ -104,6 +104,10 @@ def make_client(tmp_path, monkeypatch):
         client = TestClient(create_app(tmp_path, agent, profile_pass=profile_pass))
         client.__enter__()
         opened.append(client)
+        # Signed in, so a session is kept when it ends (AU-15).
+        pair = {"username": "learner", "password": "a long password"}
+        signed_in = client.post("/api/sign-in/pair", json={**pair, "password_again": pair["password"]})
+        client.headers["Authorization"] = f"Bearer {signed_in.json()['access_token']}"
         return client, agent
 
     yield make

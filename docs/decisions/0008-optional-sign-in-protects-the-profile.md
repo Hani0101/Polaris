@@ -15,3 +15,5 @@ Five wrong tries block sign-in for 10 minutes, even for the correct pair. The co
 This replaces the part of [Local sign-in before Sunday](0004-local-sign-in-before-sunday.md) that made sign-in the gate to the whole app. The 18 Oct 2026 deadline in that decision still stands. Sign-in is still not the Claude login ([decision 0001](0001-personal-login-local-only.md)).
 
 Reading earlier anonymous chats into the profile at sign-in was wanted and cut for time. It is parked in `later.md`.
+
+[Anonymous sessions are not kept](0015-anonymous-sessions-are-not-kept.md) replaces the part of this decision that saved anonymous sessions.

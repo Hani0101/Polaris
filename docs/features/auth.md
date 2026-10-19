@@ -15,9 +15,13 @@ AU-08  Signing in gives an access token that lasts 60 minutes. It is kept only i
 AU-09  Signing in also gives a refresh token that lasts 7 days. It is a random value in an httpOnly, SameSite=Strict cookie scoped to the refresh path. The server stores only its hash. Each refresh issues a new refresh token and ends the old one. Reuse of an ended one revokes every refresh token from that sign-in.
 AU-10  The page refreshes the access token without the learner doing anything. When the refresh token has expired or been revoked, the learner becomes anonymous, the page shows the signed-out state, and chat is not blocked.
 AU-11  Signing out revokes the refresh token and clears the access token. It does not delete the profile.
-AU-12  The profile and its evidence are reachable only with a valid access token. Without one the request is refused with 401. Everything else works without sign-in.
+AU-12  The profile and its evidence are reachable only with a valid access token. Without one the request is refused with 401. Everything else works without sign-in, except the learner's sessions (AU-16).
 AU-13  Five wrong tries in a row block sign-in for 10 minutes, and the correct pair is refused during that time. The count is stored, so a restart does not reset it, and a successful sign-in resets it. The page says how long is left.
 AU-14  Polaris answers only on this machine. A request from another address, or for a host name that is not this machine, is refused with 403. This covers every route, since most routes are open (AU-12) and the first use chooses the pair (AU-05).
+AU-15  An anonymous session is not kept. It works while it is open, but it is not in the session list and cannot be reopened. When it ends (CH-05), it is removed with everything made in it, and no profile pass runs on it. See [decision 0015](../decisions/0015-anonymous-sessions-are-not-kept.md).
+AU-16  A session started while signed in is the learner's. Without a valid access token the session list is empty, and opening, reading, or writing one of the learner's sessions, or a quiz or deck made in one, is refused with 404. The animation media, Manim assets, and resource files are the exception, since the page loads them by URL without a token.
+AU-17  Signing in during an anonymous session keeps it: it becomes the learner's and is listed. Only its turns sent after sign-in reach the profile.
+AU-18  Signing out, or becoming anonymous because the refresh token died (AU-10), takes the learner's sessions off the page and opens a new anonymous draft.
 
 ## Scenarios
 
@@ -116,6 +120,26 @@ Scenario: a request from elsewhere is refused  [AU-14]
   When a request comes from another machine, or names a host that is not this machine
   Then it is refused with 403
   And no pair can be chosen and no session can be read through it
+
+Scenario: an anonymous session is not kept  [AU-15]
+  Given the learner is not signed in
+  When they send a message in a new session
+  Then the session is not in the session list
+  And when they leave it, it and its turns are removed
+  And no profile pass runs on it
+  And it cannot be opened again
+
+Scenario: the learner's sessions are not shown when signed out  [AU-16, AU-18]
+  Given the learner has a session from while they were signed in
+  When they sign out
+  Then the session list is empty and a new anonymous draft is open
+  And a request to open or read that session is refused with 404
+
+Scenario: signing in keeps the open session  [AU-17]
+  Given the learner sent a message in an anonymous session
+  When they sign in and send another
+  Then the session is in the session list with both turns
+  And the profile pass reads only the turn sent after sign-in
 
 Scenario: sign-in is not the Claude login  [AU-03]
   Given the learner is on the sign-in page

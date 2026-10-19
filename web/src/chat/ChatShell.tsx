@@ -290,6 +290,7 @@ export function ChatShell({
             onRename={onRename}
             onDelete={onDelete}
             onSignIn={signInFromPanel}
+            signedOut={account?.status === 'anonymous'}
           />
           {sessionListOpen ? (
             <ResizeHandle
