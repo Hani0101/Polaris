@@ -6,12 +6,14 @@ type DeleteDialogProps = {
   /** What the session is called in the list. */
   label: string
   error: string | null
+  /** The delete is running. */
+  busy: boolean
   onDelete: () => void
   onCancel: () => void
 }
 
 /** CH-11: one confirmation before a session is deleted. It says the profile keeps what it learned. */
-export function DeleteDialog({ open, label, error, onDelete, onCancel }: DeleteDialogProps) {
+export function DeleteDialog({ open, label, error, busy, onDelete, onCancel }: DeleteDialogProps) {
   return (
     <Modal
       open={open}
@@ -20,6 +22,8 @@ export function DeleteDialog({ open, label, error, onDelete, onCancel }: DeleteD
       mainLabel="Delete session"
       onMain={onDelete}
       onCancel={onCancel}
+      busy={busy}
+      busyLabel="Deleting"
     >
       <p>
         “{label}” will be deleted with its whiteboards, quizzes, and animations. This can’t be

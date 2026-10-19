@@ -136,6 +136,27 @@ test('cancelling a delete changes nothing', async () => {
   expect(onDelete).not.toHaveBeenCalled()
 })
 
+test('while deleting, the button shows a spinner, takes no more clicks, and the dialog stays open', async () => {
+  let finish: () => void = () => {}
+  const onDelete = vi.fn(() => new Promise<void>((resolve) => (finish = resolve)))
+  panel(async () => {}, [unnamed, named], onDelete)
+
+  await openDelete('Fractions')
+  const main = screen.getByRole('button', { name: 'Delete session' })
+  fireEvent.click(main)
+
+  expect(await screen.findByRole('status')).toBeTruthy()
+  expect(main.getAttribute('aria-disabled')).toBe('true')
+  expect((screen.getByRole('button', { name: 'Cancel' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(main)
+  fireEvent.keyDown(screen.getByRole('alertdialog'), { key: 'Escape' })
+  expect(onDelete).toHaveBeenCalledTimes(1)
+  expect(screen.getByRole('alertdialog', { name: 'Delete this session?' })).toBeTruthy()
+
+  finish()
+  await waitFor(() => expect(main.getAttribute('aria-disabled')).toBeNull())
+})
+
 test('a failed delete keeps the dialog open and says so', async () => {
   const onDelete = vi.fn(async () => {
     throw new Error('network')
@@ -176,4 +197,28 @@ test('Appearance and Profile each open a dialog [ST-01]', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
   fireEvent.click(await screen.findByRole('menuitem', { name: 'Profile' }))
   expect(await screen.findByRole('dialog', { name: 'Profile' })).toBeTruthy()
+})
+
+test('signed out, the list offers sign-in instead of sessions [AU-15, AU-16]', () => {
+  const onSignIn = vi.fn()
+  render(
+    <SessionPanel
+      sessions={[]}
+      openId={null}
+      loading={false}
+      open
+      onClose={() => {}}
+      onStart={() => {}}
+      onOpen={() => {}}
+      onRename={async () => {}}
+      onDelete={async () => {}}
+      onSignIn={onSignIn}
+      signedOut
+    />,
+  )
+
+  expect(screen.getByText('Sign in to keep your sessions')).toBeTruthy()
+  expect(screen.queryByText('No sessions yet')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Sign in' }))
+  expect(onSignIn).toHaveBeenCalled()
 })

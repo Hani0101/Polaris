@@ -21,6 +21,8 @@ type SessionPanelProps = {
   onDelete: (sessionId: string) => Promise<void>
   /** Opens the sign-in page from the Profile dialog (AU-02). */
   onSignIn: () => void
+  /** No session is kept or listed while signed out (AU-15, AU-16). */
+  signedOut?: boolean
 }
 
 /** The session list. Memoized, so a streamed chunk does not draw every row again. */
@@ -35,6 +37,7 @@ export const SessionPanel = memo(function SessionPanel({
   onRename,
   onDelete,
   onSignIn,
+  signedOut = false,
 }: SessionPanelProps) {
   // The session being renamed stays set while the dialog fades out.
   const [target, setTarget] = useState<SessionSummary | null>(null)
@@ -115,7 +118,18 @@ export const SessionPanel = memo(function SessionPanel({
           <li className="skeleton skeleton-session" />
         </ul>
       ) : null}
-      {!loading && sessions.length === 0 ? (
+      {!loading && sessions.length === 0 && signedOut ? (
+        <EmptyState
+          title="Sign in to keep your sessions"
+          body="Sessions aren't saved while you're signed out. Sign in and the one open now is kept."
+          action={
+            <button type="button" className="secondary" onClick={onSignIn}>
+              Sign in
+            </button>
+          }
+        />
+      ) : null}
+      {!loading && sessions.length === 0 && !signedOut ? (
         <EmptyState title="No sessions yet" body="Ask Polaris anything to start one." />
       ) : null}
       {!loading && sessions.length > 0 ? (
@@ -185,6 +199,7 @@ export const SessionPanel = memo(function SessionPanel({
         open={deleting}
         label={target ? sessionLabel(target) : ''}
         error={deleteError}
+        busy={deleteBusy}
         onDelete={() => void confirmDelete()}
         onCancel={() => setDeleting(false)}
       />

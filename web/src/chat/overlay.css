@@ -117,6 +117,15 @@ button.destructive:disabled {
   width: 100%;
 }
 
+/* Button loading (DESIGN.md 7, Button): the spinner replaces the text and the width is kept. */
+.modal-main {
+  position: relative;
+}
+
+.modal-main-label.is-hidden {
+  visibility: hidden;
+}
+
 /* Laptop: the main button on the right, secondary to its left. */
 @media (min-width: 640px) {
   .modal-actions {

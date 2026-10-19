@@ -1,7 +1,10 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { LoaderCircle } from 'lucide-react'
 import { CloseIcon, IconButton } from './ui.tsx'
 import './overlay.css'
+// The button spinner (DESIGN.md 7, Loading) is defined with the sign-in page.
+import '../signIn.css'
 
 type ModalProps = {
   open: boolean
@@ -19,6 +22,13 @@ type ModalProps = {
   /** confirm: before a destructive action, the main button is destructive. */
   variant?: 'default' | 'confirm'
   cancelLabel?: string
+  /**
+   * The main action is running: its button shows a spinner and takes no clicks,
+   * and the dialog cannot be closed until it finishes.
+   */
+  busy?: boolean
+  /** What a screen reader hears while busy, such as "Deleting". */
+  busyLabel?: string
 }
 
 const FOCUSABLE =
@@ -60,6 +70,8 @@ export function Modal({
   onCancel,
   variant = 'default',
   cancelLabel = 'Cancel',
+  busy = false,
+  busyLabel = 'Loading',
 }: ModalProps) {
   const shown = useShown(open)
   const titleId = useId()
@@ -90,11 +102,19 @@ export function Modal({
 
   if (!shown) return null
 
+  function cancel() {
+    if (!busy) onCancel()
+  }
+
+  function main() {
+    if (!busy) onMain?.()
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
       event.preventDefault()
       event.stopPropagation()
-      onCancel()
+      cancel()
       return
     }
     if (event.key !== 'Tab' || !panelRef.current) return
@@ -113,7 +133,7 @@ export function Modal({
 
   return createPortal(
     <div className="modal-layer" data-state={open ? 'open' : 'closing'}>
-      <div className="modal-dim" aria-hidden="true" onClick={onCancel} />
+      <div className="modal-dim" aria-hidden="true" onClick={cancel} />
       <div
         ref={panelRef}
         className="modal"
@@ -128,7 +148,7 @@ export function Modal({
           <h2 id={titleId} className="modal-title">
             {title}
           </h2>
-          <IconButton label="Close" size="sm" onClick={onCancel}>
+          <IconButton label="Close" size="sm" disabled={busy} onClick={cancel}>
             <CloseIcon />
           </IconButton>
         </div>
@@ -136,16 +156,32 @@ export function Modal({
           {children}
         </div>
         <div className="modal-actions">
-          <button ref={cancelRef} type="button" className="secondary" onClick={onCancel}>
+          <button
+            ref={cancelRef}
+            type="button"
+            className="secondary"
+            disabled={busy}
+            onClick={cancel}
+          >
             {cancelLabel}
           </button>
           {mainLabel && onMain ? (
             <button
               type="button"
-              className={variant === 'confirm' ? 'destructive' : undefined}
-              onClick={onMain}
+              className={variant === 'confirm' ? 'modal-main destructive' : 'modal-main'}
+              aria-disabled={busy || undefined}
+              aria-busy={busy || undefined}
+              onClick={main}
             >
-              {mainLabel}
+              <span className={busy ? 'modal-main-label is-hidden' : 'modal-main-label'}>
+                {mainLabel}
+              </span>
+              {busy ? (
+                <span className="button-spinner" role="status">
+                  <LoaderCircle size={20} strokeWidth={2} aria-hidden="true" />
+                  <span className="visually-hidden">{busyLabel}</span>
+                </span>
+              ) : null}
             </button>
           ) : null}
         </div>
